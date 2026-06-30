@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relay Controller</title>
+<style>
+  :root {
+    --bg:       #0b0f14;
+    --panel:    #141a22;
+    --border:   #1e2a3a;
+    --text:     #c8d6e5;
+    --dim:      #6b7d95;
+    --accent:   #00c896;
+    --accent2:  #f0a040;
+    --danger:   #e0556a;
+    --on:       #00e676;
+    --off:      #455a64;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 20px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  h1 { font-size: 1.4rem; font-weight: 600; letter-spacing: 0.5px; }
+  .status-bar {
+    display: flex;
+    gap: 20px;
+    font-size: 0.82rem;
+    color: var(--dim);
+  }
+  .status-bar span { display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.on  { background: var(--on);  box-shadow: 0 0 6px var(--on); }
+  .dot.off { background: var(--off); }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 20px;
+  }
+  .channel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .ch-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .ch-header h2 { font-size: 1.1rem; font-weight: 600; }
+  .toggle {
+    position: relative;
+    width: 48px; height: 26px;
+    border-radius: 13px;
+    background: var(--off);
+    cursor: pointer;
+    transition: background 0.2s;
+    border: none;
+  }
+  .toggle.active { background: var(--accent); }
+  .toggle::after {
+    content: "";
+    position: absolute;
+    top: 3px; left: 3px;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.2s;
+  }
+  .toggle.active::after { transform: translateX(22px); }
+  .field {
+    margin-bottom: 14px;
+  }
+  .field label {
+    display: block;
+    font-size: 0.78rem;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+  .field input[type="number"],
+  .field input[type="date"] {
+    width: 100%;
+    background: #0d1117;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 10px;
+    border-radius: 5px;
+    font-size: 0.9rem;
+    font-family: inherit;
+  }
+  .field input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #1a2330;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 4px 10px;
+    font-size: 0.82rem;
+  }
+  .tag button {
+    background: none;
+    border: none;
+    color: var(--danger);
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0 2px;
+  }
+  .tag button:hover { color: #ff8a98; }
+  .add-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .add-row input {
+    flex: 1;
+    background: #0d1117;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 5px;
+    font-size: 0.85rem;
+  }
+  .btn {
+    padding: 7px 16px;
+    border-radius: 5px;
+    border: none;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn-save  { background: var(--accent); color: #000; }
+  .btn-add   { background: #1e3a3a; color: var(--accent); }
+  .btn-del   { background: #3a1e1e; color: var(--danger); }
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--accent);
+    color: #000;
+    padding: 10px 20px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.3s;
+    pointer-events: none;
+    z-index: 100;
+  }
+  .toast.show  { opacity: 1; transform: translateY(0); }
+  .toast.error { background: var(--danger); color: #fff; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>&#9889; Relay Controller</h1>
+  <div class="status-bar">
+    <span><span class="dot" id="srv-dot"></span> Server <span id="srv-uptime">—</span></span>
+    <span id="hb-ch1"><span class="dot off"></span> CH1 waiting</span>
+    <span id="hb-ch2"><span class="dot off"></span> CH2 waiting</span>
+  </div>
+</header>
+
+<div class="grid" id="channels"></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Helpers ────────────────────────────────────────────────────────
+const $ = (s, el=document) => el.querySelector(s);
+const $$ = (s, el=document) => [...el.querySelectorAll(s)];
+
+let schedule = null;
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+function toast(msg, isErr) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.className = 'toast' + (isErr ? ' error' : '') + ' show';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+// ── Render ─────────────────────────────────────────────────────────
+function renderAll(data) {
+  schedule = data;
+  $('#channels').innerHTML = '';
+  for (const [key, ch] of Object.entries(data)) {
+    renderChannel(key, ch);
+  }
+}
+
+function renderChannel(key, ch) {
+  const div = document.createElement('div');
+  div.className = 'channel';
+  div.dataset.key = key;
+  div.innerHTML = `
+    <div class="ch-header">
+      <h2>${key.toUpperCase()}</h2>
+      <button class="toggle${ch.enabled ? ' active' : ''}" data-action="toggle"></button>
+    </div>
+    <div class="field">
+      <label>Pulse Duration (ms)</label>
+      <input type="number" value="${ch.pulse_ms}" min="100" step="100" data-field="pulse_ms">
+    </div>
+    <div class="field">
+      <label>Schedule (HH:MM)</label>
+      <div class="tag-list" data-list="schedule">
+        ${(ch.schedule||[]).map(t => `<span class="tag">${t}<button data-remove="schedule" data-val="${t}">&times;</button></span>`).join('')}
+      </div>
+      <div class="add-row">
+        <input type="time" data-input="schedule" placeholder="HH:MM">
+        <button class="btn btn-add" data-add="schedule">+ Add</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>Skip Dates (YYYY-MM-DD)</label>
+      <div class="tag-list" data-list="skip_dates">
+        ${(ch.skip_dates||[]).map(d => `<span class="tag">${d}<button data-remove="skip_dates" data-val="${d}">&times;</button></span>`).join('')}
+      </div>
+      <div class="add-row">
+        <input type="date" data-input="skip_dates">
+        <button class="btn btn-add" data-add="skip_dates">+ Add</button>
+      </div>
+    </div>
+    <button class="btn btn-save" data-action="save" style="width:100%;margin-top:8px;">Save ${key.toUpperCase()}</button>
+  `;
+
+  // Toggle
+  div.querySelector('[data-action="toggle"]').onclick = () => {
+    ch.enabled = !ch.enabled;
+    renderAll(schedule);
+  };
+
+  // Pulse ms change
+  div.querySelector('[data-field="pulse_ms"]').onchange = e => {
+    ch.pulse_ms = Math.max(100, parseInt(e.target.value) || 2000);
+  };
+
+  // Add schedule / skip_date
+  div.querySelectorAll('[data-add]').forEach(btn => {
+    btn.onclick = () => {
+      const list = btn.dataset.add;
+      const inp = div.querySelector(`[data-input="${list}"]`);
+      const val = inp.value.trim();
+      if (!val) return;
+      if (list === 'schedule') {
+        if (!/^\d{2}:\d{2}$/.test(val)) { toast('Format: HH:MM', true); return; }
+        const [h,m] = val.split(':').map(Number);
+        if (h<0||h>23||m<0||m>59) { toast('Invalid time', true); return; }
+      }
+      if (list === 'skip_dates') {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) { toast('Format: YYYY-MM-DD', true); return; }
+      }
+      if (ch[list].includes(val)) { toast('Duplicate', true); return; }
+      ch[list].push(val);
+      if (list === 'schedule') ch[list].sort();
+      else ch[list].sort().reverse();
+      inp.value = '';
+      renderAll(schedule);
+    };
+  });
+
+  // Remove schedule / skip_date
+  div.querySelectorAll('[data-remove]').forEach(btn => {
+    btn.onclick = () => {
+      const list = btn.dataset.remove;
+      const val = btn.dataset.val;
+      ch[list] = ch[list].filter(v => v !== val);
+      renderAll(schedule);
+    };
+  });
+
+  // Save
+  div.querySelector('[data-action="save"]').onclick = async () => {
+    try {
+      await api('POST', '/api/schedule', schedule);
+      toast(`${key.toUpperCase()} saved`);
+    } catch (e) {
+      toast('Save failed: ' + e.message, true);
+    }
+  };
+
+  $('#channels').appendChild(div);
+}
+
+// ── Status poll ────────────────────────────────────────────────────
+async function pollStatus() {
+  try {
+    const s = await api('GET', '/api/status?_=' + Date.now());
+    $('#srv-dot').className = 'dot on';
+    $('#srv-uptime').textContent = fmtUptime(s.server_uptime);
+
+    const hb = s.heartbeats || {};
+    updateHB('hb-ch1', hb['ch1']);
+    updateHB('hb-ch2', hb['ch2']);
+
+    console.log('status', s);   // ← open browser DevTools (F12) to inspect
+  } catch (e) {
+    console.warn('status poll failed', e);
+    $('#srv-dot').className = 'dot off';
+    // Show waiting state for channels too
+    updateHB('hb-ch1', undefined);
+    updateHB('hb-ch2', undefined);
+  }
+}
+
+function updateHB(id, sec) {
+  const el = $('#' + id);
+  if (sec === undefined || sec === null) {
+    el.innerHTML = '<span class="dot off"></span> ' + id.slice(3).toUpperCase() + ' waiting';
+    return;
+  }
+  const alive = sec < 120;
+  el.innerHTML = '<span class="dot ' + (alive ? 'on' : 'off') + '"></span> ' + id.slice(3).toUpperCase() + ' ' + sec + 's ago';
+}
+
+function fmtUptime(s) {
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
+  return h ? h + 'h ' + m + 'm' : m + 'm ' + Math.floor(s%60) + 's';
+}
+
+// ── Boot ───────────────────────────────────────────────────────────
+(async () => {
+  try {
+    const data = await api('GET', '/api/schedule?_=' + Date.now());
+    renderAll(data);
+  } catch (e) {
+    toast('Failed to load schedule', true);
+  }
+  pollStatus();
+  setInterval(pollStatus, 5000);
+})();
+</script>
+</body>
+</html>

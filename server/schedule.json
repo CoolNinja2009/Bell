@@ -1,0 +1,22 @@
+{
+  "ch1": {
+    "enabled": true,
+    "pulse_ms": 2000,
+    "schedule": [
+      "08:00",
+      "11:02",
+      "20:00",
+      "20:56"
+    ],
+    "skip_dates": []
+  },
+  "ch2": {
+    "enabled": true,
+    "pulse_ms": 2000,
+    "schedule": [
+      "06:30",
+      "18:45"
+    ],
+    "skip_dates": []
+  }
+}
