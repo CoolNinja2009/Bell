@@ -1,0 +1,5 @@
+node_modules/
+password.json
+secret.key
+schedule.json
+*.log

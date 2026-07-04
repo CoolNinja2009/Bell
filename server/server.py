@@ -13,14 +13,19 @@ Storage:  schedule.json  (auto‑created with defaults on first run)
 """
 import socket
 import threading
+from collections import deque
 
 import hashlib
 import json
 import os
 import time
 from datetime import date
+from functools import wraps
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import (Flask, Response, jsonify, redirect, render_template,
+                    request, session, url_for)
+
+import auth
 
 # ---------------------------------------------------------------------------
 # Config
@@ -34,10 +39,86 @@ BEACON_INTERVAL_S = 5
 BEACON_MSG = f"RELAY_CTRL:{PORT}\n".encode()
 
 app = Flask(__name__)
+app.secret_key = auth.load_or_create_secret_key()
+app.config["PERMANENT_SESSION_LIFETIME"] = 8 * 60 * 60  # 8 hours
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+# NOTE: only the human-facing dashboard (this Flask app's "/", "/login",
+# and the browser-only API endpoints) require a login. The endpoints the
+# ESP32 firmware itself calls (GET /api/schedule, GET /api/schedule/hash,
+# POST /api/heartbeat, POST /api/log) are left open on purpose, since the
+# device has no way to log in. Risk here is low (local network use, no
+# destructive device commands are exposed), but the dashboard — which lets
+# anyone reachable on the network change the relay schedule — is now
+# gated behind a password.
+
+_LOGIN_ATTEMPTS: dict[str, list[float]] = {}
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_WINDOW_S = 60.0
+
+
+def _client_ip() -> str:
+    return request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+
+
+def _rate_limited(ip: str) -> bool:
+    now = time.time()
+    attempts = [t for t in _LOGIN_ATTEMPTS.get(ip, []) if now - t < _LOGIN_WINDOW_S]
+    _LOGIN_ATTEMPTS[ip] = attempts
+    return len(attempts) >= _LOGIN_MAX_ATTEMPTS
+
+
+def _record_attempt(ip: str) -> None:
+    _LOGIN_ATTEMPTS.setdefault(ip, []).append(time.time())
+
+
+def login_required(view):
+    """Decorator: redirect HTML requests to /login, and return 401 JSON
+    for API requests, unless the caller has an authenticated session."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if session.get("authenticated"):
+            return view(*args, **kwargs)
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "authentication required"}), 401
+        return redirect(url_for("login", next=request.path))
+    return wrapped
+
+
+@app.get("/login")
+def login():
+    if session.get("authenticated"):
+        return redirect(url_for("dashboard"))
+    return render_template("login.html", error=None)
+
+
+@app.post("/login")
+def login_post():
+    ip = _client_ip()
+    if _rate_limited(ip):
+        return render_template("login.html", error="Too many attempts. Try again in a minute."), 429
+
+    password = request.form.get("password", "")
+    if auth.verify_password(password):
+        session.clear()
+        session["authenticated"] = True
+        session.permanent = True
+        next_path = request.args.get("next") or url_for("dashboard")
+        return redirect(next_path)
+
+    _record_attempt(ip)
+    return render_template("login.html", error="Incorrect password."), 401
+
+
+@app.get("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 # --- Template path (read from disk every request to bypass Jinja2 cache) ---
 _TPL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "index.html")
-print(f"DEBUG TEMPLATE PATH: {_TPL}")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -114,12 +195,28 @@ def api_heartbeat():
     _heartbeats[ch] = time.time()
     return jsonify({"ok": True})
 
+# --- Log ring buffer (last 100 entries) ----------------------------------
+_log_buf: deque[dict] = deque(maxlen=100)
+
+@app.post("/api/log")
+def api_post_log():
+    data = request.get_json(silent=True) or {}
+    msg = data.get("msg", "").strip()
+    if msg:
+        _log_buf.append({"t": time.strftime("%H:%M:%S"), "msg": msg})
+    return jsonify({"ok": True})
+
+@app.get("/api/log")
+@login_required
+def api_get_log():
+    return jsonify(list(_log_buf))
 
 # ---------------------------------------------------------------------------
 # REST API  —  consumed by the web dashboard
 # ---------------------------------------------------------------------------
 
 @app.post("/api/schedule")
+@login_required
 def api_post_schedule():
     """Save a new schedule sent by the web UI."""
     data = request.get_json(force=True)
@@ -129,6 +226,7 @@ def api_post_schedule():
 
 
 @app.get("/api/status")
+@login_required
 def api_status():
     """Health snapshot for the dashboard."""
     _clean_stale_heartbeats()
@@ -168,6 +266,7 @@ def _validate_schedule(data: dict) -> None:
 # ---------------------------------------------------------------------------
 
 @app.get("/")
+@login_required
 def dashboard():
     print(f"[debug] serving template from {_TPL} ({os.path.getsize(_TPL)} bytes)")
     with open(_TPL, encoding="utf-8") as f:
@@ -208,10 +307,13 @@ def _bootstrap():
     if not os.path.exists(SCHEDULE_FILE):
         save_schedule(_default_schedule())
         print(f"[server] Created {SCHEDULE_FILE} with defaults")
+    # Touch the password store so the default-password message (if any)
+    # is printed once at startup rather than on the first login attempt.
+    auth.load_password_hash()
 
 
 if __name__ == "__main__":
     _bootstrap()
     threading.Thread(target=_beacon_loop, daemon=True).start()
     print(f"[server] Relay Controller listening on http://{HOST}:{PORT}")
-    app.run(host=HOST, port=PORT, debug=False)
+    app.run(host=HOST, port=PORT, debug=False, use_reloader=False)

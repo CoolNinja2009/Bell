@@ -19,6 +19,7 @@
 #include <esp_sntp.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <Wire.h>
 
 // ============================================================================
 // 0.  SERIAL OUTPUT  (always on for production visibility)
@@ -30,7 +31,7 @@
 // ============================================================================
 constexpr uint8_t  CH1_RELAY_PIN     = 26;
 constexpr uint8_t  CH2_RELAY_PIN     = 27;
-constexpr bool     RELAY_ACTIVE_HIGH = true;   // true  → HIGH = relay closed
+constexpr bool     RELAY_ACTIVE_HIGH = false;  // false → LOW = relay closed (most modules)
                                                 // false → LOW  = relay closed
 
 // ============================================================================
@@ -63,20 +64,42 @@ static WiFiUDP   g_udp;
 static const char NVS_NS[]   = "relay";        // Preferences namespace
 static char       g_cfg_hash[9] = {0};         // last known MD5 (8 hex + null)
 static String     g_raw_config;                // last full server response
+static bool       g_config_dirty = true;       // true → needs NVS save (first boot)
 
 // ============================================================================
 // 4.  TIMEZONE & NTP
-// ============================================================================
-constexpr char TZ_STRING[] = "UTC0";
-//   "EST5EDT,M3.2.0/2,M11.1.0/2"    US Eastern
-//   "CET-1CEST,M3.5.0/2,M10.5.0/3"   Central Europe
-//   "PST8PDT,M3.2.0/2,M11.1.0/2"    US Pacific
-//   "IST-5:30"                        India  (no DST)
+// Timezone — seconds EAST of UTC (POSIX convention: minus = east)
+// IST  = UTC+5:30 → 19800    EST  = UTC-5 → -18000    CET  = UTC+1 → 3600
+constexpr long    GMT_OFFSET_SEC    = 19800;    // India (change for your TZ)
+constexpr long    DAYLIGHT_SEC      = 0;        // 3600 if DST applies
 
 constexpr char     NTP_SERVER1[]     = "pool.ntp.org";
 constexpr char     NTP_SERVER2[]     = "time.nist.gov";
 constexpr char     NTP_SERVER3[]     = "time.google.com";
 constexpr uint32_t SNTP_SYNC_INTERVAL_MS = 900000;  // 15 min
+
+// ============================================================================
+// 4B.  REAL-TIME CLOCK  (OPTIONAL — AUTO-DETECTED, NO WIRING = NO CHANGE)
+// ──────────────────────────────────────────────────────────────────────────
+// Works with any DS1307 / DS3231 / DS3232-compatible I2C RTC breakout —
+// these are by far the most common hobbyist RTC modules and all share the
+// exact same clock/calendar register layout (0x00–0x06) at address 0x68,
+// which is why one small driver here covers "any" of them without needing
+// a chip-specific library.
+//
+// Purpose: keep real time running even when the schedule server / WiFi /
+// internet is down for an extended period (or on every boot before NTP has
+// had a chance to sync), instead of the controller sitting idle waiting
+// for NTP. Also protects against RTC drift by periodically re-writing the
+// RTC from NTP once NTP is available again.
+//
+// If no RTC module is wired up, rtc_detect() simply fails at boot and the
+// whole feature is skipped — behavior falls back exactly to the original
+// NTP-only setup, no other code path changes.
+constexpr uint8_t  RTC_I2C_ADDR   = 0x68;  // DS1307 / DS3231 / DS3232 default address
+constexpr int8_t   RTC_SDA_PIN    = 21;    // ESP32 default I2C pins — change if wired elsewhere
+constexpr int8_t   RTC_SCL_PIN    = 22;
+constexpr uint32_t RTC_RESYNC_MS  = 3600000; // push NTP time → RTC hourly once NTP is synced
 
 // ============================================================================
 // 5.  FALLBACK SCHEDULE  (used when server is unreachable)
@@ -118,7 +141,7 @@ struct Channel {
     const uint8_t pin;
     ChannelCfg    cfg;
     Phase         phase       = Phase::IDLE;
-    time_t        pulse_start = 0;
+    uint32_t      pulse_start = 0;  // millis() when current pulse began
     time_t        next_fire   = 0;
 
     explicit Channel(uint8_t p) : pin(p) {}
@@ -129,6 +152,9 @@ static ChannelCfg g_fallback_ch2;
 static Channel    g_ch1{ CH1_RELAY_PIN };
 static Channel    g_ch2{ CH2_RELAY_PIN };
 static bool       g_server_config_loaded = false;
+
+// RTC (optional) — set once at boot by rtc_detect(); false if no module wired
+static bool       g_rtc_present = false;
 
 // ============================================================================
 // 9.  HELPERS
@@ -190,6 +216,96 @@ static bool today_str(char buf[11]) {
     return true;
 }
 
+// == Generic I2C RTC driver (DS1307 / DS3231 / DS3232 compatible) =============
+// These chips share the same register layout for the clock/calendar
+// registers (0x00-0x06), which is why one driver works for "any" common
+// I2C RTC module without needing a chip-specific library. Times are kept
+// in *local* time, matching how the rest of this file already treats
+// time (see localtime_r / mktime usage above) — configTime()'s offset
+// applies equally here.
+
+static uint8_t bcd2dec(uint8_t v) { return static_cast<uint8_t>((v / 16) * 10 + (v % 16)); }
+static uint8_t dec2bcd(uint8_t v) { return static_cast<uint8_t>((v / 10) * 16 + (v % 10)); }
+
+// --- probe the I2C bus for an RTC at RTC_I2C_ADDR — false if nothing wired --
+static bool rtc_detect() {
+    Wire.beginTransmission(RTC_I2C_ADDR);
+    return Wire.endTransmission() == 0;
+}
+
+// --- read current time from the RTC into a tm struct -------------------------
+static bool rtc_read_time(struct tm &out) {
+    Wire.beginTransmission(RTC_I2C_ADDR);
+    Wire.write(static_cast<uint8_t>(0x00));
+    if (Wire.endTransmission(false) != 0) return false;
+    if (Wire.requestFrom(static_cast<int>(RTC_I2C_ADDR), 7) != 7) return false;
+
+    const uint8_t sec   = Wire.read();
+    const uint8_t min_  = Wire.read();
+    const uint8_t hour  = Wire.read();
+    Wire.read();  // day-of-week register — unused, mktime() derives it
+    const uint8_t mday  = Wire.read();
+    const uint8_t month = Wire.read();
+    const uint8_t year  = Wire.read();
+
+    out = {};
+    out.tm_sec  = bcd2dec(sec  & 0x7F);
+    out.tm_min  = bcd2dec(min_ & 0x7F);
+    out.tm_hour = bcd2dec(hour & 0x3F);       // masks 12h/AM-PM bits; module must be in 24h mode
+    out.tm_mday = bcd2dec(mday & 0x3F);
+    out.tm_mon  = bcd2dec(month & 0x1F) - 1;  // tm_mon is 0-11
+    out.tm_year = bcd2dec(year) + 100;        // RTC stores 00-99 for 2000-2099; tm_year is since 1900
+    out.tm_isdst = 0;
+
+    // Sanity check — catches an uninitialised/dead RTC (e.g. battery just inserted)
+    if (out.tm_mon < 0 || out.tm_mon > 11 || out.tm_mday < 1 || out.tm_mday > 31
+        || out.tm_hour > 23 || out.tm_min > 59 || out.tm_sec > 59) {
+        return false;
+    }
+    return true;
+}
+
+// --- write a tm struct to the RTC (used to correct RTC drift from NTP) ------
+static void rtc_write_time(const struct tm &t) {
+    Wire.beginTransmission(RTC_I2C_ADDR);
+    Wire.write(static_cast<uint8_t>(0x00));
+    Wire.write(dec2bcd(static_cast<uint8_t>(t.tm_sec)));
+    Wire.write(dec2bcd(static_cast<uint8_t>(t.tm_min)));
+    Wire.write(dec2bcd(static_cast<uint8_t>(t.tm_hour)));       // 24h mode
+    Wire.write(dec2bcd(static_cast<uint8_t>(t.tm_wday + 1)));   // day-of-week, 1-7
+    Wire.write(dec2bcd(static_cast<uint8_t>(t.tm_mday)));
+    Wire.write(dec2bcd(static_cast<uint8_t>(t.tm_mon + 1)));
+    Wire.write(dec2bcd(static_cast<uint8_t>(t.tm_year - 100)));
+    Wire.endTransmission();
+}
+
+// --- seed the ESP32 system clock from the RTC --------------------------------
+// Called at boot (before NTP has a chance to sync) and periodically while
+// waiting for NTP, so the controller can run its schedule using RTC time
+// alone whenever the server / WiFi / internet is unreachable.
+static bool rtc_seed_system_clock() {
+    struct tm t;
+    if (!rtc_read_time(t)) return false;
+    const time_t epoch = tm_to_epoch(t);
+    if (epoch <= 0) return false;
+    struct timeval tv = { epoch, 0 };
+    settimeofday(&tv, nullptr);
+    DBGF("[RTC] system clock set from RTC: %04d-%02d-%02d %02d:%02d:%02d\n",
+         t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
+    return true;
+}
+
+// --- push the current (NTP-synced) system time to the RTC -------------------
+// Called periodically once NTP is synced, so the RTC stays accurate long
+// term and is ready to take over the next time the server/network is down.
+static void rtc_sync_from_system() {
+    const time_t now = time(nullptr);
+    struct tm t;
+    if (!localtime_r(&now, &t)) return;
+    rtc_write_time(t);
+    DBGLN(F("[RTC] resynced from NTP"));
+}
+
 // --- is today in the skip_dates list? ----------------------------------------
 static bool is_skip_day(const ChannelCfg &cfg) {
     char today[11];
@@ -218,6 +334,28 @@ static String server_base_url() {
         return "http://" + g_server_ip.toString() + ":" + String(g_server_port);
     }
     return "http://" + String(FALLBACK_SERVER_IP) + ":" + String(SERVER_PORT);
+}
+
+// --- Log to Serial and server (non‑blocking fire‑and‑forget) -----------------
+static void esp_log(const char *msg) {
+    time_t now = time(nullptr);
+    struct tm t;
+    if (localtime_r(&now, &t)) {
+        Serial.printf("[%02d:%02d:%02d] %s\n", t.tm_hour, t.tm_min, t.tm_sec, msg);
+    } else {
+        Serial.println(msg);
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+        WiFiClient client;
+        HTTPClient http;
+        http.setTimeout(2000);
+        String url = server_base_url() + "/api/log";
+        if (http.begin(client, url)) {
+            http.addHeader("Content-Type", "application/json");
+            http.POST("{\"msg\":\"" + String(msg) + "\"}");
+            http.end();
+        }
+    }
 }
 
 // == HH:MM string → seconds since midnight ====================================
@@ -345,8 +483,8 @@ static bool fetch_hash() {
     http.end();
     if (err) return false;
     const char *h = doc["h"] | "";
-    if (h[0] == '\0') return false;
     const bool changed = (strcmp(h, g_cfg_hash) != 0);
+    if (changed) g_config_dirty = true;
     strncpy(g_cfg_hash, h, 8);
     g_cfg_hash[8] = '\0';
     return changed;
@@ -396,15 +534,11 @@ static bool fetch_schedule() {
     parse_channel_cfg(root["ch1"], g_ch1.cfg);
     parse_channel_cfg(root["ch2"], g_ch2.cfg);
 
-    DBGF("[JSON] ch1=%u slots %u skips  ch2=%u slots %u skips\n",
-         static_cast<unsigned>(g_ch1.cfg.schedule_len),
-         static_cast<unsigned>(g_ch1.cfg.skip_count),
-         static_cast<unsigned>(g_ch2.cfg.schedule_len),
-         static_cast<unsigned>(g_ch2.cfg.skip_count));
-
-    // Persist to NVS so ESP32 survives server outages
-    nvs_save_config();
-
+    // Persist to NVS only when config actually changed
+    if (g_config_dirty) {
+        nvs_save_config();
+        g_config_dirty = false;
+    }
     return true;
 }
 
@@ -473,18 +607,16 @@ static bool tick_channel(Channel &ch, const time_t now) {
         if (now >= ch.next_fire) {
             relay_write(ch.pin, true);
             ch.phase       = Phase::ACTIVE;
-            ch.pulse_start = now;
-            DBGF("CH%u  ON\n", ch.pin);
+            ch.pulse_start = millis();
+            esp_log((String("CH") + ch.pin + " ON  (" + ch.cfg.pulse_ms + "ms)").c_str());
             return true;
         }
     } else {
-        const uint32_t elapsed_s = static_cast<uint32_t>(now - ch.pulse_start);
-        if (elapsed_s * 1000U >= ch.cfg.pulse_ms) {
+        if (elapsed_since(ch.pulse_start) >= ch.cfg.pulse_ms) {
             relay_write(ch.pin, false);
             ch.phase = Phase::IDLE;
-            DBGF("CH%u  OFF\n", ch.pin);
-            recompute_next_fire(ch, ch.pulse_start + 1);
-            return true;
+            esp_log((String("CH") + ch.pin + " OFF").c_str());
+            recompute_next_fire(ch, now + 1);
         }
     }
     return false;
@@ -500,6 +632,7 @@ static uint32_t g_time_stall_since       = 0;
 static uint32_t g_last_schedule_refresh  = 0;
 static uint32_t g_last_poll              = 0;
 static uint32_t g_last_heartbeat         = 0;
+static uint32_t g_last_rtc_sync          = 0;
 
 void setup() {
     // --- GPIO: relays OFF immediately (fail‑safe) ---
@@ -565,20 +698,33 @@ void setup() {
     Serial.printf("Beacon: listening on UDP/%u  (fallback %s:%u)\n",
                   BEACON_PORT, FALLBACK_SERVER_IP, SERVER_PORT);
 
-    // --- Timezone ---
-    setenv("TZ", TZ_STRING, 1);
-    tzset();
+    // --- RTC (optional) — auto-detected, no wiring = no behavior change ---
+    if (RTC_SDA_PIN >= 0 && RTC_SCL_PIN >= 0) {
+        Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
+    } else {
+        Wire.begin();
+    }
+    g_rtc_present = rtc_detect();
+    if (g_rtc_present) {
+        Serial.println(F("RTC: module detected — seeding system clock from it"));
+        if (!rtc_seed_system_clock()) {
+            Serial.println(F("RTC: detected but read failed (uninitialised?) — waiting for NTP instead"));
+        }
+    } else {
+        Serial.println(F("RTC: none detected — using NTP-only time (original behavior)"));
+    }
 
-    // --- NTP ---
+    // --- NTP with timezone offset ---
     sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
     sntp_set_sync_interval(SNTP_SYNC_INTERVAL_MS);
-    configTime(0, 0, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
+    configTime(GMT_OFFSET_SEC, DAYLIGHT_SEC, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
 
     // Seed timers
     g_wifi_last_attempt     = millis();
     g_last_schedule_refresh = millis();
     g_last_poll             = millis();
     g_last_heartbeat        = millis();
+    g_last_rtc_sync         = millis();
 
     Serial.println(F("Setup done — waiting for NTP sync…"));
 }
@@ -614,6 +760,43 @@ void loop() {
         }
     }
 
+    // ── 10c2.  RTC (optional) ───────────────────────────────────────────
+    // If a module is present but we still don't have a valid time (e.g. the
+    // boot-time read failed, or NTP hasn't caught up yet), keep retrying
+    // every few seconds — this is the path that keeps the controller
+    // running its schedule even while the server/WiFi/internet is down.
+    static uint32_t s_last_rtc_retry = 0;
+    if (g_rtc_present && !time_is_valid()
+        && elapsed_since(s_last_rtc_retry) >= 5000U) {
+        rtc_seed_system_clock();
+        s_last_rtc_retry = now_ms;
+    }
+    // Once NTP has actually synced, periodically push the corrected time
+    // back to the RTC so it doesn't drift while waiting for the next
+    // server/network outage.
+    if (g_rtc_present && sntp_sync_done()
+        && elapsed_since(g_last_rtc_sync) >= RTC_RESYNC_MS) {
+        rtc_sync_from_system();
+        g_last_rtc_sync = now_ms;
+    }
+
+    // ── 10c3.  NTP first-sync correction ────────────────────────────────
+    // If schedules were already seeded from the RTC before NTP caught up,
+    // force one recompute + RTC resync as soon as NTP actually completes,
+    // so any RTC drift/error doesn't linger until the next hourly refresh.
+    static bool s_ntp_confirmed = false;
+    if (!s_ntp_confirmed && sntp_sync_done()) {
+        s_ntp_confirmed = true;
+        recompute_next_fire(g_ch1, now);
+        recompute_next_fire(g_ch2, now);
+        g_last_schedule_refresh = now_ms;
+        if (g_rtc_present) {
+            rtc_sync_from_system();
+            g_last_rtc_sync = now_ms;
+        }
+        DBGLN(F("[NTP] first sync confirmed — schedules recomputed from accurate time"));
+    }
+
     // ── 10d.  WiFi watchdog ────────────────────────────────────────────
     if (WiFi.status() != WL_CONNECTED) {
         if (elapsed_since(g_wifi_last_attempt) >= WIFI_RETRY_MS) {
@@ -625,15 +808,28 @@ void loop() {
         g_wifi_last_attempt = now_ms;
     }
 
-    // ── 10e.  Seed schedules on first valid NTP time ───────────────────
+    // ── 10e.  Seed / repair schedules whenever we have a valid time ────
+    // Note: deliberately NOT gated on sntp_sync_done() — a valid time can
+    // also come from the RTC while the server/NTP is unreachable, and the
+    // schedule should still run in that case.
     static bool s_schedules_seeded = false;
-    if (!s_schedules_seeded && time_is_valid() && sntp_sync_done()) {
-        recompute_next_fire(g_ch1, now);
-        recompute_next_fire(g_ch2, now);
-        s_schedules_seeded = true;
-        Serial.printf("NTP: synced  CH1 next=%lu  CH2 next=%lu\n",
-                      static_cast<unsigned long>(g_ch1.next_fire),
-                      static_cast<unsigned long>(g_ch2.next_fire));
+    if (time_is_valid()) {
+        if (!s_schedules_seeded) {
+            recompute_next_fire(g_ch1, now);
+            recompute_next_fire(g_ch2, now);
+            s_schedules_seeded = true;
+            Serial.printf("Time ready (%s)  CH1 next=%llu  CH2 next=%llu\n",
+                          sntp_sync_done() ? "NTP" : (g_rtc_present ? "RTC" : "unknown"),
+                          static_cast<unsigned long long>(g_ch1.next_fire),
+                          static_cast<unsigned long long>(g_ch2.next_fire));
+        }
+        // Safety net: if next_fire is 0 (recompute failed earlier), retry
+        if (g_ch1.next_fire == 0 && g_ch1.cfg.schedule_len > 0) {
+            recompute_next_fire(g_ch1, now);
+        }
+        if (g_ch2.next_fire == 0 && g_ch2.cfg.schedule_len > 0) {
+            recompute_next_fire(g_ch2, now);
+        }
     }
 
     // ── 10f.  Fast hash poll — detects changes within 5 s ──────────────
@@ -650,7 +846,8 @@ void loop() {
                 recompute_next_fire(g_ch1, now);
                 recompute_next_fire(g_ch2, now);
                 g_last_schedule_refresh = now_ms;
-                g_last_poll = now_ms;  // reset full poll timer too
+                g_last_poll = now_ms;
+                s_schedules_seeded = true;
             }
         }
         g_last_hash_poll = now_ms;
@@ -659,7 +856,6 @@ void loop() {
     // ── 10g.  Full schedule fetch — safety net every FULL_POLL_MS ──────
     if (WiFi.status() == WL_CONNECTED
         && elapsed_since(g_last_poll) >= FULL_POLL_MS) {
-        Serial.printf("Full poll: %s\n", server_base_url().c_str());
         if (fetch_schedule()) {
             if (!g_server_config_loaded) {
                 Serial.println(F("Poll: first server config"));
