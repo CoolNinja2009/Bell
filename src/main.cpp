@@ -20,6 +20,11 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <Wire.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEScan.h>
+#include <BLEAdvertisedDevice.h>
+#include <BLEClient.h>
 
 // ============================================================================
 // 0.  SERIAL OUTPUT  (always on for production visibility)
@@ -52,6 +57,16 @@ constexpr uint16_t SERVER_PORT         = 8080;          // HTTP port
 constexpr uint32_t HASH_POLL_MS      = 5000;          // quick change-detection poll
 constexpr uint32_t FULL_POLL_MS      = 30000;         // full schedule fetch
 constexpr uint32_t POLL_TIMEOUT_MS   = 8000;          // HTTP request timeout
+
+// ---------------------------------------------------------------------------
+// BLE discovery (optional) — scans for a BLE advertiser that provides the
+// server IP/port as a small JSON payload. Falls back to UDP beacon if not
+// available. These UUIDs must match whatever advertiser you run on the PC/RPi.
+// ---------------------------------------------------------------------------
+static const char BLE_SERVICE_UUID[] = "12345678-1234-5678-1234-56789abcdef0";
+static const char BLE_CHAR_UUID[]    = "abcdef01-1234-5678-1234-56789abcdef0";
+constexpr uint32_t BLE_SCAN_MS       = 5000;
+constexpr uint32_t BLE_RETRY_MS      = 30000;
 
 // Runtime — set by beacon, falls back to compiled constants
 static IPAddress g_server_ip;
@@ -441,6 +456,68 @@ static void check_beacon() {
     g_last_beacon_ms = millis();
 }
 
+// == BLE discovery: scan for advertiser, read JSON {ip,port[,token]} ========
+static bool attempt_ble_discovery(uint32_t timeout_ms) {
+    if (WiFi.status() != WL_CONNECTED) return false; // require WiFi so IP parsing makes sense
+
+    BLEDevice::init("");
+    BLEScan* pScan = BLEDevice::getScan();
+    pScan->setActiveScan(true);
+    const uint32_t seconds = (timeout_ms + 999) / 1000;
+    BLEScanResults results = pScan->start(seconds, false);
+    const int count = results.getCount();
+    for (int i = 0; i < count; ++i) {
+        BLEAdvertisedDevice adv = results.getDevice(i);
+        if (!adv.haveServiceUUID()) continue;
+        if (!adv.isAdvertisingService(BLEUUID(BLE_SERVICE_UUID))) continue;
+
+        // Try to connect and read the characteristic
+        BLEAddress addr = adv.getAddress();
+        BLEClient* pClient = BLEDevice::createClient();
+        if (!pClient) continue;
+        bool connected = false;
+        if (pClient->connect(addr)) {
+            connected = true;
+            BLERemoteService* svc = pClient->getService(BLEUUID(BLE_SERVICE_UUID));
+            if (svc) {
+                BLERemoteCharacteristic* ch = svc->getCharacteristic(BLEUUID(BLE_CHAR_UUID));
+                if (ch && ch->canRead()) {
+                    std::string val = ch->readValue();
+                    if (!val.empty()) {
+                        // parse JSON
+                        #pragma GCC diagnostic push
+                        #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+                        StaticJsonDocument<256> doc;
+                        #pragma GCC diagnostic pop
+                        DeserializationError err = deserializeJson(doc, val.c_str());
+                        if (!err) {
+                            const char* ip = doc["ip"] | "";
+                            int port = doc["port"] | 0;
+                            if (ip && port > 0) {
+                                IPAddress ipa;
+                                if (ipa.fromString(ip)) {
+                                    g_server_ip = ipa;
+                                    g_server_port = static_cast<uint16_t>(port);
+                                    g_server_seen = true;
+                                    g_last_beacon_ms = millis();
+                                    DBGF("[BLE] discovered server %s:%u\n",
+                                         g_server_ip.toString().c_str(), g_server_port);
+                                    pClient->disconnect();
+                                    delete pClient;
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (connected) pClient->disconnect();
+        delete pClient;
+    }
+    return false;
+}
+
 // == NVS helpers ==============================================================
 static void nvs_save_config() {
     Preferences prefs;
@@ -698,6 +775,16 @@ void setup() {
     Serial.printf("Beacon: listening on UDP/%u  (fallback %s:%u)\n",
                   BEACON_PORT, FALLBACK_SERVER_IP, SERVER_PORT);
 
+    // --- Attempt BLE discovery once at boot (if WiFi available) ---
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.println(F("BLE: attempting discovery at boot"));
+        if (attempt_ble_discovery(BLE_SCAN_MS)) {
+            Serial.println(F("BLE: server discovered via BLE"));
+        } else {
+            Serial.println(F("BLE: no advertiser found at boot"));
+        }
+    }
+
     // --- RTC (optional) — auto-detected, no wiring = no behavior change ---
     if (RTC_SDA_PIN >= 0 && RTC_SCL_PIN >= 0) {
         Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
@@ -742,6 +829,14 @@ void loop() {
         g_server_seen = false;
         g_server_ip.fromString(FALLBACK_SERVER_IP);
         g_server_port = SERVER_PORT;
+    }
+
+    // ── 10b2.  BLE retry (if no beacon seen yet) ───────────────────────
+    static uint32_t s_last_ble_attempt = 0;
+    if (!g_server_seen && elapsed_since(s_last_ble_attempt) >= BLE_RETRY_MS) {
+        DBGLN(F("[BLE] retrying discovery"));
+        attempt_ble_discovery(BLE_SCAN_MS);
+        s_last_ble_attempt = now_ms;
     }
 
     // ── 10c.  Time‑stall detection ─────────────────────────────────────
