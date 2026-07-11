@@ -2,4 +2,6 @@ node_modules/
 password.json
 secret.key
 schedule.json
+history.jsonl
+api_keys.json
 *.log

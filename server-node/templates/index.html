@@ -8,6 +8,7 @@
   :root {
     --bg:       #080c12;
     --panel:    #11171f;
+    --panel2:   #0d1219;
     --border:   #1c2736;
     --text:     #d4dce8;
     --dim:      #5e7088;
@@ -25,15 +26,16 @@
     background-image: radial-gradient(ellipse at 50% 0%, #111d2e 0%, var(--bg) 70%);
     color: var(--text);
     min-height: 100vh;
-    padding: 28px 32px;
+    padding: 28px 32px 60px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }
+  a { color: inherit; }
   header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 28px;
+    margin-bottom: 22px;
     flex-wrap: wrap;
     gap: 14px;
   }
@@ -55,12 +57,14 @@
   }
   .status-bar {
     display: flex;
-    gap: 22px;
+    gap: 10px;
     font-size: 0.8rem;
     color: var(--dim);
     font-weight: 500;
+    flex-wrap: wrap;
+    align-items: center;
   }
-  .status-bar > span {
+  .status-bar > span, .status-bar > a, .status-bar > button {
     display: flex;
     align-items: center;
     gap: 7px;
@@ -69,6 +73,9 @@
     border: 1px solid var(--border);
     border-radius: 20px;
   }
+  .status-bar a { text-decoration: none; color: var(--dim); cursor: pointer; }
+  .status-bar a:hover, .status-bar button:hover { border-color: #2e3d54; color: var(--text); }
+  .icon-btn { background: var(--panel); border: 1px solid var(--border); color: var(--dim); cursor: pointer; font-size: 0.8rem; font-family: inherit; font-weight: 600; }
   .dot {
     width: 9px; height: 9px;
     border-radius: 50%;
@@ -77,6 +84,9 @@
   }
   .dot.on  { background: var(--on);  box-shadow: 0 0 8px var(--on); }
   .dot.off { background: var(--off); }
+
+  .toolbar { display: flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(390px, 1fr));
@@ -97,14 +107,24 @@
     margin-bottom: 20px;
     padding-bottom: 14px;
     border-bottom: 1px solid var(--border);
+    gap: 10px;
   }
   .ch-header h2 {
     font-size: 1rem;
     font-weight: 700;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
+    letter-spacing: 0.3px;
     color: var(--text);
+    background: transparent;
+    border: none;
+    outline: none;
+    font-family: inherit;
+    width: 100%;
+    padding: 2px 0;
+    border-bottom: 1px dashed transparent;
   }
+  .ch-header h2:hover, .ch-header h2:focus { border-bottom-color: var(--border); }
+  .ch-header .ch-key { color: var(--dim); font-weight: 500; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; }
+  .ch-controls { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
   .toggle {
     position: relative;
     width: 46px; height: 26px;
@@ -127,6 +147,8 @@
     transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   }
   .toggle.active::after { transform: translateX(20px); }
+  .icon-x { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 1rem; padding: 2px 4px; opacity: 0.7; }
+  .icon-x:hover { opacity: 1; color: var(--danger); }
   .field { margin-bottom: 16px; }
   .field label {
     display: block;
@@ -139,7 +161,9 @@
   }
   .field input[type="number"],
   .field input[type="date"],
-  .field input[type="time"] {
+  .field input[type="time"],
+  .field input[type="text"],
+  .field input[type="password"] {
     width: 100%;
     background: #0a0f16;
     border: 1px solid var(--border);
@@ -211,17 +235,30 @@
     cursor: pointer;
     transition: all 0.2s;
     letter-spacing: 0.3px;
+    font-family: inherit;
   }
   .btn:hover { transform: translateY(-1px); }
   .btn:active { transform: translateY(0); }
+  .btn:disabled { opacity: 0.5; cursor: default; transform: none; }
   .btn-save {
     background: linear-gradient(135deg, var(--accent), #00b38a);
     color: #000;
     box-shadow: 0 2px 12px rgba(0,212,160,0.25);
   }
   .btn-save:hover { box-shadow: 0 4px 18px rgba(0,212,160,0.4); }
+  .btn-run {
+    background: linear-gradient(135deg, var(--accent2), #c67c1f);
+    color: #000;
+  }
   .btn-add { background: #15262e; color: var(--accent); border: 1px solid #1e3a3a; }
   .btn-add:hover { background: #1a3038; }
+  .btn-ghost { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+  .btn-ghost:hover { border-color: #2e3d54; }
+  .btn-danger { background: rgba(224,85,106,0.12); color: var(--danger); border: 1px solid rgba(224,85,106,0.35); }
+  .btn-danger:hover { background: rgba(224,85,106,0.2); }
+  .btn-row { display: flex; gap: 8px; margin-top: 8px; }
+  .btn-row .btn { flex: 1; }
+
   .toast {
     position: fixed;
     bottom: 28px;
@@ -236,21 +273,22 @@
     transform: translateY(24px);
     transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
     pointer-events: none;
-    z-index: 100;
+    z-index: 200;
     box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    max-width: 360px;
   }
   .toast.show  { opacity: 1; transform: translateY(0); }
   .toast.error { background: var(--danger); color: #fff; }
 
-  /* ── Log panel ───────────────────────────── */
-  .log-panel {
+  /* ── Collapsible panels ──────────────────── */
+  .panel {
     margin-top: 22px;
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow: hidden;
   }
-  .log-header {
+  .panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -262,50 +300,137 @@
     letter-spacing: 0.4px;
     user-select: none;
   }
-  .log-header:hover { background: #0d131c; }
-  .log-header .arrow { transition: transform 0.25s; font-size: 0.7rem; }
-  .log-panel.collapsed .log-header .arrow { transform: rotate(-90deg); }
-  .log-panel.collapsed .log-body { display: none; }
-  .log-body {
-    max-height: 220px;
-    overflow-y: auto;
-    padding: 10px 22px 14px;
-    font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
-    font-size: 0.76rem;
-    line-height: 1.7;
-  }
+  .panel-header:hover { background: #0d131c; }
+  .panel-header .arrow { transition: transform 0.25s; font-size: 0.7rem; }
+  .panel.collapsed .panel-header .arrow { transform: rotate(-90deg); }
+  .panel.collapsed .panel-body { display: none; }
+  .panel-body { padding: 16px 22px 20px; }
+
+  /* ── Device log ──────────────────────────── */
+  .log-body { max-height: 220px; overflow-y: auto; font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", "Consolas", monospace; font-size: 0.76rem; line-height: 1.7; padding: 0; }
   .log-line { animation: slideIn 0.25s ease; }
   @keyframes slideIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: translateX(0); } }
   .log-time { color: var(--dim); margin-right: 10px; font-weight: 500; }
   .log-msg  { color: var(--text); }
-  .log-body::-webkit-scrollbar { width: 5px; }
-  .log-body::-webkit-scrollbar-track { background: transparent; }
-  .log-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── History / analytics ─────────────────── */
+  .hist-toolbar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+  .hist-toolbar select { background: #0a0f16; border: 1px solid var(--border); color: var(--text); padding: 7px 10px; border-radius: 8px; font-size: 0.78rem; font-family: inherit; }
+  .chart { display: flex; align-items: flex-end; gap: 4px; height: 90px; margin-bottom: 18px; padding: 4px 0; }
+  .chart .bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 4px; }
+  .chart .bar { width: 100%; max-width: 22px; background: linear-gradient(180deg, var(--accent), #00b38a44); border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
+  .chart .bar-label { font-size: 0.62rem; color: var(--dim); white-space: nowrap; }
+  table.hist-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+  table.hist-table th { text-align: left; color: var(--dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; font-size: 0.68rem; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  table.hist-table td { padding: 7px 10px; border-bottom: 1px solid #161f2b; color: var(--text); }
+  table.hist-table tr:hover td { background: #0d131c; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
+  .pill.manual { background: rgba(240,160,64,0.15); color: var(--accent2); }
+  .pill.schedule { background: rgba(0,212,160,0.15); color: var(--accent); }
+  .pill.edit { background: rgba(94,112,136,0.2); color: var(--dim); }
+  .empty-hint { color: var(--dim); font-size: 0.82rem; padding: 6px 2px; }
+
+  /* ── Modal (settings) ────────────────────── */
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: flex-start; justify-content: center; padding: 40px 16px; z-index: 300; overflow-y: auto; }
+  .modal-backdrop.show { display: flex; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); width: 100%; max-width: 480px; padding: 26px 26px 20px; }
+  .modal h3 { font-size: 1.02rem; margin-bottom: 4px; }
+  .modal .sub { color: var(--dim); font-size: 0.78rem; margin-bottom: 18px; }
+  .modal-close { float: right; background: none; border: none; color: var(--dim); font-size: 1.2rem; cursor: pointer; }
+  .settings-section { border-top: 1px solid var(--border); padding-top: 18px; margin-top: 18px; }
+  .settings-section:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+  .settings-section h4 { font-size: 0.82rem; margin-bottom: 10px; letter-spacing: 0.3px; }
+  .key-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 0; border-bottom: 1px solid #161f2b; font-size: 0.8rem; }
+  .key-row:last-child { border-bottom: none; }
+  .key-row .meta { color: var(--dim); font-size: 0.7rem; }
+  .key-reveal { background: #0a0f16; border: 1px solid var(--accent); border-radius: 8px; padding: 10px 12px; font-family: monospace; font-size: 0.78rem; word-break: break-all; margin-top: 8px; color: var(--accent); }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
 
 <header>
   <h1>Relay Controller</h1>
-  <div class="status-bar">
+  <div class="status-bar" id="status-bar">
     <span><span class="dot" id="srv-dot"></span> Server <span id="srv-uptime">—</span></span>
-    <span id="hb-ch1"><span class="dot off"></span> CH1 waiting</span>
-    <span id="hb-ch2"><span class="dot off"></span> CH2 waiting</span>
-    <span><a href="/logout" style="color: var(--dim); text-decoration: none;">Log out</a></span>
+    <div id="hb-container" style="display:contents"></div>
+    <button class="icon-btn" id="btn-settings" title="Settings">&#9881; Settings</button>
+    <a href="/logout">Log out</a>
   </div>
 </header>
 
+<div class="toolbar">
+  <button class="btn btn-add" id="btn-add-channel">+ Add Channel</button>
+  <button class="btn btn-ghost" id="btn-backup">&#8681; Backup</button>
+  <button class="btn btn-ghost" id="btn-restore">&#8679; Restore</button>
+  <input type="file" id="restore-file" accept="application/json" class="hidden">
+</div>
+
 <div class="grid" id="channels"></div>
 
-<div class="log-panel" id="log-panel">
-  <div class="log-header" onclick="document.getElementById('log-panel').classList.toggle('collapsed')">
-    <span>Event Log <span id="log-count" style="color:var(--dim)">(0)</span></span>
+<!-- ── History & analytics ─────────────────────────────────────── -->
+<div class="panel" id="hist-panel">
+  <div class="panel-header" data-toggle="hist-panel">
+    <span>History &amp; Analytics <span id="hist-count" style="color:var(--dim)">(0)</span></span>
     <span class="arrow">&#9660;</span>
   </div>
-  <div class="log-body" id="log-body"></div>
+  <div class="panel-body">
+    <div class="hist-toolbar">
+      <select id="hist-filter-ch"><option value="">All channels</option></select>
+      <select id="hist-filter-trigger">
+        <option value="">All events</option>
+        <option value="manual">Manual</option>
+        <option value="schedule">Scheduled</option>
+        <option value="edit">Config changes</option>
+      </select>
+      <button class="btn btn-ghost" id="btn-hist-refresh" style="padding:7px 14px;">Refresh</button>
+      <a class="btn btn-ghost" id="btn-hist-export" style="padding:7px 14px; text-decoration:none;">Export CSV</a>
+    </div>
+    <div class="chart" id="hist-chart"></div>
+    <div id="hist-table-wrap"><table class="hist-table"><thead><tr><th>Time</th><th>Channel</th><th>Event</th><th>Detail</th></tr></thead><tbody id="hist-tbody"></tbody></table></div>
+  </div>
+</div>
+
+<!-- ── Raw device log (unchanged behavior) ─────────────────────── -->
+<div class="panel collapsed" id="log-panel">
+  <div class="panel-header" data-toggle="log-panel">
+    <span>Device Log <span id="log-count" style="color:var(--dim)">(0)</span></span>
+    <span class="arrow">&#9660;</span>
+  </div>
+  <div class="panel-body log-body" id="log-body"></div>
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- ── Settings modal ───────────────────────────────────────────── -->
+<div class="modal-backdrop" id="settings-backdrop">
+  <div class="modal">
+    <button class="modal-close" id="btn-close-settings">&times;</button>
+    <h3>Settings</h3>
+    <div class="sub">Account &amp; integrations</div>
+
+    <div class="settings-section">
+      <h4>Change Password</h4>
+      <div class="field"><label>Current password</label><input type="password" id="pw-current"></div>
+      <div class="field"><label>New password</label><input type="password" id="pw-next"></div>
+      <div class="field"><label>Confirm new password</label><input type="password" id="pw-confirm"></div>
+      <button class="btn btn-save" id="btn-change-pw" style="width:100%;">Update Password</button>
+    </div>
+
+    <div class="settings-section">
+      <h4>API Keys <span style="color:var(--dim);font-weight:400;">— for Home Assistant, cron, shortcuts, etc.</span></h4>
+      <div id="keys-list"></div>
+      <div class="add-row" style="margin-top:10px;">
+        <input type="text" id="key-name" placeholder="Key name, e.g. home-assistant">
+        <button class="btn btn-add" id="btn-create-key">+ Create</button>
+      </div>
+      <div id="key-reveal-box" class="hidden">
+        <div class="key-reveal" id="key-reveal-text"></div>
+        <div class="empty-hint">Copy this now — it won't be shown again. Send it as header <code>X-API-Key</code>.</div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 // ── Helpers ────────────────────────────────────────────────────────
@@ -316,13 +441,17 @@ let schedule = null;
 
 async function api(method, path, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
-  if (body) opts.body = JSON.stringify(body);
+  if (body !== undefined) opts.body = JSON.stringify(body);
   const res = await fetch(path, opts);
   if (res.status === 401) {
     window.location.href = '/login';
     throw new Error('Session expired');
   }
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    let msg = `${res.status} ${res.statusText}`;
+    try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
+    throw new Error(msg);
+  }
   return res.json();
 }
 
@@ -331,26 +460,40 @@ function toast(msg, isErr) {
   el.textContent = msg;
   el.className = 'toast' + (isErr ? ' error' : '') + ' show';
   clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove('show'), 2200);
+  el._t = setTimeout(() => el.classList.remove('show'), 2400);
 }
 
-// ── Render ─────────────────────────────────────────────────────────
+document.addEventListener('click', (e) => {
+  const header = e.target.closest('[data-toggle]');
+  if (header) $('#' + header.dataset.toggle).classList.toggle('collapsed');
+});
+
+// ── Channels: render ──────────────────────────────────────────────
 function renderAll(data) {
   schedule = data;
   $('#channels').innerHTML = '';
   for (const [key, ch] of Object.entries(data)) {
     renderChannel(key, ch);
   }
+  renderHeartbeatSlots(Object.keys(data));
+  refreshHistFilterOptions(Object.keys(data));
 }
 
 function renderChannel(key, ch) {
   const div = document.createElement('div');
   div.className = 'channel';
   div.dataset.key = key;
+  const label = ch.label || key.toUpperCase();
   div.innerHTML = `
     <div class="ch-header">
-      <h2>${key.toUpperCase()}</h2>
-      <button class="toggle${ch.enabled ? ' active' : ''}" data-action="toggle"></button>
+      <div style="flex:1;min-width:0;">
+        <h2 contenteditable="true" spellcheck="false" data-field="label">${escapeHtml(label)}</h2>
+        <div class="ch-key">${escapeHtml(key)}</div>
+      </div>
+      <div class="ch-controls">
+        <button class="toggle${ch.enabled ? ' active' : ''}" data-action="toggle" title="Enable/disable schedule"></button>
+        <button class="icon-x" data-action="delete" title="Delete channel">&times;</button>
+      </div>
     </div>
     <div class="field">
       <label>Pulse Duration (ms)</label>
@@ -376,13 +519,51 @@ function renderChannel(key, ch) {
         <button class="btn btn-add" data-add="skip_dates">+ Add</button>
       </div>
     </div>
-    <button class="btn btn-save" data-action="save" style="width:100%;margin-top:8px;">Save ${key.toUpperCase()}</button>
+    <div class="btn-row">
+      <button class="btn btn-run" data-action="run">&#9654; Run Now</button>
+      <button class="btn btn-save" data-action="save">Save</button>
+    </div>
   `;
+
+  // Label edit
+  const labelEl = div.querySelector('[data-field="label"]');
+  labelEl.addEventListener('blur', () => {
+    const v = labelEl.textContent.trim().slice(0, 40) || key.toUpperCase();
+    ch.label = v;
+  });
+  labelEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); labelEl.blur(); } });
 
   // Toggle
   div.querySelector('[data-action="toggle"]').onclick = () => {
     ch.enabled = !ch.enabled;
     renderAll(schedule);
+  };
+
+  // Delete channel
+  div.querySelector('[data-action="delete"]').onclick = async () => {
+    if (Object.keys(schedule).length <= 1) { toast('At least one channel must remain', true); return; }
+    if (!confirm(`Delete channel '${key}'? This cannot be undone.`)) return;
+    try {
+      await api('DELETE', `/api/channels/${encodeURIComponent(key)}`);
+      delete schedule[key];
+      renderAll(schedule);
+      toast(`${key.toUpperCase()} deleted`);
+    } catch (e) { toast('Delete failed: ' + e.message, true); }
+  };
+
+  // Manual run
+  div.querySelector('[data-action="run"]').onclick = async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      const r = await api('POST', `/api/relay/${encodeURIComponent(key)}/trigger`, { pulse_ms: ch.pulse_ms });
+      toast(`${key.toUpperCase()} triggered (${r.pulse_ms}ms) — queued for device`);
+      loadHistory();
+    } catch (e2) {
+      toast('Trigger failed: ' + e2.message, true);
+    } finally {
+      btn.disabled = false;
+    }
   };
 
   // Pulse ms change
@@ -437,35 +618,72 @@ function renderChannel(key, ch) {
   $('#channels').appendChild(div);
 }
 
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Add channel ────────────────────────────────────────────────────
+$('#btn-add-channel').onclick = async () => {
+  const key = prompt('Channel key (letters/numbers, must start with a letter, e.g. "pump" or "ch3"):');
+  if (!key) return;
+  const label = prompt('Display label (optional):', key.toUpperCase()) || key.toUpperCase();
+  try {
+    await api('POST', '/api/channels', { key: key.trim(), label });
+    toast(`Channel '${key}' added`);
+    boot();
+  } catch (e) { toast('Add failed: ' + e.message, true); }
+};
+
+// ── Backup / restore ──────────────────────────────────────────────
+$('#btn-backup').onclick = () => { window.location.href = '/api/backup'; };
+$('#btn-restore').onclick = () => $('#restore-file').click();
+$('#restore-file').onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!confirm('Restore will overwrite the current schedule (and history, if included). Continue?')) return;
+    await api('POST', '/api/restore', data);
+    toast('Restored from backup');
+    boot();
+    loadHistory();
+  } catch (e2) {
+    toast('Restore failed: ' + e2.message, true);
+  } finally {
+    e.target.value = '';
+  }
+};
+
+// ── Heartbeats (dynamic per-channel) ─────────────────────────────
+function renderHeartbeatSlots(keys) {
+  const container = $('#hb-container');
+  container.innerHTML = keys.map(k => `<span id="hb-${k}"><span class="dot off"></span> ${k.toUpperCase()} waiting</span>`).join('');
+}
+
+function updateHB(key, sec) {
+  const el = document.getElementById('hb-' + key);
+  if (!el) return;
+  if (sec === undefined || sec === null) {
+    el.innerHTML = '<span class="dot off"></span> ' + key.toUpperCase() + ' waiting';
+    return;
+  }
+  const alive = sec < 120;
+  el.innerHTML = '<span class="dot ' + (alive ? 'on' : 'off') + '"></span> ' + key.toUpperCase() + ' ' + sec + 's ago';
+}
+
 // ── Status poll ────────────────────────────────────────────────────
 async function pollStatus() {
   try {
     const s = await api('GET', '/api/status?_=' + Date.now());
     $('#srv-dot').className = 'dot on';
     $('#srv-uptime').textContent = fmtUptime(s.server_uptime);
-
     const hb = s.heartbeats || {};
-    updateHB('hb-ch1', hb['ch1']);
-    updateHB('hb-ch2', hb['ch2']);
-
-    console.log('status', s);   // ← open browser DevTools (F12) to inspect
+    const keys = schedule ? Object.keys(schedule) : Object.keys(hb);
+    for (const k of keys) updateHB(k, hb[k]);
   } catch (e) {
-    console.warn('status poll failed', e);
     $('#srv-dot').className = 'dot off';
-    // Show waiting state for channels too
-    updateHB('hb-ch1', undefined);
-    updateHB('hb-ch2', undefined);
   }
-}
-
-function updateHB(id, sec) {
-  const el = $('#' + id);
-  if (sec === undefined || sec === null) {
-    el.innerHTML = '<span class="dot off"></span> ' + id.slice(3).toUpperCase() + ' waiting';
-    return;
-  }
-  const alive = sec < 120;
-  el.innerHTML = '<span class="dot ' + (alive ? 'on' : 'off') + '"></span> ' + id.slice(3).toUpperCase() + ' ' + sec + 's ago';
 }
 
 function fmtUptime(s) {
@@ -473,16 +691,164 @@ function fmtUptime(s) {
   return h ? h + 'h ' + m + 'm' : m + 'm ' + Math.floor(s%60) + 's';
 }
 
+// ── Device log (unchanged, just repainted into the new panel) ────
+async function pollLog() {
+  try {
+    const entries = await api('GET', '/api/log?_=' + Date.now());
+    $('#log-count').textContent = `(${entries.length})`;
+    $('#log-body').innerHTML = entries.slice().reverse().map(e =>
+      `<div class="log-line"><span class="log-time">${e.t}</span><span class="log-msg">${escapeHtml(e.msg)}</span></div>`
+    ).join('') || '<div class="empty-hint">No device log entries yet.</div>';
+  } catch (e) { /* non-fatal */ }
+}
+
+// ── History & analytics ──────────────────────────────────────────
+function refreshHistFilterOptions(keys) {
+  const sel = $('#hist-filter-ch');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">All channels</option>' + keys.map(k => `<option value="${k}">${k.toUpperCase()}</option>`).join('');
+  sel.value = keys.includes(current) ? current : '';
+}
+
+function historyQuery() {
+  const params = new URLSearchParams();
+  const ch = $('#hist-filter-ch').value;
+  const trig = $('#hist-filter-trigger').value;
+  if (ch) params.set('ch', ch);
+  if (trig) params.set('trigger', trig);
+  params.set('limit', '300');
+  return params.toString();
+}
+
+async function loadHistory() {
+  try {
+    const entries = await api('GET', '/api/history?' + historyQuery());
+    $('#hist-count').textContent = `(${entries.length})`;
+    renderHistTable(entries);
+    renderHistChart(entries);
+    $('#btn-hist-export').href = '/api/history/export?' + historyQuery();
+  } catch (e) { /* non-fatal */ }
+}
+
+function renderHistTable(entries) {
+  const tbody = $('#hist-tbody');
+  if (!entries.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty-hint">No history yet — manual triggers, schedule saves, and device-confirmed runs will show up here.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = entries.map(e => {
+    const d = new Date(e.ts);
+    const time = d.toLocaleString();
+    const trigClass = e.trigger === 'manual' ? 'manual' : (e.trigger === 'edit' ? 'edit' : 'schedule');
+    let detail = e.status || '';
+    if (e.pulse_ms) detail += ` · ${e.pulse_ms}ms`;
+    if (e.note) detail += ` · ${escapeHtml(e.note)}`;
+    return `<tr><td>${time}</td><td>${escapeHtml((e.ch||'').toUpperCase())}</td><td><span class="pill ${trigClass}">${escapeHtml(e.trigger||'')}</span></td><td>${detail}</td></tr>`;
+  }).join('');
+}
+
+function renderHistChart(entries) {
+  // Runs per day for the last 14 days (manual + schedule + executed only)
+  const days = [];
+  const now = new Date();
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+  const counts = Object.fromEntries(days.map(d => [d, 0]));
+  for (const e of entries) {
+    if (!['manual', 'schedule'].includes(e.trigger)) continue;
+    const day = (e.ts || '').slice(0, 10);
+    if (day in counts) counts[day]++;
+  }
+  const max = Math.max(1, ...Object.values(counts));
+  const chart = $('#hist-chart');
+  chart.innerHTML = days.map(d => {
+    const c = counts[d];
+    const h = Math.round((c / max) * 100);
+    const label = d.slice(5); // MM-DD
+    return `<div class="bar-wrap" title="${d}: ${c} run(s)"><div class="bar" style="height:${Math.max(h,2)}%"></div><div class="bar-label">${label}</div></div>`;
+  }).join('');
+}
+
+$('#btn-hist-refresh').onclick = loadHistory;
+$('#hist-filter-ch').onchange = loadHistory;
+$('#hist-filter-trigger').onchange = loadHistory;
+
+// ── Settings modal ────────────────────────────────────────────────
+$('#btn-settings').onclick = () => {
+  $('#settings-backdrop').classList.add('show');
+  loadKeys();
+};
+$('#btn-close-settings').onclick = () => $('#settings-backdrop').classList.remove('show');
+$('#settings-backdrop').onclick = (e) => { if (e.target.id === 'settings-backdrop') $('#settings-backdrop').classList.remove('show'); };
+
+$('#btn-change-pw').onclick = async () => {
+  const current = $('#pw-current').value;
+  const next = $('#pw-next').value;
+  const confirmPw = $('#pw-confirm').value;
+  if (!current || !next) { toast('Fill in all password fields', true); return; }
+  if (next !== confirmPw) { toast('New passwords do not match', true); return; }
+  try {
+    await api('POST', '/api/account/password', { current, next });
+    toast('Password updated');
+    $('#pw-current').value = ''; $('#pw-next').value = ''; $('#pw-confirm').value = '';
+  } catch (e) { toast('Failed: ' + e.message, true); }
+};
+
+async function loadKeys() {
+  try {
+    const keys = await api('GET', '/api/keys?_=' + Date.now());
+    const list = $('#keys-list');
+    list.innerHTML = keys.length ? keys.map(k => `
+      <div class="key-row">
+        <div>
+          <div>${escapeHtml(k.name)}</div>
+          <div class="meta">${escapeHtml(k.prefix)}… · created ${new Date(k.created).toLocaleDateString()}${k.last_used ? ' · last used ' + new Date(k.last_used).toLocaleDateString() : ' · never used'}</div>
+        </div>
+        <button class="btn btn-danger" style="padding:6px 12px;" data-revoke="${k.id}">Revoke</button>
+      </div>
+    `).join('') : '<div class="empty-hint">No API keys yet.</div>';
+    list.querySelectorAll('[data-revoke]').forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm('Revoke this API key? Anything using it will stop working immediately.')) return;
+        try { await api('DELETE', `/api/keys/${btn.dataset.revoke}`); toast('Key revoked'); loadKeys(); }
+        catch (e) { toast('Failed: ' + e.message, true); }
+      };
+    });
+  } catch (e) { /* non-fatal */ }
+}
+
+$('#btn-create-key').onclick = async () => {
+  const name = $('#key-name').value.trim();
+  try {
+    const created = await api('POST', '/api/keys', { name });
+    $('#key-reveal-box').classList.remove('hidden');
+    $('#key-reveal-text').textContent = created.key;
+    $('#key-name').value = '';
+    loadKeys();
+  } catch (e) { toast('Failed: ' + e.message, true); }
+};
+
 // ── Boot ───────────────────────────────────────────────────────────
-(async () => {
+async function boot() {
   try {
     const data = await api('GET', '/api/schedule?_=' + Date.now());
     renderAll(data);
   } catch (e) {
     toast('Failed to load schedule', true);
   }
+}
+
+(async () => {
+  await boot();
   pollStatus();
+  pollLog();
+  loadHistory();
   setInterval(pollStatus, 5000);
+  setInterval(pollLog, 8000);
+  setInterval(loadHistory, 20000);
 })();
 </script>
 </body>
