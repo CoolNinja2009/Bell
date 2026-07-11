@@ -39,13 +39,12 @@ constexpr uint8_t  CH2_RELAY_PIN     = 27;
 constexpr bool     RELAY_ACTIVE_HIGH = false;  // false → LOW = relay closed (most modules)
                                                 // false → LOW  = relay closed
 
-// ============================================================================
-// 2.  WIFI
-// ============================================================================
-constexpr char     WIFI_SSID[]       = "chitkala";
-constexpr char     WIFI_PASS[]       = "Ksabh279";
-constexpr uint32_t WIFI_RETRY_MS     = 30000;
-constexpr uint32_t WIFI_CONNECT_MS   = 15000;
+// Server channel keys mapped to the two physical relay outputs. server-node
+// can now create channels such as "bell"; the ESP32 still has two outputs.
+static const char *CH1_SERVER_KEYS[] = { "ch1", "bell" };
+static const char *CH2_SERVER_KEYS[] = { "ch2" };
+
+#include "wifi_config.h"
 
 // ============================================================================
 // 3.  SERVER DISCOVERY  (beacon + fallback)
@@ -57,6 +56,7 @@ constexpr uint16_t SERVER_PORT         = 8080;          // HTTP port
 constexpr uint32_t HASH_POLL_MS      = 5000;          // quick change-detection poll
 constexpr uint32_t FULL_POLL_MS      = 30000;         // full schedule fetch
 constexpr uint32_t POLL_TIMEOUT_MS   = 8000;          // HTTP request timeout
+constexpr uint32_t COMMAND_POLL_MS   = 1000;          // manual "run now" poll
 
 // ---------------------------------------------------------------------------
 // BLE discovery (optional) — scans for a BLE advertiser that provides the
@@ -79,7 +79,8 @@ static WiFiUDP   g_udp;
 static const char NVS_NS[]   = "relay";        // Preferences namespace
 static char       g_cfg_hash[9] = {0};         // last known MD5 (8 hex + null)
 static String     g_raw_config;                // last full server response
-static bool       g_config_dirty = true;       // true → needs NVS save (first boot)
+static bool       g_nvs_has_config = false;    // true when a valid config was loaded/saved
+static bool       g_config_dirty = false;      // true -> needs NVS save
 
 // ============================================================================
 // 4.  TIMEZONE & NTP
@@ -154,18 +155,23 @@ struct ChannelCfg {
 
 struct Channel {
     const uint8_t pin;
+    const char *const *server_keys;
+    const size_t server_key_count;
     ChannelCfg    cfg;
+    char          schedule_key[21] = {0};
     Phase         phase       = Phase::IDLE;
     uint32_t      pulse_start = 0;  // millis() when current pulse began
+    uint32_t      active_pulse_ms = 0;
     time_t        next_fire   = 0;
 
-    explicit Channel(uint8_t p) : pin(p) {}
+    Channel(uint8_t p, const char *const *keys, size_t key_count)
+        : pin(p), server_keys(keys), server_key_count(key_count) {}
 };
 
 static ChannelCfg g_fallback_ch1;
 static ChannelCfg g_fallback_ch2;
-static Channel    g_ch1{ CH1_RELAY_PIN };
-static Channel    g_ch2{ CH2_RELAY_PIN };
+static Channel    g_ch1{ CH1_RELAY_PIN, CH1_SERVER_KEYS, sizeof(CH1_SERVER_KEYS) / sizeof(CH1_SERVER_KEYS[0]) };
+static Channel    g_ch2{ CH2_RELAY_PIN, CH2_SERVER_KEYS, sizeof(CH2_SERVER_KEYS) / sizeof(CH2_SERVER_KEYS[0]) };
 static bool       g_server_config_loaded = false;
 
 // RTC (optional) — set once at boot by rtc_detect(); false if no module wired
@@ -425,6 +431,39 @@ static bool parse_channel_cfg(JsonObject root, ChannelCfg &cfg) {
     return true;
 }
 
+static const char *primary_channel_key(const Channel &ch) {
+    if (ch.schedule_key[0] != '\0') return ch.schedule_key;
+    return (ch.server_key_count > 0 && ch.server_keys[0]) ? ch.server_keys[0] : "unknown";
+}
+
+static JsonObject find_channel_object(JsonObject root, const Channel &ch, const char **matched_key) {
+    for (size_t i = 0; i < ch.server_key_count; ++i) {
+        const char *key = ch.server_keys[i];
+        if (!key) continue;
+        JsonVariant v = root[key];
+        if (v.is<JsonObject>()) {
+            if (matched_key) *matched_key = key;
+            return v.as<JsonObject>();
+        }
+    }
+    if (matched_key) *matched_key = nullptr;
+    return JsonObject();
+}
+
+static bool parse_channel_cfg_from_keys(JsonObject root, Channel &ch) {
+    const char *matched_key = nullptr;
+    JsonObject obj = find_channel_object(root, ch, &matched_key);
+    if (obj.isNull()) return false;
+    const bool mapping_changed = strncmp(ch.schedule_key, matched_key, sizeof(ch.schedule_key)) != 0;
+    parse_channel_cfg(obj, ch.cfg);
+    strncpy(ch.schedule_key, matched_key, sizeof(ch.schedule_key) - 1);
+    ch.schedule_key[sizeof(ch.schedule_key) - 1] = '\0';
+    if (mapping_changed) {
+        DBGF("[JSON] %s mapped to GPIO%u\n", matched_key, ch.pin);
+    }
+    return true;
+}
+
 // == UDP beacon listener — call every loop iteration ==========================
 static void check_beacon() {
     const int sz = g_udp.parsePacket();
@@ -525,6 +564,7 @@ static void nvs_save_config() {
     prefs.putString("hash", g_cfg_hash);
     prefs.putString("cfg",  g_raw_config);
     prefs.end();
+    g_nvs_has_config = true;
     DBGLN(F("[NVS] config saved"));
 }
 
@@ -537,6 +577,8 @@ static bool nvs_load_config() {
     if (hash.length() == 0 || g_raw_config.length() == 0) return false;
     strncpy(g_cfg_hash, hash.c_str(), 8);
     g_cfg_hash[8] = '\0';
+    g_nvs_has_config = true;
+    g_config_dirty = false;
     DBGF("[NVS] loaded config  hash=%s  bytes=%u\n", g_cfg_hash,
          static_cast<unsigned>(g_raw_config.length()));
     return true;
@@ -560,8 +602,9 @@ static bool fetch_hash() {
     http.end();
     if (err) return false;
     const char *h = doc["h"] | "";
+    if (strlen(h) != 8) return false;
     const bool changed = (strcmp(h, g_cfg_hash) != 0);
-    if (changed) g_config_dirty = true;
+    if (changed || !g_nvs_has_config) g_config_dirty = true;
     strncpy(g_cfg_hash, h, 8);
     g_cfg_hash[8] = '\0';
     return changed;
@@ -603,16 +646,15 @@ static bool fetch_schedule() {
     }
 
     JsonObject root = doc.as<JsonObject>();
-    if (root["ch1"].isNull() || root["ch2"].isNull()) {
-        DBGLN(F("[JSON] missing ch1/ch2 keys"));
+    const bool ch1_loaded = parse_channel_cfg_from_keys(root, g_ch1);
+    const bool ch2_loaded = parse_channel_cfg_from_keys(root, g_ch2);
+    if (!ch1_loaded && !ch2_loaded) {
+        DBGLN(F("[JSON] no configured relay channel keys found"));
         return false;
     }
 
-    parse_channel_cfg(root["ch1"], g_ch1.cfg);
-    parse_channel_cfg(root["ch2"], g_ch2.cfg);
-
     // Persist to NVS only when config actually changed
-    if (g_config_dirty) {
+    if (g_config_dirty && strlen(g_cfg_hash) == 8) {
         nvs_save_config();
         g_config_dirty = false;
     }
@@ -634,6 +676,75 @@ static void send_heartbeat(const char *ch) {
     }
 }
 
+static void send_heartbeats(Channel &ch) {
+    for (size_t i = 0; i < ch.server_key_count; ++i) {
+        send_heartbeat(ch.server_keys[i]);
+    }
+}
+
+static void report_execution(const char *ch_key, uint32_t pulse_ms, const char *trigger) {
+    if (WiFi.status() != WL_CONNECTED) return;
+
+    WiFiClient client;
+    HTTPClient http;
+    http.setTimeout(3000);
+
+    const String url = server_base_url() + "/api/execution";
+    if (http.begin(client, url)) {
+        http.addHeader("Content-Type", "application/json");
+        const String body = "{\"ch\":\"" + String(ch_key) + "\",\"pulse_ms\":" + String(pulse_ms)
+                          + ",\"trigger\":\"" + String(trigger) + "\"}";
+        http.POST(body);
+        http.end();
+    }
+}
+
+static void trigger_channel_now(Channel &ch, uint32_t pulse_ms, const char *ch_key, const char *trigger) {
+    if (pulse_ms < 100) pulse_ms = 100;
+    relay_write(ch.pin, true);
+    ch.phase = Phase::ACTIVE;
+    ch.pulse_start = millis();
+    ch.active_pulse_ms = pulse_ms;
+
+    const String msg = String(ch_key) + " ON (" + String(pulse_ms) + "ms, " + trigger + ")";
+    esp_log(msg.c_str());
+    report_execution(ch_key, pulse_ms, trigger);
+}
+
+static bool fetch_command_for_key(Channel &ch, const char *ch_key) {
+    if (WiFi.status() != WL_CONNECTED || !ch_key) return false;
+
+    WiFiClient client;
+    HTTPClient http;
+    http.setTimeout(3000);
+
+    const String url = server_base_url() + "/api/commands?ch=" + String(ch_key);
+    if (!http.begin(client, url)) return false;
+    const int code = http.GET();
+    if (code != 200) {
+        http.end();
+        return false;
+    }
+
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    StaticJsonDocument<128> doc;
+    #pragma GCC diagnostic pop
+    const DeserializationError err = deserializeJson(doc, http.getStream());
+    http.end();
+    if (err || !(doc["pending"] | false)) return false;
+
+    const uint32_t pulse_ms = doc["pulse_ms"] | ch.cfg.pulse_ms;
+    trigger_channel_now(ch, pulse_ms, ch_key, "manual");
+    return true;
+}
+
+static void fetch_commands(Channel &ch) {
+    for (size_t i = 0; i < ch.server_key_count; ++i) {
+        if (fetch_command_for_key(ch, ch.server_keys[i])) return;
+    }
+}
+
 // == Recompute the next scheduled fire time ===================================
 static void recompute_next_fire(Channel &ch, const time_t after_epoch) {
     struct tm t;
@@ -647,6 +758,11 @@ static void recompute_next_fire(Channel &ch, const time_t after_epoch) {
 
     const uint32_t *sched = ch.cfg.schedule;
     const size_t    n     = ch.cfg.schedule_len;
+    if (n == 0 || !ch.cfg.enabled) {
+        ch.next_fire = 0;
+        return;
+    }
+
     size_t i = 0;
     while (i < n && sched[i] <= now_sm) { ++i; }
 
@@ -665,6 +781,7 @@ static void channel_init(Channel &ch) {
     relay_write(ch.pin, false);
     ch.phase       = Phase::IDLE;
     ch.pulse_start = 0;
+    ch.active_pulse_ms = 0;
     ch.next_fire   = 0;
 }
 
@@ -676,23 +793,27 @@ static bool tick_channel(Channel &ch, const time_t now) {
         if (ch.phase == Phase::ACTIVE) {
             relay_write(ch.pin, false);
             ch.phase = Phase::IDLE;
+            ch.active_pulse_ms = 0;
+        }
+        if (ch.next_fire <= now) {
+            const time_t midnight = midnight_of(now);
+            recompute_next_fire(ch, midnight ? midnight + 86400 : now + 86400);
         }
         return false;
     }
 
     if (ch.phase == Phase::IDLE) {
         if (now >= ch.next_fire) {
-            relay_write(ch.pin, true);
-            ch.phase       = Phase::ACTIVE;
-            ch.pulse_start = millis();
-            esp_log((String("CH") + ch.pin + " ON  (" + ch.cfg.pulse_ms + "ms)").c_str());
+            trigger_channel_now(ch, ch.cfg.pulse_ms, primary_channel_key(ch), "schedule");
             return true;
         }
     } else {
-        if (elapsed_since(ch.pulse_start) >= ch.cfg.pulse_ms) {
+        const uint32_t pulse_ms = ch.active_pulse_ms ? ch.active_pulse_ms : ch.cfg.pulse_ms;
+        if (elapsed_since(ch.pulse_start) >= pulse_ms) {
             relay_write(ch.pin, false);
             ch.phase = Phase::IDLE;
-            esp_log((String("CH") + ch.pin + " OFF").c_str());
+            ch.active_pulse_ms = 0;
+            esp_log((String(primary_channel_key(ch)) + " OFF").c_str());
             recompute_next_fire(ch, now + 1);
         }
     }
@@ -708,6 +829,7 @@ static time_t   g_last_known_time        = 0;
 static uint32_t g_time_stall_since       = 0;
 static uint32_t g_last_schedule_refresh  = 0;
 static uint32_t g_last_poll              = 0;
+static uint32_t g_last_command_poll      = 0;
 static uint32_t g_last_heartbeat         = 0;
 static uint32_t g_last_rtc_sync          = 0;
 
@@ -735,9 +857,9 @@ void setup() {
         const DeserializationError err = deserializeJson(doc, g_raw_config);
         if (!err) {
             JsonObject root = doc.as<JsonObject>();
-            if (!root["ch1"].isNull() && !root["ch2"].isNull()) {
-                parse_channel_cfg(root["ch1"], g_ch1.cfg);
-                parse_channel_cfg(root["ch2"], g_ch2.cfg);
+            const bool ch1_loaded = parse_channel_cfg_from_keys(root, g_ch1);
+            const bool ch2_loaded = parse_channel_cfg_from_keys(root, g_ch2);
+            if (ch1_loaded || ch2_loaded) {
                 Serial.println(F("NVS: booted from stored config"));
             }
         }
@@ -810,6 +932,7 @@ void setup() {
     g_wifi_last_attempt     = millis();
     g_last_schedule_refresh = millis();
     g_last_poll             = millis();
+    g_last_command_poll     = millis();
     g_last_heartbeat        = millis();
     g_last_rtc_sync         = millis();
 
@@ -965,11 +1088,19 @@ void loop() {
         g_last_poll = now_ms;
     }
 
+    // -- 10g2. Manual command poll ("Run Now" / Bell) ------------------------
+    if (WiFi.status() == WL_CONNECTED
+        && elapsed_since(g_last_command_poll) >= COMMAND_POLL_MS) {
+        fetch_commands(g_ch1);
+        fetch_commands(g_ch2);
+        g_last_command_poll = now_ms;
+    }
+
     // ── 10g.  Send heartbeat ───────────────────────────────────────────
     if (WiFi.status() == WL_CONNECTED
         && elapsed_since(g_last_heartbeat) >= 5000U) {
-        send_heartbeat("ch1");
-        send_heartbeat("ch2");
+        send_heartbeats(g_ch1);
+        send_heartbeats(g_ch2);
         g_last_heartbeat = now_ms;
     }
 

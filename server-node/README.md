@@ -1,8 +1,9 @@
 # Relay Controller Server (Node.js / Express)
 
-A production-hardened rewrite of the original Flask prototype. Same API, same
-dashboard, same ESP32 compatibility — but built to survive bad input, bad
-requests, and unexpected errors without taking the whole server down.
+A production-hardened rewrite of the original Flask prototype. Same core API,
+same ESP32 compatibility, same login flow — but built to survive bad input,
+bad requests, and unexpected errors without taking the whole server down,
+plus a bunch of features layered on top (see below).
 
 ## Quick start
 
@@ -11,6 +12,37 @@ npm install
 npm start
 # → Dashboard at http://localhost:8080
 ```
+
+## What's new
+
+Everything from the original build still works exactly as before (auth,
+`ch1`/`ch2` schedule API, UDP beacon, crash-proof error handling, logging).
+On top of that:
+
+- **Any number of channels** — not just `ch1`/`ch2`. Add/rename/delete relay
+  channels from the dashboard (`+ Add Channel`); each gets a label, its own
+  pulse duration, schedule, and skip dates.
+- **Manual on/off** — a "Run Now" button per channel queues an immediate
+  trigger. The device picks it up the same way it already polls for its
+  schedule (`GET /api/commands?ch=<key>`), so no firmware push is required.
+- **History & analytics** — every schedule save, manual trigger, and
+  channel change is recorded to `history.jsonl` (plain JSON-Lines, no
+  database). The dashboard shows a 14-day runs-per-day chart, a filterable
+  event table, and a CSV export.
+- **Backup / restore** — `Backup` downloads a JSON snapshot of the schedule
+  + history; `Restore` uploads one back. Handy before firmware/server
+  changes or when moving to new hardware.
+- **API keys** — mint scoped tokens (Settings → API Keys) for external
+  integrations like Home Assistant, a cron job, or a phone shortcut. Send
+  them as an `X-API-Key` header instead of logging in; they currently work
+  on `GET /api/status`, `GET /api/history`, and the manual trigger endpoint.
+- **In-dashboard password change** — Settings → Change Password. The
+  `reset_password.js` script still works too, for when you're locked out.
+
+None of this changes what the ESP32 needs to do — `/api/schedule`,
+`/api/schedule/hash`, `/api/heartbeat`, and `/api/log` behave exactly as
+before, and old `schedule.json` files (just `ch1`/`ch2`, no `label`) load
+fine as-is.
 
 ## Why this is more robust than the original
 
@@ -86,19 +118,38 @@ stay open:
 | `GET` | `/api/schedule/hash` | open (device) |
 | `POST` | `/api/heartbeat?ch=ch1` | open (device) |
 | `POST` | `/api/log` | open (device) |
+| `GET` | `/api/commands?ch=ch1` | open (device) — pending manual trigger, if any |
+| `POST` | `/api/execution` | open (device) — optional: confirm a relay actually fired |
 | `GET` | `/api/log` | **login** |
 | `POST` | `/api/schedule` | **login** |
-| `GET` | `/api/status` | **login** |
+| `GET` | `/api/status` | **login** or API key |
+| `GET` | `/api/channels` | **login** |
+| `POST` | `/api/channels` | **login** — add a channel |
+| `DELETE` | `/api/channels/:key` | **login** — remove a channel |
+| `POST` | `/api/relay/:key/trigger` | **login** or API key — manual "run now" |
+| `GET` | `/api/history` | **login** or API key |
+| `GET` | `/api/history/export` | **login** — CSV download |
+| `GET` | `/api/backup` | **login** — JSON snapshot download |
+| `POST` | `/api/restore` | **login** — restore from a JSON snapshot |
+| `POST` | `/api/account/password` | **login** — change password |
+| `GET` | `/api/keys` | **login** |
+| `POST` | `/api/keys` | **login** — mint a new API key |
+| `DELETE` | `/api/keys/:id` | **login** — revoke a key |
 | `GET` | `/` | **login** |
 | `GET`/`POST` | `/login` | open |
 | `GET` | `/logout` | open |
 
+API-key auth: send the key as an `X-API-Key` header. It's accepted anywhere
+the table says "**login** or API key" as an alternative to a session cookie.
+
 ## Storage
 
-- `schedule.json` — persistent schedule (auto-created with defaults)
+- `schedule.json` — persistent schedule, any number of channels (auto-created with `ch1`/`ch2` defaults)
 - `password.json` — bcrypt password hash (auto-created, default password `admin`)
 - `secret.key` — session signing secret (auto-created; keep private)
-- Heartbeats and logs are in-memory only (reset on restart)
+- `history.jsonl` — append-only run/event history, capped at ~5000 entries (auto-created)
+- `api_keys.json` — hashed API keys for external integrations (auto-created; keep private)
+- Heartbeats and the raw device log are in-memory only (reset on restart) — history is not
 
 ## Debugging a 500
 

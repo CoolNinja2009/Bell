@@ -11,20 +11,23 @@
  *   → Dashboard at http://<host>:8080
  *   → ESP32 polls   http://<host>:8080/api/schedule
  *
- * Storage: schedule.json (auto-created with defaults on first run)
+ * Storage: schedule.json, history.jsonl, api_keys.json (all auto-created)
  *
- * Production-hardening in this version (vs. the original Flask prototype):
- *   - Every route is wrapped so a thrown/rejected error can never crash
- *     the process — it's logged server-side and answered with a clean
- *     500 JSON body instead of taking the whole server down.
- *   - Structured request logging, so a 500 shows up in the console with
- *     enough context (method, path, error stack) to actually debug it.
- *   - Process-level guards for uncaught exceptions / unhandled promise
- *     rejections: logged loudly, then a controlled exit so a process
- *     manager (systemd/pm2 — see server-node/README.md) can restart
- *     cleanly, instead of continuing to run in a possibly-corrupt state.
- *   - Security headers via helmet, rate-limited login, sessions signed
- *     with a persisted secret, bcrypt password hashing.
+ * Everything from the original build is unchanged: session auth, rate
+ * limited login, the ch1/ch2 schedule API the ESP32 polls, the UDP
+ * discovery beacon, structured logging, and the crash-proof error
+ * handling. Everything below "NEW FEATURES" is additive.
+ *
+ * NEW FEATURES (all keep the original API/behavior intact):
+ *   - Dynamic channels: add/rename/remove relay channels beyond ch1/ch2
+ *   - Manual on/off: trigger a relay immediately from the dashboard or
+ *     via API key, independent of its schedule (device polls for it)
+ *   - History & analytics: persistent run history (schedule saves,
+ *     manual triggers, device-confirmed executions), CSV export
+ *   - Backup / restore: download/upload a full JSON snapshot
+ *   - API keys: scoped tokens for external integrations (Home
+ *     Assistant, cron jobs, shortcuts, ...) via the X-API-Key header
+ *   - In-dashboard password change (no SSH/script needed anymore)
  */
 const fs = require('fs');
 const path = require('path');
@@ -39,6 +42,8 @@ const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 
 const auth = require('./auth');
+const history = require('./lib/history');
+const apikeys = require('./lib/apikeys');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -51,6 +56,9 @@ const BEACON_INTERVAL_MS = 5000;
 const BEACON_MSG = Buffer.from(`RELAY_CTRL:${PORT}\n`);
 const INDEX_TPL = path.join(__dirname, 'templates', 'index.html');
 const LOGIN_TPL = path.join(__dirname, 'templates', 'login.html');
+
+const CHANNEL_KEY_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,19}$/; // must start with a letter
+const MAX_CHANNELS = 24;
 
 // ---------------------------------------------------------------------------
 // Logging
@@ -67,8 +75,8 @@ function logError(context, err) {
 // ---------------------------------------------------------------------------
 function defaultSchedule() {
   return {
-    ch1: { enabled: true, pulse_ms: 2000, schedule: ['08:00', '20:00'], skip_dates: [] },
-    ch2: { enabled: true, pulse_ms: 2000, schedule: ['06:30', '18:45'], skip_dates: [] },
+    ch1: { enabled: true, pulse_ms: 2000, schedule: ['08:00', '20:00'], skip_dates: [], label: 'Channel 1' },
+    ch2: { enabled: true, pulse_ms: 2000, schedule: ['06:30', '18:45'], skip_dates: [], label: 'Channel 2' },
   };
 }
 
@@ -101,14 +109,27 @@ function validationError(msg) {
   return err;
 }
 
+// Validates a schedule object with ANY number of channels (originally
+// hardcoded to exactly ch1/ch2 — now any channel key matching
+// CHANNEL_KEY_RE is accepted, so the dashboard can add/remove channels).
 function validateSchedule(data) {
-  if (!data || typeof data !== 'object') throw validationError('Body must be a JSON object');
-  for (const ch of ['ch1', 'ch2']) {
-    if (!(ch in data)) throw validationError(`Missing ${ch}`);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw validationError('Body must be a JSON object');
+  const keys = Object.keys(data);
+  if (keys.length === 0) throw validationError('At least one channel is required');
+  if (keys.length > MAX_CHANNELS) throw validationError(`Too many channels (max ${MAX_CHANNELS})`);
+
+  for (const ch of keys) {
+    if (!CHANNEL_KEY_RE.test(ch)) {
+      throw validationError(`Invalid channel key '${ch}' — letters/numbers/_/-, must start with a letter, max 20 chars`);
+    }
     const s = data[ch];
+    if (!s || typeof s !== 'object') throw validationError(`${ch} must be an object`);
     if (typeof s.enabled !== 'boolean') throw validationError(`${ch}.enabled must be bool`);
     if (typeof s.pulse_ms !== 'number' || s.pulse_ms < 100) {
       throw validationError(`${ch}.pulse_ms must be >= 100`);
+    }
+    if (s.label !== undefined && (typeof s.label !== 'string' || s.label.length > 40)) {
+      throw validationError(`${ch}.label must be a string up to 40 chars`);
     }
     if (!Array.isArray(s.schedule)) throw validationError(`${ch}.schedule must be a list`);
     for (const entry of s.schedule) {
@@ -156,7 +177,7 @@ function getLocalIPv4() {
 }
 
 // ---------------------------------------------------------------------------
-// In-memory state (heartbeats + log ring buffer)
+// In-memory state (heartbeats + log ring buffer + pending manual commands)
 // ---------------------------------------------------------------------------
 const heartbeats = new Map(); // ch -> timestamp (ms)
 const HEARTBEAT_TTL_MS = 120000;
@@ -178,6 +199,13 @@ function pushLog(msg) {
   logBuf.push({ t: `${hh}:${mm}:${ss}`, msg });
   while (logBuf.length > MAX_LOG_ENTRIES) logBuf.shift();
 }
+
+// NEW: pending manual-trigger commands, keyed by channel. The ESP32 already
+// polls the server (for /api/schedule) so manual "run now" reuses that same
+// pull model instead of requiring a push connection to the device: the
+// dashboard queues a command, the device picks it up next time it polls
+// GET /api/commands, and the command is cleared as soon as it's delivered.
+const pendingCommands = new Map(); // ch -> { pulse_ms, issued_at }
 
 // ---------------------------------------------------------------------------
 // Express app
@@ -235,6 +263,22 @@ function loginRequired(req, res, next) {
   }
   const next_ = encodeURIComponent(req.originalUrl);
   return res.redirect(`/login?next=${next_}`);
+}
+
+// NEW: allow a valid X-API-Key header as an alternative to a browser
+// session, for a small set of integration-friendly endpoints. Falls back
+// to the normal session check so dashboard usage is completely unaffected.
+function apiKeyOrLogin(req, res, next) {
+  const key = req.get('X-API-Key');
+  if (key) {
+    const entry = apikeys.verifyKey(key);
+    if (entry) {
+      req.apiKey = entry;
+      return next();
+    }
+    return res.status(401).json({ error: 'invalid API key' });
+  }
+  return loginRequired(req, res, next);
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +371,36 @@ app.post(
   })
 );
 
+// NEW — device-open: the device polls this (same pattern as /api/schedule)
+// to pick up a queued manual "run now" command for a given channel. The
+// command is cleared the moment it's handed out, so it fires exactly once.
+app.get(
+  '/api/commands',
+  asyncRoute(async (req, res) => {
+    const ch = (req.query.ch && String(req.query.ch)) || '';
+    const cmd = pendingCommands.get(ch);
+    if (!cmd) return res.json({ pending: false });
+    pendingCommands.delete(ch);
+    res.json({ pending: true, ch, pulse_ms: cmd.pulse_ms });
+  })
+);
+
+// NEW — device-open: optional confirmation hook. If a device firmware is
+// updated to report "I actually fired ch1 for 2000ms", it lands in history
+// as a confirmed execution instead of just a "queued" entry. Entirely
+// optional — nothing else depends on it.
+app.post(
+  '/api/execution',
+  asyncRoute(async (req, res) => {
+    const ch = (req.body && req.body.ch && String(req.body.ch)) || 'unknown';
+    const pulseMs = Number(req.body && req.body.pulse_ms) || null;
+    const trigger = (req.body && req.body.trigger === 'manual') ? 'manual' : 'schedule';
+    history.appendHistory({ ch, trigger, status: 'executed', pulse_ms: pulseMs, note: 'confirmed by device' });
+    pushLog(`${ch} executed (${trigger})`);
+    res.json({ ok: true });
+  })
+);
+
 // ---------------------------------------------------------------------------
 // REST API — consumed by the dashboard (requires login)
 // ---------------------------------------------------------------------------
@@ -344,13 +418,14 @@ app.post(
   asyncRoute(async (req, res) => {
     validateSchedule(req.body); // throws -> caught by asyncRoute -> error middleware -> 500 w/ message
     saveSchedule(req.body);
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'schedule_saved', note: `${Object.keys(req.body).length} channel(s)` });
     res.json({ ok: true });
   })
 );
 
 app.get(
   '/api/status',
-  loginRequired,
+  apiKeyOrLogin,
   asyncRoute(async (req, res) => {
     cleanStaleHeartbeats();
     const now = Date.now();
@@ -360,6 +435,201 @@ app.get(
       heartbeats: hb,
       server_uptime: Math.round((now - startTime) / 100) / 10,
     });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// NEW — Channel management (add / rename / remove relay channels)
+// ---------------------------------------------------------------------------
+app.get(
+  '/api/channels',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const sch = loadSchedule();
+    res.json(
+      Object.entries(sch).map(([key, c]) => ({ key, label: c.label || key.toUpperCase(), enabled: !!c.enabled }))
+    );
+  })
+);
+
+app.post(
+  '/api/channels',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const key = ((req.body && req.body.key) || '').toString().trim();
+    const label = ((req.body && req.body.label) || key).toString().trim().slice(0, 40);
+    if (!CHANNEL_KEY_RE.test(key)) {
+      throw validationError('Channel key must start with a letter and use only letters/numbers/_/-, max 20 chars');
+    }
+    const sch = loadSchedule();
+    if (sch[key]) throw validationError(`Channel '${key}' already exists`);
+    if (Object.keys(sch).length >= MAX_CHANNELS) throw validationError(`Too many channels (max ${MAX_CHANNELS})`);
+    sch[key] = { enabled: false, pulse_ms: 2000, schedule: [], skip_dates: [], label: label || key.toUpperCase() };
+    saveSchedule(sch);
+    history.appendHistory({ ch: key, trigger: 'edit', status: 'channel_created' });
+    pushLog(`channel '${key}' created`);
+    res.json({ ok: true, key });
+  })
+);
+
+app.delete(
+  '/api/channels/:key',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const key = req.params.key;
+    const sch = loadSchedule();
+    if (!sch[key]) throw validationError(`Channel '${key}' not found`);
+    if (Object.keys(sch).length <= 1) throw validationError('At least one channel must remain');
+    delete sch[key];
+    saveSchedule(sch);
+    heartbeats.delete(key);
+    pendingCommands.delete(key);
+    history.appendHistory({ ch: key, trigger: 'edit', status: 'channel_deleted' });
+    pushLog(`channel '${key}' deleted`);
+    res.json({ ok: true });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// NEW — Manual on/off control (independent of the schedule)
+// ---------------------------------------------------------------------------
+app.post(
+  '/api/relay/:key/trigger',
+  apiKeyOrLogin,
+  asyncRoute(async (req, res) => {
+    const key = req.params.key;
+    const sch = loadSchedule();
+    if (!sch[key]) throw validationError(`Channel '${key}' not found`);
+    const pulseMs = Number(req.body && req.body.pulse_ms) || sch[key].pulse_ms || 2000;
+    if (pulseMs < 100) throw validationError('pulse_ms must be >= 100');
+    pendingCommands.set(key, { pulse_ms: pulseMs, issued_at: Date.now() });
+    history.appendHistory({ ch: key, trigger: 'manual', status: 'queued', pulse_ms: pulseMs, note: req.apiKey ? `via API key '${req.apiKey.name}'` : 'via dashboard' });
+    pushLog(`${key} manual trigger queued (${pulseMs}ms)`);
+    res.json({ ok: true, queued: true, ch: key, pulse_ms: pulseMs });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// NEW — History & analytics
+// ---------------------------------------------------------------------------
+app.get(
+  '/api/history',
+  apiKeyOrLogin,
+  asyncRoute(async (req, res) => {
+    const entries = history.readHistory({
+      ch: req.query.ch,
+      trigger: req.query.trigger,
+      from: req.query.from,
+      to: req.query.to,
+      limit: req.query.limit,
+    });
+    res.json(entries);
+  })
+);
+
+app.get(
+  '/api/history/export',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const entries = history.readHistory({
+      ch: req.query.ch,
+      trigger: req.query.trigger,
+      from: req.query.from,
+      to: req.query.to,
+      limit: req.query.limit || 5000,
+    });
+    const csv = history.toCsv(entries);
+    res.set('Content-Type', 'text/csv').set('Content-Disposition', 'attachment; filename="relay-history.csv"').send(csv);
+  })
+);
+
+// ---------------------------------------------------------------------------
+// NEW — Backup & restore
+// ---------------------------------------------------------------------------
+app.get(
+  '/api/backup',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const bundle = {
+      version: 1,
+      exported_at: new Date().toISOString(),
+      schedule: loadSchedule(),
+      history: history.readHistory({ limit: 5000 }),
+    };
+    res
+      .set('Content-Type', 'application/json')
+      .set('Content-Disposition', 'attachment; filename="relay-backup.json"')
+      .send(JSON.stringify(bundle, null, 2));
+  })
+);
+
+app.post(
+  '/api/restore',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const body = req.body || {};
+    const incomingSchedule = body.schedule || body; // accept either a full bundle or a bare schedule
+    validateSchedule(incomingSchedule);
+    saveSchedule(incomingSchedule);
+    if (Array.isArray(body.history)) {
+      history.replaceAll(body.history);
+    }
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'restored', note: 'restored from backup' });
+    pushLog('schedule restored from backup');
+    res.json({ ok: true });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// NEW — Account: change password without SSH access
+// ---------------------------------------------------------------------------
+app.post(
+  '/api/account/password',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const current = (req.body && req.body.current) || '';
+    const next = (req.body && req.body.next) || '';
+    if (!auth.verifyPassword(current)) throw validationError('Current password is incorrect');
+    try {
+      auth.setPassword(next);
+    } catch (err) {
+      throw validationError(err.message);
+    }
+    pushLog('dashboard password changed');
+    res.json({ ok: true });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// NEW — API keys for external integrations
+// ---------------------------------------------------------------------------
+app.get(
+  '/api/keys',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    res.json(apikeys.listKeys());
+  })
+);
+
+app.post(
+  '/api/keys',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const name = (req.body && req.body.name) || '';
+    const created = apikeys.createKey(name);
+    pushLog(`API key '${created.name}' created`);
+    res.json(created); // `key` is only ever returned here — not retrievable again
+  })
+);
+
+app.delete(
+  '/api/keys/:id',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const ok = apikeys.revokeKey(req.params.id);
+    if (!ok) throw validationError('Key not found');
+    pushLog('API key revoked');
+    res.json({ ok: true });
   })
 );
 
@@ -430,7 +700,7 @@ function bootstrap() {
 
 // Never let an unexpected error silently crash into a corrupt half-state.
 // Log everything, then exit so a process manager (systemd/pm2) restarts
-// the process cleanly. See server-node/README.md for a systemd example.
+// the process cleanly. See README.md for a systemd example.
 process.on('uncaughtException', (err) => {
   logError('uncaughtException', err);
   process.exit(1);
