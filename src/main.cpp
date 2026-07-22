@@ -44,7 +44,7 @@ constexpr bool     RELAY_ACTIVE_HIGH = false;  // false → LOW = relay closed (
 static const char *CH1_SERVER_KEYS[] = { "ch1", "bell" };
 static const char *CH2_SERVER_KEYS[] = { "ch2" };
 
-#include "wifi_config.h"
+#include "wifi_provision.h"
 
 // ============================================================================
 // 3.  SERVER DISCOVERY  (beacon + fallback)
@@ -870,25 +870,17 @@ void setup() {
     delay(100);
     Serial.println(F("\n=== RELAY CONTROLLER BOOT ==="));
 
-    // --- WiFi ---
-    WiFi.setAutoReconnect(true);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-
-    Serial.printf("WiFi: connecting to %s", WIFI_SSID);
-    const uint32_t wifi_start = millis();
-    while (WiFi.status() != WL_CONNECTED
-           && elapsed_since(wifi_start) < WIFI_CONNECT_MS) {
-        delay(250);
-        Serial.print(".");
+    // --- Wi‑Fi Provisioning ---
+    // The provisioning system replaces the original hardcoded WiFi connection.
+    // It first checks for NVS‑saved credentials, then tries to connect.
+    // If no credentials exist (or connection fails for 30s), it starts
+    // the Setup Mode AP + web server so the user can configure WiFi.
+    checkBootButtonReset();
+    if (!connectSavedWiFi()) {
+        startSetupMode();  // never returns — saves creds & restarts
     }
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println(F(" connected"));
-        Serial.print(F("WiFi: IP = "));
-        Serial.println(WiFi.localIP());
-    } else {
-        Serial.println(F(" TIMEOUT — will retry"));
-    }
+    Serial.print(F("WiFi: IP = "));
+    Serial.println(WiFi.localIP());
 
     // --- UDP beacon listener ---
     g_udp.begin(BEACON_PORT);
@@ -943,7 +935,10 @@ void loop() {
     const time_t   now      = time(nullptr);
     const uint32_t now_ms   = millis();
 
-    // ── 10a.  UDP beacon listener ──────────────────────────────────────
+    // ── 10a.  BOOT button watchdog (always-on WiFi factory reset) ──────
+    checkBootButtonReset();
+
+    // ── 10b.  UDP beacon listener ──────────────────────────────────────
     check_beacon();
 
     // ── 10b.  Beacon timeout — revert to fallback IP ───────────────────
