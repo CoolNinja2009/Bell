@@ -1,0 +1,89 @@
+{
+  "profiles": {
+    "regular-working-day": {
+      "name": "Regular Working Day",
+      "channels": {
+        "ch1": {
+          "enabled": true,
+          "pulse_ms": 1232,
+          "schedule": [
+            "10:02",
+            "17:21",
+            "18:39",
+            "21:32"
+          ],
+          "skip_dates": [],
+          "label": "Bell Middle School"
+        },
+        "ch2": {
+          "enabled": true,
+          "pulse_ms": 1900,
+          "schedule": [
+            "06:30",
+            "08:02",
+            "17:22",
+            "20:31",
+            "22:12"
+          ],
+          "skip_dates": [],
+          "label": "Bell High School"
+        }
+      },
+      "created": "2026-07-23T13:59:04.535Z",
+      "updated": "2026-07-23T15:00:39.973Z"
+    },
+    "saturday": {
+      "name": "Saturday",
+      "channels": {
+        "ch1": {
+          "enabled": true,
+          "pulse_ms": 2000,
+          "schedule": [
+            "08:00",
+            "20:00"
+          ],
+          "skip_dates": [],
+          "label": "Channel 1"
+        },
+        "ch2": {
+          "enabled": true,
+          "pulse_ms": 2000,
+          "schedule": [
+            "06:30",
+            "18:45"
+          ],
+          "skip_dates": [],
+          "label": "Channel 2"
+        }
+      },
+      "created": "2026-07-23T14:18:10.839Z",
+      "updated": "2026-07-23T14:31:02.518Z"
+    },
+    "sunday": {
+      "name": "sunday",
+      "channels": {
+        "ch1": {
+          "enabled": true,
+          "pulse_ms": 2000,
+          "schedule": [],
+          "skip_dates": [],
+          "label": "Channel 1"
+        },
+        "ch2": {
+          "enabled": true,
+          "pulse_ms": 2000,
+          "schedule": [],
+          "skip_dates": [],
+          "label": "Channel 2"
+        }
+      },
+      "created": "2026-07-23T14:31:33.491Z",
+      "updated": "2026-07-23T15:01:25.540Z"
+    }
+  },
+  "order": [
+    "regular-working-day",
+    "saturday",
+    "sunday"
+  ]
+}
