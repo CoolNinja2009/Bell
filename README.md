@@ -1,15 +1,15 @@
 # Relay Controller
 
-ESP32-based dual-channel relay controller with WiFi, NTP time sync, and a web dashboard for remote management. The ESP32 auto-discovers the server via UDP beacon — no static IP needed on flat networks. Falls back to a user-configurable provisioned IP, and finally to a compiled-in static IP if provisioned IP also fails.
+ESP32-based multi-channel relay controller with WiFi, NTP time sync, and a profile-driven web dashboard for remote management. The ESP32 auto-discovers the server via UDP beacon — no static IP needed on flat networks. Falls back to a user-configurable provisioned IP, and finally to a compiled-in static IP if provisioned IP also fails.
 
 ## Hardware
 
-| ESP32 Pin | Purpose      |
-|-----------|--------------|
-| GPIO 26   | Channel 1 relay |
-| GPIO 27   | Channel 2 relay |
-| GND       | Common ground    |
-| 3.3V/5V   | Relay module power |
+| ESP32 Pin | Purpose             |
+|-----------|---------------------|
+| GPIO 26   | Channel 1 relay     |
+| GPIO 27   | Channel 2 relay     |
+| GND       | Common ground       |
+| 3.3V/5V   | Relay module power  |
 
 ### Wiring (most relay modules)
 
@@ -24,66 +24,32 @@ GPIO27  ────── IN2    (Channel 2)
 
 Relays trigger on **LOW** by default (`RELAY_ACTIVE_HIGH = false` in `src/main.cpp`). If your module is active-high, flip that constant.
 
-### Optional: RTC module (any DS1307/DS3231/DS3232-compatible board)
+### Optional: RTC module (DS1307/DS3231/DS3232)
 
-Not required — the controller works exactly as before without one. If wired in, it keeps
-real time running even when the schedule server, WiFi, or internet is down (or before NTP
-has synced for the first time), instead of the controller sitting idle waiting on the network.
+Keeps real time running even when the schedule server, WiFi, or internet is down. Auto-detected at boot — nothing to configure if not present.
 
 ```
-ESP32          RTC Module (DS1307 / DS3231 / etc.)
-─────          ────────────────────────────────────
+ESP32          RTC Module
+─────          ──────────
 GND     ────── GND
 3.3V/5V ────── VCC
 GPIO21  ────── SDA
 GPIO22  ────── SCL
 ```
 
-It's auto-detected at boot (`RTC_I2C_ADDR = 0x68` in `src/main.cpp`) — nothing to configure
-if you're not using one. Time is periodically corrected from NTP once it's available, so RTC
-drift doesn't build up over time.
-
 ## Wi‑Fi Provisioning
 
-The ESP32 includes a built-in provisioning system — no need to hardcode
-WiFi credentials before flashing. On first boot (or after resetting WiFi),
-the ESP32 creates a setup access point so you can configure it from your
-phone or laptop.
+On first boot (or after resetting WiFi), the ESP32 creates a setup access point:
 
-### How it works
+| Setting    | Value             |
+|------------|-------------------|
+| SSID       | `Bell_Setup`      |
+| Password   | `12345678`        |
+| IP address | `192.168.4.1`     |
 
-1. **Flash once** — upload the firmware normally via `pio run -t upload`.
-2. **First boot** — the ESP32 checks for saved WiFi credentials in NVS.
-   - If **no credentials** are found → enters **Setup Mode**.
-   - If **credentials exist** → connects to WiFi and boots normally.
-3. **Setup Mode** — the ESP32 creates an access point:
+Connect your phone/laptop to `Bell_Setup`, open `http://192.168.4.1`, scan for your network, and save. The ESP32 reboots and connects.
 
-   | Setting | Value |
-   |---------|-------|
-   | SSID | `Bell_Setup` |
-   | Password | `12345678` |
-   | IP address | `192.168.4.1` |
-
-4. **Connect** your phone/laptop to the `Bell_Setup` network, then open
-   `http://192.168.4.1` in a browser.
-5. **Configure WiFi** — tap "Scan Networks" to see nearby WiFi networks with
-   signal strength, select yours, enter the password.
-6. **Configure Server (optional)** — click "Server settings" to set a static
-   server IP and port for the scheduling server. Leave blank for auto-discovery.
-7. Tap **"Save & Connect"** — the ESP32 saves everything, reboots, and connects
-   to your network.
-
-### Server Settings (optional — industrial-grade static IP override)
-
-Expand the **"Server settings (optional)"** section in the setup portal to
-set a static server IP address for the scheduling server:
-
-| Field | Description | Default |
-|-------|-------------|---------|
-| Server IP | Dotted-decimal IPv4 address (e.g. `192.168.1.100`) | Auto-discovery |
-| Server Port | TCP port (1–65535) | `8080` |
-
-**How the server resolution works (three-tier fallback):**
+**Server settings (optional):** Expand "Server settings" in the portal to set a static server IP/port. Three-tier resolution:
 
 ```
 1. UDP BEACON (live, auto-discovered)
@@ -93,48 +59,11 @@ set a static server IP address for the scheduling server:
 3. HARDCODED FALLBACK (FALLBACK_SERVER_IP in main.cpp)
 ```
 
-- If a server IP is **provisioned**, the ESP32 uses it as the initial target
-  on every boot — no need for the UDP beacon to arrive first.
-- If the **UDP beacon** is later heard from a live server, the beacon IP
-  takes priority (the real server may have a different IP).
-- If the **beacon stops** for 45 seconds (server offline, network change),
-  the ESP32 gracefully reverts to the provisioned IP — not the hardcoded
-  fallback — keeping your specific server as the persistent default.
-- If **no provisioned IP** was set, reverts to the hardcoded `FALLBACK_SERVER_IP`
-  as before.
-- **Implicit validation**: invalid IPs (e.g. `999.999.999.999`, `abc`) are
-  rejected by the portal at save time with a `400 Bad Request` response.
-  Corrupt NVS data is detected at boot and silently falls through to the
-  hardcoded fallback.
-
-> **For auto-discovery setups** — leave the Server IP blank. The existing
-> beacon / BLE / fallback system works exactly as before, unchanged.
-
-### Resetting WiFi (without re-flashing)
-
-Hold the **BOOT button** (GPIO0) for **5 seconds** at **any time**:
-
-- **Everything** WiFi-related is erased: SSID, password, and any provisioned
-  server IP/port. RTC settings, bell schedules, and all other NVS data are
-  preserved.
-- The ESP32 restarts and enters Setup Mode so you can re-configure.
-- The button is checked **continuously** in the main loop (non-blocking,
-  no delay-loops, no polling latency) — just press and hold whenever.
-
-### Behaviour when WiFi is lost at runtime
-
-The built-in WiFi watchdog reconnects automatically every `WIFI_RETRY_MS`
-(30s) — no user intervention needed. To re-enter Setup Mode, hold BOOT for
-5s to erase credentials and reboot.
+**Resetting WiFi:** Hold the BOOT button (GPIO0) for 5 seconds at any time — erases SSID, password, and provisioned server IP. All other settings (schedules, RTC) are preserved. Non-blocking, runs concurrent with normal operation.
 
 ## Quick start
 
 ### 1. Server (Raspberry Pi or PC)
-
-There are two server implementations in this repo:
-
-- **`server-node/`** — Node.js/Express, production-hardened (recommended). See `server-node/README.md`.
-- **`server/`** — the original Flask prototype, kept for reference.
 
 ```bash
 cd server-node
@@ -144,16 +73,15 @@ npm start
 # → Beacon broadcasts on UDP port 9999
 ```
 
+The `defunct/server/` directory contains the original Flask prototype — kept for reference only. Use `server-node/` for all production deployments.
+
 ### 2. ESP32
 
-Configure timezone and fallback server IP in `src/main.cpp`:
+Configure timezone and fallback server IP in `src/bell_core.h`:
 
 ```cpp
 constexpr long GMT_OFFSET_SEC = 19800;  // seconds from UTC (India = 19800)
-constexpr char FALLBACK_SERVER_IP[] = "192.168.1.100";  // change to your server IP
 ```
-
-No need to set WiFi credentials — provisioning handles that on first boot.
 
 Then flash:
 
@@ -164,75 +92,221 @@ pio device monitor    # watch serial output
 
 ### 3. First-time setup
 
-After flashing, check the serial monitor. You'll see:
+After flashing, the serial monitor shows:
 
 ```
 === RELAY CONTROLLER BOOT ===
-Reading WiFi credentials...
 No WiFi configured.
 Entering Setup Mode...
-AP Started
 SSID: Bell_Setup
 Password: 12345678
 Open: http://192.168.4.1
 ```
 
-Connect to `Bell_Setup` from your phone, open `http://192.168.4.1`,
-scan for your network, and save. The ESP32 will reboot and connect.
+Connect to `Bell_Setup`, open `http://192.168.4.1`, configure WiFi, and save.
 
 ### 4. Verify
 
-Open `http://<server-ip>:8080` in a browser. The status bar shows green dots when the ESP32 connects. Add schedule entries, toggle channels, set skip dates — changes reach the ESP32 within 5 seconds.
+Open `http://<server-ip>:8080` in a browser. Default password is **`admin`** — change it immediately (Settings → Change Password). The status bar shows green dots when the ESP32 connects.
 
 ## Architecture
 
 ```
-Dashboard (browser) ──▶ Schedule Server (:8080) ◀── HTTP every 5-30s ── ESP32
-                              │
-                        schedule.json (persistent)
-                              │
-                        UDP beacon :9999 (auto-discovery)
+┌─────────────────────────────────────────────────────┐
+│  Dashboard (browser)                                │
+│  ┌──────────────┐  ┌─────────────────────────────┐  │
+│  │ / (Schedule)  │  │ /profiles (Profile Manager) │  │
+│  │ Channel grid  │  │ Profile CRUD, calendar,     │  │
+│  │ History, log  │  │ override, import/export     │  │
+│  └──────┬───────┘  └──────────────┬──────────────┘  │
+└─────────┼─────────────────────────┼─────────────────┘
+          │      HTTP (login)       │
+          ▼                         ▼
+┌──────────────────────────────────────────────────────┐
+│  Schedule Server (server-node/)          :8080       │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐ │
+│  │ Profiles │ │ Calendar │ │ Settings / Override  │ │
+│  │ CRUD API │ │date + dow│ │ active profile mgmt  │ │
+│  └────┬─────┘ └────┬─────┘ └──────────┬───────────┘ │
+│       │             │                  │             │
+│       ▼             ▼                  ▼             │
+│  ┌──────────────────────────────────────────────┐   │
+│  │        Profile Scheduler                     │   │
+│  │  Resolves active profile daily:              │   │
+│  │  override > calendar date > DOW > default    │   │
+│  └──────────────────┬───────────────────────────┘   │
+│                     │                               │
+│                     ▼                               │
+│  ┌──────────────────────────────────────────────┐   │
+│  │  schedule.json  (ESP32-compatible format)    │   │
+│  └──────────────────┬───────────────────────────┘   │
+│                     │                               │
+│  UDP beacon :9999   │  HTTP (open, device)          │
+└─────────────────────┼───────────────────────────────┘
+                      ▼
+┌──────────────────────────────────────────────────────┐
+│  ESP32 (src/)                                        │
+│  ┌────────────┐  ┌────────────────────────────────┐  │
+│  │ bell_core  │  │ network_sync                   │  │
+│  │ Relays,    │  │ WiFi, HTTP poll, heartbeats,   │  │
+│  │ schedule   │  │ NTP, server discovery          │  │
+│  │ execution, │  │                                │  │
+│  │ RTC, NVS   │  │ (Independent — bells ring even │  │
+│  │            │  │  if network module crashes)    │  │
+│  └────────────┘  └────────────────────────────────┘  │
+└──────────────────────────────────────────────────────┘
 ```
 
-### Server discovery priority
+### Storage files
 
-```
-Boot
-  │
-  ├─ Saved WiFi creds? ─── No ──▶ Enter Setup Mode (AP + web portal)
-  │
-  ├─ Connect to WiFi
-  │
-  ├─ Saved server IP? ──── Yes ──▶ Use provisioned IP
-  │                                (overrides compiled fallback)
-  │
-  ├─ Beacon heard? ─────── Yes ──▶ Use beacon-discovered IP
-  │                                (overrides provisioned IP)
-  │
-  └─ Beacon lost for 45s? ── Yes ─▶ Revert to provisioned IP,
-                                     or hardcoded fallback if none
-```
+| File | Purpose |
+|------|---------|
+| `server-node/profiles.json` | All profiles with their channel schedules |
+| `server-node/calendar.json` | Date and day-of-week → profile assignments |
+| `server-node/settings.json` | Active profile, default profile, manual override state |
+| `server-node/password.json` | bcrypt password hash |
+| `server-node/secret.key` | Session signing secret (auto-generated) |
+| `server-node/history.jsonl` | Append-only event log (runs, edits, saves) |
+| `server-node/api_keys.json` | Hashed API keys for external integrations |
+| `server-node/schedule.json` | **Legacy** — auto-migrated to profiles on first run |
+
+## Profiles
+
+Profiles are named schedules — each contains a set of channels with their pulse durations, time schedules, and skip dates. You manage them at `/profiles`.
+
+### How the active profile is chosen
+
+Every minute, the profile scheduler resolves which profile should be active:
+
+1. **Manual override** (if set, with optional auto-expiry date)
+2. **Calendar date assignment** (specific YYYY-MM-DD → profile)
+3. **Day-of-week assignment** (e.g. "Saturday" → weekend profile)
+4. **Default profile** (configurable per-profile)
+
+The active profile's channel schedule is what the ESP32 receives via `/api/schedule`.
+
+### Calendar
+
+Assign profiles to specific dates or recurring days of the week at `/profiles` → Calendar. Date assignments take priority over day-of-week. Higher priority than the default profile.
+
+### Override
+
+Temporarily switch to any profile regardless of calendar. Optionally set an auto-expiry date. Override clears automatically at midnight or when manually cleared.
+
+## Dashboard features
+
+### Schedule page (`/`)
+
+- **Channel grid** — one card per channel showing label, pulse duration, time schedule, and skip dates
+- **Channel on/off toggle** — turn a channel off to grey it out and lock all controls. Toggle it back on to restore editing. Save still works in either state.
+- **Run Now** — queue an immediate relay trigger for any channel
+- **Add Channel** — dynamically add new relay channels (up to 24)
+- **History & analytics** — filterable event table, 14-day runs-per-day chart, CSV export
+- **Device log** — raw ESP32 log messages in real time
+- **Heartbeat status** — per-channel online/offline indicators
+- **Profile switcher** — quick profile override from the schedule page
+- **Settings modal** — change password, manage API keys
+- **Backup / Restore** — download or upload a full JSON snapshot
+- **Dark mode** — auto-detected from system preference, manually togglable
+
+### Profiles page (`/profiles`)
+
+- **Profile sidebar** — create, rename, duplicate, delete profiles
+- **Channel editor** — per-profile channel grid with full schedule editing
+- **Set as Default** — mark any profile as the fallback
+- **Calendar** — date-specific and day-of-week profile assignments
+- **Manual override** — with optional auto-expiry
+- **Import / Export** — export all profiles + calendar + settings as JSON; import merges into existing
+
+## API
+
+### Device endpoints (open — no auth)
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `GET` | `/api/schedule` | Download active profile's channels for today |
+| `GET` | `/api/schedule/hash` | Quick change detection (MD5, 8 hex chars) |
+| `POST` | `/api/heartbeat?ch=ch1` | Device liveness ping per channel |
+| `POST` | `/api/log` | Device pushes a log line |
+| `GET` | `/api/commands?ch=ch1` | Poll for queued manual trigger |
+| `POST` | `/api/execution` | Optional: confirm a relay actually fired |
+
+### Dashboard endpoints (login required)
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `GET`/`POST` | `/api/schedule` | Read/write channel schedule |
+| `GET` | `/api/status` | Server uptime + per-channel heartbeats |
+| `GET` | `/api/channels` | List channels |
+| `POST` | `/api/channels` | Add a channel |
+| `DELETE` | `/api/channels/:key` | Remove a channel |
+| `POST` | `/api/relay/:key/trigger` | Queue manual relay trigger |
+| `GET` | `/api/history` | Event history (filterable) |
+| `GET` | `/api/history/export` | CSV download |
+| `GET` | `/api/backup` | JSON snapshot download |
+| `POST` | `/api/restore` | Restore from JSON snapshot |
+| `POST` | `/api/account/password` | Change dashboard password |
+| `GET`/`POST`/`DELETE` | `/api/keys` | Manage API keys |
+| `GET`/`POST`/`PUT`/`DELETE` | `/api/profiles[/:id]` | Profile CRUD |
+| `POST` | `/api/profiles/:id/duplicate` | Clone a profile |
+| `GET` | `/api/profiles/active` | Current active profile info |
+| `GET` | `/api/profiles/export/all` | Export all profiles bundle |
+| `POST` | `/api/profiles/import` | Import profiles bundle |
+| `POST` | `/api/profiles/override` | Set manual override |
+| `POST` | `/api/profiles/override/clear` | Clear manual override |
+| `GET` | `/api/calendar` | Get all calendar assignments |
+| `POST` | `/api/calendar/date` | Assign profile to date |
+| `POST` | `/api/calendar/dow` | Assign profile to day of week |
+| `DELETE` | `/api/calendar/:type/:key` | Remove calendar assignment |
+| `GET`/`PUT` | `/api/settings` | Read/update settings |
+
+API-key auth: send `X-API-Key` header on endpoints marked as API-key compatible (`/api/status`, `/api/history`, manual trigger).
 
 ## Configuration
 
 | File | What to change |
 |------|---------------|
-| `src/main.cpp` | Fallback server IP, timezone offset, GPIO pins, RTC pins |
-| `src/wifi_provision.h` | All WiFi‑related config (AP SSID/password, connection timeout, BOOT button hold duration, reconnect interval) |
-| `server/schedule.json` | Default schedule (auto-created on first run) |
+| `src/bell_core.h` | GPIO pins, relay active logic, timezone, RTC pins |
+| `src/wifi_provision.h` | AP SSID/password, connection timeout, BOOT button hold duration, reconnect interval |
+| `src/main.cpp` | Fallback server IP (`FALLBACK_SERVER_IP`) |
+| `platformio.ini` | Board type, upload port, library versions |
+
+## ESP32 firmware architecture
+
+```
+src/
+├── main.cpp           Minimal glue: init bell_core → init network_sync
+├── bell_core.h/cpp    Relay control, schedule execution, RTC, NVS persistence
+├── network_sync.h/cpp WiFi, HTTP, schedule download, heartbeats, server discovery
+└── wifi_provision.h   WiFi provisioning portal (AP mode, web config)
+```
+
+**Bell Core** never touches WiFi — it's the highest-priority subsystem. If the network module crashes, bells continue ringing from NVS-persisted schedules.
+
+## BLE client (alternative discovery)
+
+`esp32/ble_client/` contains an alternative ESP32 sketch that discovers the server via BLE advertisement instead of UDP beacon. See `esp32/ble_client/README.md` for setup.
 
 ## Features
 
-- **Wi‑Fi provisioning** — configure WiFi from your phone on first boot, no hardcoded credentials needed
-- **Server provisioning** — optionally set a static server IP/port in the setup portal; overrides hardcoded fallback; beacon discovery still takes priority
-- **Three-tier server resolution** — UDP beacon → provisioned IP → hardcoded fallback; gracefully recovers in every failure mode
-- **IP validation** — invalid server IPs are rejected at save time; corrupt NVS data is detected at boot and silently bypassed
-- **BOOT button factory reset** — hold GPIO0 for 5s at any time to erase all network credentials; non-blocking, runs concurrent with normal operations
-- **Zero-config discovery** — UDP beacon on flat networks, provisioned IP or hardcoded IP fallback
+- **Wi‑Fi provisioning** — configure WiFi from your phone on first boot, no hardcoded credentials
+- **Server provisioning** — optionally set a static server IP/port in the setup portal
+- **Three-tier server resolution** — UDP beacon → provisioned IP → hardcoded fallback
+- **BOOT button factory reset** — hold GPIO0 for 5s to erase network credentials
+- **Zero-config discovery** — UDP beacon on flat networks
+- **Profile-based scheduling** — multiple named schedules with calendar-based daily rotation
+- **Calendar assignments** — date-specific and day-of-week profile mapping
+- **Manual override** — temporarily switch profiles with optional auto-expiry
+- **Multi-channel** — any number of relay channels (up to 24), not just ch1/ch2
+- **Channel on/off** — disable a channel to grey it out and lock editing; save and toggle remain functional
+- **Manual trigger** — "Run Now" queues an immediate relay pulse
 - **Live editing** — dashboard changes reach ESP32 in ≤5 seconds
-- **NVS persistence** — survives reboots without server
-- **Optional RTC support** — any DS1307/DS3231/DS3232-compatible module keeps time running through server/WiFi/internet outages; auto-detected, no wiring = no behavior change
-- **Password-protected dashboard** — see `server/README.md` for login + password reset
-- **Per-channel control** — enable/disable, custom pulse width, skip dates
-- **Event log** — relay pulses visible in dashboard
+- **History & analytics** — runs-per-day chart, filterable event table, CSV export
+- **Backup / restore** — full JSON snapshot including profiles, calendar, settings, and history
+- **API keys** — mint scoped tokens for external integrations (Home Assistant, cron, etc.)
+- **Password-protected dashboard** — bcrypt-hashed, changeable in-app or via `reset_password.js`
+- **Dark mode** — auto-detected from system preference, manually togglable
+- **NVS persistence** — survives ESP32 reboots without server
+- **Optional RTC** — DS1307/DS3231/DS3232 keeps time through network outages
+- **Per-channel control** — custom pulse width, time schedules, skip dates
 - **Non-blocking** — no `delay()`, deterministic loop, 24/7 safe
