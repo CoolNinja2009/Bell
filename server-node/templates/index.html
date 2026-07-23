@@ -312,6 +312,39 @@
     transition: border-color 0.25s, box-shadow 0.25s;
     position: relative;
   }
+
+  /* ── Disabled channel (schedule turned off) ── */
+  .channel.disabled {
+    opacity: 0.45;
+    pointer-events: none;
+  }
+  .channel.disabled .ch-header h2 {
+    color: var(--dim);
+    pointer-events: none;
+    border-bottom-color: transparent !important;
+  }
+  .channel.disabled .ch-key-tag {
+    opacity: 0.5;
+  }
+  .channel.disabled .ch-controls {
+    pointer-events: auto;
+  }
+  .channel.disabled .btn-row {
+    pointer-events: auto;
+  }
+  .channel.disabled .btn-save {
+    pointer-events: auto;
+  }
+  .channel.disabled .btn-row .btn-run {
+    pointer-events: none;
+    opacity: 0.4;
+  }
+  .channel.disabled::before { display: none; }
+  .channel.disabled .add-row,
+  .channel.disabled .tag-list,
+  .channel.disabled .field input {
+    pointer-events: none;
+  }
   .channel::before {
     content: "";
     position: absolute;
@@ -865,132 +898,150 @@ function renderAll(data) {
 
 function renderChannel(key, ch) {
   const div = document.createElement('div');
-  div.className = 'channel';
+  div.className = 'channel' + (ch.enabled ? '' : ' disabled');
   div.dataset.key = key;
   const label = ch.label || key.toUpperCase();
+  const isOn = !!ch.enabled;
   div.innerHTML = `
     <div class="ch-header">
       <div style="flex:1;min-width:0;">
-        <h2 contenteditable="true" spellcheck="false" data-field="label">${escapeHtml(label)}</h2>
+        <h2 contenteditable="${isOn}" spellcheck="false" data-field="label">${escapeHtml(label)}</h2>
         <span class="ch-key-tag">${escapeHtml(key)}</span>
       </div>
       <div class="ch-controls">
-        <button class="toggle${ch.enabled ? ' active' : ''}" data-action="toggle" title="Enable/disable schedule"></button>
-        <button class="icon-x" data-action="delete" title="Delete channel">&times;</button>
+        <button class="toggle${isOn ? ' active' : ''}" data-action="toggle" title="${isOn ? 'Turn channel off' : 'Turn channel on'}"></button>
+        ${isOn ? '<button class="icon-x" data-action="delete" title="Delete channel">&times;</button>' : ''}
       </div>
     </div>
     <div class="ch-body">
     <div class="field">
       <label>Pulse Duration (ms)</label>
-      <input type="number" value="${ch.pulse_ms}" min="100" step="100" data-field="pulse_ms">
+      <input type="number" value="${ch.pulse_ms}" min="100" step="100" data-field="pulse_ms"${isOn ? '' : ' disabled'}>
     </div>
     <div class="field">
       <label>Schedule (HH:MM)</label>
       <div class="tag-list" data-list="schedule">
-        ${(ch.schedule||[]).map(t => `<span class="tag">${escapeHtml(t)}<button data-remove="schedule" data-val="${escapeHtml(t)}">&times;</button></span>`).join('')}
+        ${(ch.schedule||[]).map(t => `<span class="tag">${escapeHtml(t)}${isOn ? '<button data-remove="schedule" data-val="'+escapeHtml(t)+'">&times;</button>' : ''}</span>`).join('')}
       </div>
+      ${isOn ? `
       <div class="add-row">
         <input type="time" data-input="schedule" placeholder="HH:MM">
         <button class="btn btn-add" data-add="schedule">+ Add</button>
       </div>
+      ` : ''}
     </div>
     <div class="field">
       <label>Skip Dates (YYYY-MM-DD)</label>
-        ${(ch.skip_dates||[]).map(d => `<span class="tag">${escapeHtml(d)}<button data-remove="skip_dates" data-val="${escapeHtml(d)}">&times;</button></span>`).join('')}
+      <div class="tag-list" data-list="skip_dates">
+        ${(ch.skip_dates||[]).map(d => `<span class="tag">${escapeHtml(d)}${isOn ? '<button data-remove="skip_dates" data-val="'+escapeHtml(d)+'">&times;</button>' : ''}</span>`).join('')}
       </div>
+      ${isOn ? `
       <div class="add-row">
         <input type="date" data-input="skip_dates">
         <button class="btn btn-add" data-add="skip_dates">+ Add</button>
       </div>
+      ` : ''}
     </div>
     </div>
     <div class="btn-row">
-      <button class="btn btn-run" data-action="run">&#9654; Run Now</button>
+      ${isOn ? '<button class="btn btn-run" data-action="run">&#9654; Run Now</button>' : ''}
       <button class="btn btn-save" data-action="save">Save</button>
     </div>
   `;
 
-  // Label edit
-  const labelEl = div.querySelector('[data-field="label"]');
-  labelEl.addEventListener('blur', () => {
-    const v = labelEl.textContent.trim().slice(0, 40) || key.toUpperCase();
-    ch.label = v;
-  });
-  labelEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); labelEl.blur(); } });
+  // Label edit (only when enabled)
+  if (isOn) {
+    const labelEl = div.querySelector('[data-field="label"]');
+    labelEl.addEventListener('blur', () => {
+      const v = labelEl.textContent.trim().slice(0, 40) || key.toUpperCase();
+      ch.label = v;
+    });
+    labelEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); labelEl.blur(); } });
+  }
 
-  // Toggle
+  // Toggle — always functional
   div.querySelector('[data-action="toggle"]').onclick = () => {
     ch.enabled = !ch.enabled;
     renderAll(schedule);
   };
 
-  // Delete channel
-  div.querySelector('[data-action="delete"]').onclick = async () => {
-    if (Object.keys(schedule).length <= 1) { toast('At least one channel must remain', true); return; }
-    if (!confirm(`Delete channel '${key}'? This cannot be undone.`)) return;
-    try {
-      await api('DELETE', `/api/channels/${encodeURIComponent(key)}`);
-      delete schedule[key];
-      renderAll(schedule);
-      toast(`${key.toUpperCase()} deleted`);
-    } catch (e) { toast('Delete failed: ' + e.message, true); }
-  };
-
-  // Manual run
-  div.querySelector('[data-action="run"]').onclick = async (e) => {
-    const btn = e.target;
-    btn.disabled = true;
-    try {
-      const r = await api('POST', `/api/relay/${encodeURIComponent(key)}/trigger`, { pulse_ms: ch.pulse_ms });
-      toast(`${key.toUpperCase()} triggered (${r.pulse_ms}ms) — queued for device`);
-      loadHistory();
-    } catch (e2) {
-      toast('Trigger failed: ' + e2.message, true);
-    } finally {
-      btn.disabled = false;
-    }
-  };
-
-  // Pulse ms change
-  div.querySelector('[data-field="pulse_ms"]').onchange = e => {
-    ch.pulse_ms = Math.max(100, parseInt(e.target.value) || 2000);
-  };
-
-  // Add schedule / skip_date
-  div.querySelectorAll('[data-add]').forEach(btn => {
-    btn.onclick = () => {
-      const list = btn.dataset.add;
-      const inp = div.querySelector(`[data-input="${list}"]`);
-      const val = inp.value.trim();
-      if (!val) return;
-      if (list === 'schedule') {
-        if (!/^\d{2}:\d{2}$/.test(val)) { toast('Format: HH:MM', true); return; }
-        const [h,m] = val.split(':').map(Number);
-        if (h<0||h>23||m<0||m>59) { toast('Invalid time', true); return; }
-      }
-      if (list === 'skip_dates') {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) { toast('Format: YYYY-MM-DD', true); return; }
-      }
-      if (ch[list].includes(val)) { toast('Duplicate', true); return; }
-      ch[list].push(val);
-      if (list === 'schedule') ch[list].sort();
-      else ch[list].sort().reverse();
-      inp.value = '';
-      renderAll(schedule);
+  // Delete channel (only when enabled)
+  if (isOn) {
+    div.querySelector('[data-action="delete"]').onclick = async () => {
+      if (Object.keys(schedule).length <= 1) { toast('At least one channel must remain', true); return; }
+      if (!confirm(`Delete channel '${key}'? This cannot be undone.`)) return;
+      try {
+        await api('DELETE', `/api/channels/${encodeURIComponent(key)}`);
+        delete schedule[key];
+        renderAll(schedule);
+        toast(`${key.toUpperCase()} deleted`);
+      } catch (e) { toast('Delete failed: ' + e.message, true); }
     };
-  });
+  }
 
-  // Remove schedule / skip_date
-  div.querySelectorAll('[data-remove]').forEach(btn => {
-    btn.onclick = () => {
-      const list = btn.dataset.remove;
-      const val = btn.dataset.val;
-      ch[list] = ch[list].filter(v => v !== val);
-      renderAll(schedule);
+  // Manual run (only when enabled)
+  if (isOn) {
+    div.querySelector('[data-action="run"]').onclick = async (e) => {
+      const btn = e.target;
+      btn.disabled = true;
+      try {
+        const r = await api('POST', `/api/relay/${encodeURIComponent(key)}/trigger`, { pulse_ms: ch.pulse_ms });
+        toast(`${key.toUpperCase()} triggered (${r.pulse_ms}ms) — queued for device`);
+        loadHistory();
+      } catch (e2) {
+        toast('Trigger failed: ' + e2.message, true);
+      } finally {
+        btn.disabled = false;
+      }
     };
-  });
+  }
 
-  // Save
+  // Pulse ms change (only when enabled)
+  if (isOn) {
+    div.querySelector('[data-field="pulse_ms"]').onchange = e => {
+      ch.pulse_ms = Math.max(100, parseInt(e.target.value) || 2000);
+    };
+  }
+
+  // Add schedule / skip_date (only when enabled)
+  if (isOn) {
+    div.querySelectorAll('[data-add]').forEach(btn => {
+      btn.onclick = () => {
+        const list = btn.dataset.add;
+        const inp = div.querySelector(`[data-input="${list}"]`);
+        const val = inp.value.trim();
+        if (!val) return;
+        if (list === 'schedule') {
+          if (!/^\d{2}:\d{2}$/.test(val)) { toast('Format: HH:MM', true); return; }
+          const [h,m] = val.split(':').map(Number);
+          if (h<0||h>23||m<0||m>59) { toast('Invalid time', true); return; }
+        }
+        if (list === 'skip_dates') {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) { toast('Format: YYYY-MM-DD', true); return; }
+        }
+        if (ch[list].includes(val)) { toast('Duplicate', true); return; }
+        ch[list].push(val);
+        if (list === 'schedule') ch[list].sort();
+        else ch[list].sort().reverse();
+        inp.value = '';
+        renderAll(schedule);
+      };
+    });
+  }
+
+  // Remove schedule / skip_date (only when enabled)
+  if (isOn) {
+    div.querySelectorAll('[data-remove]').forEach(btn => {
+      btn.onclick = () => {
+        const list = btn.dataset.remove;
+        const val = btn.dataset.val;
+        ch[list] = ch[list].filter(v => v !== val);
+        renderAll(schedule);
+      };
+    });
+  }
+
+  // Save — always functional
   div.querySelector('[data-action="save"]').onclick = async () => {
     try {
       await api('POST', '/api/schedule', schedule);
