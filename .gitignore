@@ -3,3 +3,11 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+# VS Code
+.vscode/
+
+# Defunct server
+defunct/server/
+
+# BLE client
+esp32/ble_client/
