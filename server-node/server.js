@@ -44,13 +44,19 @@ const helmet = require('helmet');
 const auth = require('./auth');
 const history = require('./lib/history');
 const apikeys = require('./lib/apikeys');
+const profiles = require('./lib/profiles');
+const calendar = require('./lib/calendar');
+const profileSettings = require('./lib/settings');
+const profileScheduler = require('./lib/profile-scheduler');
 
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
 const HOST = '0.0.0.0';
 const PORT = 8080;
-const SCHEDULE_FILE = path.join(__dirname, 'schedule.json');
+const SCHEDULE_FILE = path.join(__dirname, 'schedule.json'); // legacy — kept for migration
+const PROFILES_TPL = path.join(__dirname, 'templates', 'profiles.html');
+const PROFILE_REFRESH_INTERVAL_MS = 60000; // check every minute for midnight rollover
 const BEACON_PORT = 9999;
 const BEACON_INTERVAL_MS = 5000;
 const BEACON_MSG = Buffer.from(`RELAY_CTRL:${PORT}\n`);
@@ -71,29 +77,29 @@ function logError(context, err) {
 }
 
 // ---------------------------------------------------------------------------
-// Schedule storage helpers
+// Schedule helpers — now profile-aware. loadSchedule() returns the resolved
+// active profile's channels; saveSchedule(data) writes into the active profile.
 // ---------------------------------------------------------------------------
-function defaultSchedule() {
+function loadSchedule() {
+  const sched = profileScheduler.getActiveSchedule();
+  if (sched) return sched;
+  // Fallback: return a minimal default so the ESP32 never gets an empty response
   return {
     ch1: { enabled: true, pulse_ms: 2000, schedule: ['08:00', '20:00'], skip_dates: [], label: 'Channel 1' },
     ch2: { enabled: true, pulse_ms: 2000, schedule: ['06:30', '18:45'], skip_dates: [], label: 'Channel 2' },
   };
 }
 
-function loadSchedule() {
-  try {
-    const raw = fs.readFileSync(SCHEDULE_FILE, 'utf8');
-    return JSON.parse(raw);
-  } catch (err) {
-    if (err.code !== 'ENOENT' && !(err instanceof SyntaxError)) throw err;
-    return defaultSchedule();
-  }
-}
-
 function saveSchedule(data) {
-  const tmp = SCHEDULE_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-  fs.renameSync(tmp, SCHEDULE_FILE);
+  const s = profileSettings.getSettings();
+  if (!s.active_profile) {
+    // No active profile yet — auto-create a default one
+    const created = profiles.createProfile('Regular Working Day', data);
+    profileSettings.setDefaultProfile(created.id);
+    profileSettings.setActiveProfile(created.id);
+    return;
+  }
+  profiles.saveChannels(s.active_profile, data);
 }
 
 function isValidDateStr(d) {
@@ -122,17 +128,17 @@ function validateSchedule(data) {
     if (!CHANNEL_KEY_RE.test(ch)) {
       throw validationError(`Invalid channel key '${ch}' — letters/numbers/_/-, must start with a letter, max 20 chars`);
     }
-    const s = data[ch];
-    if (!s || typeof s !== 'object') throw validationError(`${ch} must be an object`);
-    if (typeof s.enabled !== 'boolean') throw validationError(`${ch}.enabled must be bool`);
-    if (typeof s.pulse_ms !== 'number' || s.pulse_ms < 100) {
+    const c = data[ch];
+    if (!c || typeof c !== 'object') throw validationError(`${ch} must be an object`);
+    if (typeof c.enabled !== 'boolean') throw validationError(`${ch}.enabled must be bool`);
+    if (typeof c.pulse_ms !== 'number' || c.pulse_ms < 100) {
       throw validationError(`${ch}.pulse_ms must be >= 100`);
     }
-    if (s.label !== undefined && (typeof s.label !== 'string' || s.label.length > 40)) {
+    if (c.label !== undefined && (typeof c.label !== 'string' || c.label.length > 40)) {
       throw validationError(`${ch}.label must be a string up to 40 chars`);
     }
-    if (!Array.isArray(s.schedule)) throw validationError(`${ch}.schedule must be a list`);
-    for (const entry of s.schedule) {
+    if (!Array.isArray(c.schedule)) throw validationError(`${ch}.schedule must be a list`);
+    for (const entry of c.schedule) {
       const parts = typeof entry === 'string' ? entry.split(':') : [];
       if (parts.length !== 2) throw validationError(`${ch} schedule entry '${entry}' invalid — use HH:MM`);
       const hh = Number(parts[0]);
@@ -141,8 +147,8 @@ function validateSchedule(data) {
         throw validationError(`${ch} schedule entry '${entry}' invalid — use HH:MM`);
       }
     }
-    if (!Array.isArray(s.skip_dates)) throw validationError(`${ch}.skip_dates must be a list`);
-    for (const d of s.skip_dates) {
+    if (!Array.isArray(c.skip_dates)) throw validationError(`${ch}.skip_dates must be a list`);
+    for (const d of c.skip_dates) {
       if (!isValidDateStr(d)) throw validationError(`${ch} skip_date '${d}' invalid — use YYYY-MM-DD`);
     }
   }
@@ -321,7 +327,10 @@ app.post('/login', loginLimiter, (req, res) => {
   const password = (req.body && req.body.password) || '';
   if (auth.verifyPassword(password)) {
     req.session.regenerate((err) => {
-      if (err) throw err;
+      if (err) {
+        logError('session regenerate', err);
+        return res.status(500).type('html').send(renderLogin('Session error. Please try again.'));
+      }
       req.session.authenticated = true;
       const nextPath = (req.query.next && decodeURIComponent(req.query.next)) || '/';
       res.redirect(nextPath.startsWith('/') ? nextPath : '/');
@@ -546,15 +555,20 @@ app.get(
 // ---------------------------------------------------------------------------
 // NEW — Backup & restore
 // ---------------------------------------------------------------------------
+// Backup & restore (now includes profiles, calendar, settings)
+// ---------------------------------------------------------------------------
 app.get(
   '/api/backup',
   loginRequired,
   asyncRoute(async (req, res) => {
     const bundle = {
-      version: 1,
+      version: 2,
       exported_at: new Date().toISOString(),
       schedule: loadSchedule(),
       history: history.readHistory({ limit: 5000 }),
+      profiles: profiles.exportAll(),
+      calendar: calendar.getAll(),
+      settings: profileSettings.getSettings(),
     };
     res
       .set('Content-Type', 'application/json')
@@ -574,9 +588,244 @@ app.post(
     if (Array.isArray(body.history)) {
       history.replaceAll(body.history);
     }
+    if (body.profiles) {
+      profiles.importProfiles(body.profiles);
+    }
+    if (body.calendar) {
+      const fs = require('fs');
+      const path = require('path');
+      fs.writeFileSync(calendar.CALENDAR_FILE, JSON.stringify(body.calendar, null, 2));
+    }
+    if (body.settings) {
+      const fs = require('fs');
+      fs.writeFileSync(profileSettings.SETTINGS_FILE, JSON.stringify(body.settings, null, 2));
+    }
+    // Re-resolve profile after restore
+    profileScheduler.resolveAndApply();
     history.appendHistory({ ch: '*', trigger: 'edit', status: 'restored', note: 'restored from backup' });
     pushLog('schedule restored from backup');
     res.json({ ok: true });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Profile management API
+// ---------------------------------------------------------------------------
+app.get(
+  '/api/profiles',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    res.json(profiles.listProfiles());
+  })
+);
+
+app.get(
+  '/api/profiles/active',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    res.json(profileScheduler.getActiveInfo());
+  })
+);
+
+app.get(
+  '/api/profiles/:id',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const p = profiles.getProfile(req.params.id);
+    if (!p) throw Object.assign(new Error('Profile not found'), { status: 404 });
+    res.json(p);
+  })
+);
+
+app.post(
+  '/api/profiles',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const name = (req.body && req.body.name) || 'New Profile';
+    const channels = (req.body && req.body.channels) || undefined;
+    const created = profiles.createProfile(name, channels);
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'profile_created', note: created.name });
+    pushLog(`profile '${created.name}' created`);
+    res.json(created);
+  })
+);
+
+app.put(
+  '/api/profiles/:id',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const id = req.params.id;
+    if (req.body && req.body.name !== undefined) {
+      profiles.renameProfile(id, req.body.name);
+    }
+    if (req.body && req.body.channels !== undefined) {
+      validateSchedule(req.body.channels);
+      profiles.saveChannels(id, req.body.channels);
+    }
+    const p = profiles.getProfile(id);
+    if (!p) throw Object.assign(new Error('Profile not found'), { status: 404 });
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'profile_updated', note: p.name });
+    pushLog(`profile '${p.name}' updated`);
+    res.json({ ok: true });
+  })
+);
+
+app.delete(
+  '/api/profiles/:id',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const p = profiles.getProfile(req.params.id);
+    if (!p) throw Object.assign(new Error('Profile not found'), { status: 404 });
+    profiles.deleteProfile(req.params.id);
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'profile_deleted', note: p.name });
+    pushLog(`profile '${p.name}' deleted`);
+    res.json({ ok: true });
+  })
+);
+
+app.post(
+  '/api/profiles/:id/duplicate',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const dup = profiles.duplicateProfile(req.params.id);
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'profile_duplicated', note: dup.name });
+    pushLog(`profile duplicated as '${dup.name}'`);
+    res.json(dup);
+  })
+);
+
+app.get(
+  '/api/profiles/export/all',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const bundle = profiles.exportAll();
+    res
+      .set('Content-Type', 'application/json')
+      .set('Content-Disposition', 'attachment; filename="profiles-export.json"')
+      .send(JSON.stringify(bundle, null, 2));
+  })
+);
+
+app.post(
+  '/api/profiles/import',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const count = profiles.importProfiles(req.body);
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'profiles_imported', note: `${count} profile(s)` });
+    pushLog(`${count} profile(s) imported`);
+    res.json({ ok: true, imported: count });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Calendar assignments API
+// ---------------------------------------------------------------------------
+app.get(
+  '/api/calendar',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    res.json(calendar.getAll());
+  })
+);
+
+app.post(
+  '/api/calendar/date',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const { date, profileId } = req.body || {};
+    if (!date) throw validationError('date is required (YYYY-MM-DD)');
+    calendar.assignDate(date, profileId || null);
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'calendar_updated', note: `date ${date}` });
+    pushLog(`calendar: ${date} -> ${profileId || '(removed)'}`);
+    res.json(calendar.getAll());
+  })
+);
+
+app.post(
+  '/api/calendar/dow',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const { dow, profileId } = req.body || {};
+    if (!dow) throw validationError('dow is required');
+    calendar.assignDow(dow, profileId || null);
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'calendar_updated', note: `dow ${dow}` });
+    pushLog(`calendar: ${dow} -> ${profileId || '(removed)'}`);
+    res.json(calendar.getAll());
+  })
+);
+
+app.delete(
+  '/api/calendar/:type/:key',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    calendar.removeAssignment(req.params.type, req.params.key);
+    pushLog(`calendar: removed ${req.params.type} ${req.params.key}`);
+    res.json(calendar.getAll());
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Settings & override API
+// ---------------------------------------------------------------------------
+app.get(
+  '/api/settings',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    res.json(profileSettings.getSettings());
+  })
+);
+
+app.put(
+  '/api/settings',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    if (req.body && req.body.default_profile !== undefined) {
+      profileSettings.setDefaultProfile(req.body.default_profile);
+    }
+    res.json(profileSettings.getSettings());
+  })
+);
+
+app.post(
+  '/api/profiles/override',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const { profileId, until } = req.body || {};
+    if (!profileId) throw validationError('profileId is required');
+    profileSettings.setOverride(profileId, until || null);
+    profileScheduler.resolveAndApply();
+    const info = profileScheduler.getActiveInfo();
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'override_set', note: `-> ${info.name}` });
+    pushLog(`manual override -> ${info.name}`);
+    res.json(info);
+  })
+);
+
+app.post(
+  '/api/profiles/override/clear',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    profileSettings.clearOverride();
+    profileScheduler.resolveAndApply();
+    const info = profileScheduler.getActiveInfo();
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'override_cleared' });
+    pushLog(`manual override cleared -> ${info.name}`);
+    res.json(info);
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Profiles dashboard page
+// ---------------------------------------------------------------------------
+app.get(
+  '/profiles',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    if (!fs.existsSync(PROFILES_TPL)) {
+      return res.status(404).send('Profiles page not found');
+    }
+    const html = fs.readFileSync(PROFILES_TPL, 'utf8');
+    res.set('Cache-Control', 'no-store').type('html').send(html);
   })
 );
 
@@ -691,10 +940,43 @@ function startBeacon() {
 const startTime = Date.now();
 
 function bootstrap() {
-  if (!fs.existsSync(SCHEDULE_FILE)) {
-    saveSchedule(defaultSchedule());
-    log(`[server] Created ${SCHEDULE_FILE} with defaults`);
+  // Migration: if old schedule.json exists but profiles.json doesn't,
+  // create a "Regular Working Day" profile from the existing schedule.
+  if (!fs.existsSync(profiles.PROFILES_FILE) && fs.existsSync(SCHEDULE_FILE)) {
+    try {
+      const oldSchedule = JSON.parse(fs.readFileSync(SCHEDULE_FILE, 'utf8'));
+      if (oldSchedule && typeof oldSchedule === 'object' && !Array.isArray(oldSchedule)) {
+        const created = profiles.createProfile('Regular Working Day', oldSchedule);
+        profileSettings.setDefaultProfile(created.id);
+        log(`[server] Migrated schedule.json -> profile '${created.name}' (${created.id})`);
+      }
+    } catch (err) {
+      log(`[server] Migration skipped: ${err.message}`);
+    }
   }
+
+  // Ensure at least one profile exists
+  const ids = profiles.listIds();
+  if (ids.length === 0) {
+    const created = profiles.createProfile('Regular Working Day');
+    profileSettings.setDefaultProfile(created.id);
+    log(`[server] Created default profile '${created.name}'`);
+  }
+
+  // Resolve and apply the active profile for today
+  profileScheduler.resolveAndApply();
+
+  // Schedule midnight profile refresh — check every minute
+  let lastDay = profileScheduler.todayStr();
+  setInterval(() => {
+    const today = profileScheduler.todayStr();
+    if (today !== lastDay) {
+      lastDay = today;
+      profileScheduler.resolveAndApply();
+      log(`[server] Midnight rollover — new active profile applied`);
+    }
+  }, PROFILE_REFRESH_INTERVAL_MS);
+
   auth.loadPasswordHash(); // creates password.json with default password notice, if needed
 }
 
