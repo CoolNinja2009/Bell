@@ -61,8 +61,6 @@ Connect your phone/laptop to `Bell_Setup`, open `http://192.168.4.1`, scan for y
 
 **Resetting WiFi:** Hold the BOOT button (GPIO0) for 5 seconds at any time — erases SSID, password, and provisioned server IP. All other settings (schedules, RTC) are preserved. Non-blocking, runs concurrent with normal operation.
 
-## Quick start
-
 ### 1. Server (Raspberry Pi or PC)
 
 ```bash
@@ -73,7 +71,46 @@ npm start
 # → Beacon broadcasts on UDP port 9999
 ```
 
-The `defunct/server/` directory contains the original Flask prototype — kept for reference only. Use `server-node/` for all production deployments.
+#### Production deployment with PM2
+
+PM2 keeps the server running 24/7 with automatic restarts on crash, log rotation, and startup-on-boot.
+
+```bash
+# Install PM2 globally
+npm install -g pm2
+
+# Start the server
+cd server-node
+pm2 start server.js --name relay-server --cwd .
+
+# Save the process list so it survives reboots
+pm2 save
+
+# Register PM2 as a system service (auto-starts on boot)
+pm2 startup
+# → Follow the printed command (needs sudo on Linux)
+```
+
+Daily operations:
+
+```bash
+pm2 status              # list all processes
+pm2 logs relay-server   # tail logs (--lines 200 for more)
+pm2 restart relay-server
+pm2 stop relay-server
+pm2 monit               # real-time CPU/memory dashboard
+```
+
+Log rotation (prevents disk fill on long-running deployments):
+
+```bash
+pm2 install pm2-logrotate
+pm2 set pm2-logrotate:max_size 10M
+pm2 set pm2-logrotate:retain 7
+pm2 set pm2-logrotate:compress true
+```
+
+> **Important**: PM2 must be running when the server crosses midnight for day-of-week profile transitions to work. The ESP32 fetches the new profile from the server; if the server is down at midnight, the ESP32 rings the previous day's schedule.
 
 ### 2. ESP32
 
