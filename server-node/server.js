@@ -139,12 +139,23 @@ function validateSchedule(data) {
     }
     if (!Array.isArray(c.schedule)) throw validationError(`${ch}.schedule must be a list`);
     for (const entry of c.schedule) {
-      const parts = typeof entry === 'string' ? entry.split(':') : [];
-      if (parts.length !== 2) throw validationError(`${ch} schedule entry '${entry}' invalid — use HH:MM`);
+      let timeStr;
+      if (typeof entry === 'string') {
+        timeStr = entry;
+      } else if (entry && typeof entry === 'object' && typeof entry.time === 'string') {
+        timeStr = entry.time;
+        if (entry.pulse_ms !== undefined && (typeof entry.pulse_ms !== 'number' || entry.pulse_ms < 100)) {
+          throw validationError(`${ch} schedule entry pulse_ms must be >= 100`);
+        }
+      } else {
+        throw validationError(`${ch} schedule entry invalid — use "HH:MM" or {"time":"HH:MM","pulse_ms":N}`);
+      }
+      const parts = timeStr.split(':');
+      if (parts.length !== 2) throw validationError(`${ch} schedule time '${timeStr}' invalid — use HH:MM`);
       const hh = Number(parts[0]);
       const mm = Number(parts[1]);
       if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
-        throw validationError(`${ch} schedule entry '${entry}' invalid — use HH:MM`);
+        throw validationError(`${ch} schedule time '${timeStr}' invalid — use HH:MM`);
       }
     }
     if (!Array.isArray(c.skip_dates)) throw validationError(`${ch}.skip_dates must be a list`);

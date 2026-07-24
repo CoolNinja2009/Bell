@@ -241,6 +241,7 @@ static void init_fallback(ChannelCfg &cfg, const uint32_t *sched, size_t n,
     cfg.schedule_len = (n <= MAX_SCHEDULE) ? n : MAX_SCHEDULE;
     for (size_t i = 0; i < cfg.schedule_len; ++i) {
         cfg.schedule[i] = sched[i];
+        cfg.schedule_pulse_ms[i] = pulse_ms;
     }
     cfg.skip_count = 0;
 }
@@ -287,6 +288,7 @@ static void recompute_next_fire(Channel &ch, const time_t after_epoch) {
     struct tm t;
     if (!localtime_r(&after_epoch, &t)) {
         ch.next_fire = 0;
+        ch.next_fire_idx = 0;
         return;
     }
     const uint32_t now_sm = static_cast<uint32_t>(t.tm_hour) * 3600U
@@ -297,6 +299,7 @@ static void recompute_next_fire(Channel &ch, const time_t after_epoch) {
     const size_t    n     = ch.cfg.schedule_len;
     if (n == 0 || !ch.cfg.enabled) {
         ch.next_fire = 0;
+        ch.next_fire_idx = 0;
         return;
     }
 
@@ -304,12 +307,14 @@ static void recompute_next_fire(Channel &ch, const time_t after_epoch) {
     while (i < n && sched[i] <= now_sm) { ++i; }
 
     const time_t midnight = midnight_of(after_epoch);
-    if (midnight == 0) { ch.next_fire = 0; return; }
+    if (midnight == 0) { ch.next_fire = 0; ch.next_fire_idx = 0; return; }
 
     if (i < n) {
-        ch.next_fire  = midnight + static_cast<time_t>(sched[i]);
+        ch.next_fire     = midnight + static_cast<time_t>(sched[i]);
+        ch.next_fire_idx = i;
     } else {
-        ch.next_fire  = midnight + 86400 + static_cast<time_t>(sched[0]);
+        ch.next_fire     = midnight + 86400 + static_cast<time_t>(sched[0]);
+        ch.next_fire_idx = 0;
     }
 }
 
@@ -373,11 +378,13 @@ static bool tick_channel(Channel &ch, const time_t now) {
 
     if (ch.phase == Phase::IDLE) {
         if (now >= ch.next_fire) {
-            trigger_channel_now(ch, ch.cfg.pulse_ms, primary_channel_key(ch), "schedule");
+            trigger_channel_now(ch, ch.cfg.schedule_pulse_ms[ch.next_fire_idx],
+                                primary_channel_key(ch), "schedule");
             return true;
         }
     } else {
-        const uint32_t pulse_ms = ch.active_pulse_ms ? ch.active_pulse_ms : ch.cfg.pulse_ms;
+        const uint32_t pulse_ms = ch.active_pulse_ms ? ch.active_pulse_ms
+                                   : ch.cfg.schedule_pulse_ms[ch.next_fire_idx];
         if (elapsed_since(ch.pulse_start) >= pulse_ms) {
             relay_write(ch.pin, false);
             ch.phase = Phase::IDLE;
@@ -416,23 +423,38 @@ static bool parse_channel_cfg(JsonObject root, ChannelCfg &cfg) {
     cfg.enabled  = root["enabled"]  | true;
     cfg.pulse_ms = root["pulse_ms"] | 2000U;
     if (cfg.pulse_ms < 100) cfg.pulse_ms = 100;
-
     JsonArray sched = root["schedule"];
     cfg.schedule_len = 0;
     if (sched) {
         for (JsonVariant v : sched) {
             if (cfg.schedule_len >= MAX_SCHEDULE) break;
-            const char *t = v.as<const char*>();
+            const char *t = nullptr;
+            uint32_t    sm = 0xFFFFFFFF;
+            uint32_t    entry_pulse = cfg.pulse_ms;  // default to channel pulse
+
+            if (v.is<const char*>()) {
+                // Plain "HH:MM" string — use channel pulse_ms
+                t = v.as<const char*>();
+            } else if (v.is<JsonObject>()) {
+                // Object {"time":"HH:MM", "pulse_ms": N}
+                JsonObject obj = v.as<JsonObject>();
+                t = obj["time"];
+                uint32_t p = obj["pulse_ms"] | 0;
+                if (p >= 100) entry_pulse = p;
+            }
             if (!t) continue;
-            const uint32_t sm = parse_hhmm(t);
+            sm = parse_hhmm(t);
             if (sm == 0xFFFFFFFF) continue;
+
             // Insertion sort into schedule array
             size_t pos = cfg.schedule_len;
             while (pos > 0 && cfg.schedule[pos - 1] > sm) {
                 cfg.schedule[pos] = cfg.schedule[pos - 1];
+                cfg.schedule_pulse_ms[pos] = cfg.schedule_pulse_ms[pos - 1];
                 --pos;
             }
             cfg.schedule[pos] = sm;
+            cfg.schedule_pulse_ms[pos] = entry_pulse;
             ++cfg.schedule_len;
         }
     }
