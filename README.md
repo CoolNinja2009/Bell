@@ -152,21 +152,21 @@ Open `http://<server-ip>:8080` in a browser. Default password is **`admin`** —
 ┌─────────────────────────────────────────────────────┐
 │  Dashboard (browser)                                │
 │  ┌──────────────┐  ┌─────────────────────────────┐  │
-│  │ / (Schedule)  │  │ /profiles (Profile Manager) │  │
-│  │ Channel grid  │  │ Profile CRUD, calendar,     │  │
-│  │ History, log  │  │ override, import/export     │  │
+│  │ / (Schedule)  │  │ /profiles (Profile Manager)│  │
+│  │ Channel grid  │  │ Profile CRUD, calendar,    │  │
+│  │ History, log  │  │ override, import/export    │  │
 │  └──────┬───────┘  └──────────────┬──────────────┘  │
 └─────────┼─────────────────────────┼─────────────────┘
           │      HTTP (login)       │
           ▼                         ▼
-┌──────────────────────────────────────────────────────┐
-│  Schedule Server (server-node/)          :8080       │
+┌─────────────────────────────────────────────────────┐
+│  Schedule Server (server-node/)          :8080      │
 │  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐ │
 │  │ Profiles │ │ Calendar │ │ Settings / Override  │ │
 │  │ CRUD API │ │date + dow│ │ active profile mgmt  │ │
 │  └────┬─────┘ └────┬─────┘ └──────────┬───────────┘ │
-│       │             │                  │             │
-│       ▼             ▼                  ▼             │
+│       │             │                  │            │
+│       ▼             ▼                  ▼            │
 │  ┌──────────────────────────────────────────────┐   │
 │  │        Profile Scheduler                     │   │
 │  │  Resolves active profile daily:              │   │
