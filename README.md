@@ -237,6 +237,10 @@ Temporarily switch to any profile regardless of calendar. Optionally set an auto
 - **Channel grid** — one card per channel showing label, pulse duration, time schedule, and skip dates
 - **Channel on/off toggle** — turn a channel off to grey it out and lock all controls. Toggle it back on to restore editing. Save still works in either state.
 - **Run Now** — queue an immediate relay trigger for any channel
+- **Variable bell timings** — each schedule entry can have its own pulse duration. In the schedule array, plain `"HH:MM"` strings use the channel default; `{"time":"HH:MM","pulse_ms":N}` objects override per-entry. The ESP32 parses this directly from JSON and stores it in NVS — zero config needed on the device.
+- **Bulk add** — two tools under each channel's schedule (click "+ Bulk add"):
+  - **Paste** — paste multiple times at once, one per line (`HH:MM` or `HH:MM pulse_ms`). Skips duplicates, validates, sorts.
+  - **Range** — generate a repeating sequence ("every 45 min from 08:00 to 15:00"). Optional pulse applies to all generated entries. Great for period bells.
 - **Add Channel** — dynamically add new relay channels (up to 24)
 - **History & analytics** — filterable event table, 14-day runs-per-day chart, CSV export
 - **Device log** — raw ESP32 log messages in real time
@@ -245,7 +249,6 @@ Temporarily switch to any profile regardless of calendar. Optionally set an auto
 - **Settings modal** — change password, manage API keys
 - **Backup / Restore** — download or upload a full JSON snapshot
 - **Dark mode** — auto-detected from system preference, manually togglable
-
 ### Profiles page (`/profiles`)
 
 - **Profile sidebar** — create, rename, duplicate, delete profiles
@@ -254,14 +257,11 @@ Temporarily switch to any profile regardless of calendar. Optionally set an auto
 - **Calendar** — date-specific and day-of-week profile assignments
 - **Manual override** — with optional auto-expiry
 - **Import / Export** — export all profiles + calendar + settings as JSON; import merges into existing
-
-## API
-
 ### Device endpoints (open — no auth)
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| `GET` | `/api/schedule` | Download active profile's channels for today |
+| `GET` | `/api/schedule` | Download active profile's channels for today. Schedule entries may be plain `"HH:MM"` strings (use channel `pulse_ms`) or `{"time":"HH:MM","pulse_ms":N}` objects (per-entry override). |
 | `GET` | `/api/schedule/hash` | Quick change detection (MD5, 8 hex chars) |
 | `POST` | `/api/heartbeat?ch=ch1` | Device liveness ping per channel |
 | `POST` | `/api/log` | Device pushes a log line |
@@ -334,6 +334,8 @@ src/
 - **Profile-based scheduling** — multiple named schedules with calendar-based daily rotation
 - **Calendar assignments** — date-specific and day-of-week profile mapping
 - **Manual override** — temporarily switch profiles with optional auto-expiry
+- **Variable bell timings** — per-entry pulse durations in schedule arrays; ESP32 parses directly, no config
+- **Bulk schedule entry** — paste or generate repeating time sequences to fill schedules fast
 - **Multi-channel** — any number of relay channels (up to 24), not just ch1/ch2
 - **Channel on/off** — disable a channel to grey it out and lock editing; save and toggle remain functional
 - **Manual trigger** — "Run Now" queues an immediate relay pulse
