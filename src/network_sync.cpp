@@ -311,8 +311,7 @@ static void check_schedule_update() {
         g_last_hash_poll = millis();
     }
 
-    // Full poll safety net
-    if (elapsed_since(g_last_poll) >= FULL_POLL_MS) {
+    if (g_server_seen && elapsed_since(g_last_poll) >= FULL_POLL_MS) {
         if (fetch_schedule()) {
             if (!g_server_config_loaded) {
                 Serial.println(F("NET: first server config"));
@@ -332,12 +331,21 @@ static void check_schedule_update() {
 void network_sync_init() {
     // --- WiFi Provisioning ---
     checkBootButtonReset();
-    if (!connectSavedWiFi()) {
-        startSetupMode();  // never returns — saves creds & restarts
-    }
-    Serial.print(F("WiFi: IP = "));
-    Serial.println(WiFi.localIP());
 
+    char ssid[32] = {0};
+    char pass[64] = {0};
+
+    if (!loadCredentials(ssid, sizeof(ssid), pass, sizeof(pass))) {
+        // No saved credentials — first-time provisioning
+        startSetupMode();  // never returns
+    }
+
+    // Non-blocking WiFi start — the tick watchdog retries every WIFI_RETRY_MS
+    // so a slow-booting router after a power outage is handled gracefully
+    WiFi.setAutoReconnect(true);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, pass);
+    Serial.printf("WiFi: connecting to %s...\n", ssid);
     // --- UDP beacon ---
     g_udp.begin(BEACON_PORT);
     g_server_ip.fromString(FALLBACK_SERVER_IP);
@@ -390,6 +398,9 @@ void network_sync_tick() {
 
     // ── Schedule sync ──────────────────────────────────
     check_schedule_update();
+
+    // ── Everything below requires a known server ────────
+    if (!g_server_seen) return;
 
     // ── Manual command poll ────────────────────────────
     if (WiFi.status() == WL_CONNECTED
