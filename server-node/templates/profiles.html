@@ -910,6 +910,30 @@ function renderChannelCard(key, ch) {
           <input type="number" data-input="schedule_pulse" placeholder="ms" min="100" step="100" style="width:70px;" title="Optional pulse duration (uses channel default if empty)">
           <button class="btn btn-add" data-add="schedule">+ Add</button>
         </div>
+        <div style="margin-top:6px;">
+          <a href="#" class="bulk-toggle" data-action="toggle-bulk" style="font-size:0.78rem;color:var(--accent);opacity:0.7;text-decoration:none;">+ Bulk add</a>
+        </div>
+        <div class="bulk-section" style="display:none;margin-top:8px;padding:10px 12px;background:var(--panel2);border-radius:6px;border:1px solid var(--border);">
+          <div style="display:flex;gap:2px;margin-bottom:8px;">
+            <button class="bulk-tab active" data-tab="paste" style="flex:1;padding:5px 0;background:none;border:none;border-bottom:2px solid var(--accent);color:var(--accent);font-size:0.75rem;cursor:pointer;">Paste</button>
+            <button class="bulk-tab" data-tab="range" style="flex:1;padding:5px 0;background:none;border:none;border-bottom:2px solid transparent;color:var(--dim);font-size:0.75rem;cursor:pointer;">Range</button>
+          </div>
+          <div class="bulk-panel" data-panel="paste">
+            <textarea data-input="bulk_paste" rows="3" placeholder="One per line: HH:MM [pulse_ms]&#10;08:00&#10;09:00 5000&#10;10:30" style="width:100%;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);font:0.8rem monospace;padding:6px 8px;resize:vertical;box-sizing:border-box;"></textarea>
+            <button class="btn btn-add" data-action="bulk-add" style="margin-top:6px;width:100%;">Add All</button>
+          </div>
+          <div class="bulk-panel" data-panel="range" style="display:none;">
+            <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
+              <input type="time" data-input="range_from" style="width:105px;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:0.8rem;">
+              <span style="color:var(--dim);font-size:0.75rem;">to</span>
+              <input type="time" data-input="range_to" style="width:105px;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:0.8rem;">
+              <span style="color:var(--dim);font-size:0.75rem;">every</span>
+              <input type="number" data-input="range_step" placeholder="min" min="1" max="1440" style="width:55px;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:0.8rem;">
+              <input type="number" data-input="range_pulse" placeholder="ms" min="100" step="100" style="width:60px;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:0.8rem;" title="Optional pulse (ms)">
+            </div>
+            <button class="btn btn-add" data-action="range-gen" style="margin-top:6px;width:100%;">Generate</button>
+          </div>
+        </div>
       </div>
       <div class="field">
         <label>Skip Dates (YYYY-MM-DD)</label>
@@ -1019,6 +1043,107 @@ function wireChannelCard(key, ch) {
       renderProfileEditor();
     };
   });
+
+  // Bulk add
+  card.querySelector('[data-action="toggle-bulk"]').onclick = e => {
+    e.preventDefault();
+    const section = card.querySelector('.bulk-section');
+    const toggle = card.querySelector('[data-action="toggle-bulk"]');
+    if (section.style.display === 'none') {
+      section.style.display = 'block';
+      toggle.textContent = '- Hide bulk';
+    } else {
+      section.style.display = 'none';
+      toggle.textContent = '+ Bulk add';
+    }
+  };
+
+  card.querySelectorAll('.bulk-tab').forEach(tab => {
+    tab.onclick = () => {
+      card.querySelectorAll('.bulk-tab').forEach(t => {
+        t.classList.remove('active');
+        t.style.borderBottomColor = 'transparent';
+        t.style.color = 'var(--dim)';
+      });
+      tab.classList.add('active');
+      tab.style.borderBottomColor = 'var(--accent)';
+      tab.style.color = 'var(--accent)';
+      card.querySelectorAll('.bulk-panel').forEach(p => {
+        p.style.display = p.dataset.panel === tab.dataset.tab ? 'block' : 'none';
+      });
+    };
+  });
+
+  const addScheduleEntries = (entries) => {
+    let added = 0;
+    for (const e of entries) {
+      const dup = ch.schedule.some(v =>
+        (typeof v === 'string' ? v : (v && v.time || '')) === e.time
+      );
+      if (dup) continue;
+      const entry = (e.pulse_ms && e.pulse_ms >= 100)
+        ? { time: e.time, pulse_ms: e.pulse_ms }
+        : e.time;
+      ch.schedule.push(entry);
+      added++;
+    }
+    if (added > 0) {
+      ch.schedule.sort((a, b) => {
+        const at = typeof a === 'string' ? a : (a && a.time || '');
+        const bt = typeof b === 'string' ? b : (b && b.time || '');
+        return at.localeCompare(bt);
+      });
+    }
+    return added;
+  };
+
+  card.querySelector('[data-action="bulk-add"]').onclick = () => {
+    const ta = card.querySelector('[data-input="bulk_paste"]');
+    const raw = ta.value.trim();
+    if (!raw) return;
+    const entries = [];
+    for (let line of raw.split('\n')) {
+      line = line.trim();
+      if (!line || line.startsWith('#')) continue;
+      const parts = line.split(/\s+/);
+      const timeStr = parts[0];
+      if (!/^\d{2}:\d{2}$/.test(timeStr)) continue;
+      const [h, m] = timeStr.split(':').map(Number);
+      if (h < 0 || h > 23 || m < 0 || m > 59) continue;
+      const pulseMs = parts[1] ? parseInt(parts[1]) : 0;
+      entries.push({ time: timeStr, pulse_ms: pulseMs >= 100 ? pulseMs : 0 });
+    }
+    if (entries.length === 0) { toast('No valid entries found'); return; }
+    const added = addScheduleEntries(entries);
+    ta.value = '';
+    renderProfileEditor();
+    toast(`Added ${added} of ${entries.length} entries`);
+  };
+
+  card.querySelector('[data-action="range-gen"]').onclick = () => {
+    const from = card.querySelector('[data-input="range_from"]').value;
+    const to = card.querySelector('[data-input="range_to"]').value;
+    const step = parseInt(card.querySelector('[data-input="range_step"]').value) || 0;
+    const pulseInp = card.querySelector('[data-input="range_pulse"]');
+    const pulseMs = pulseInp ? (parseInt(pulseInp.value) || 0) : 0;
+    if (!from || !to) { toast('Set From and To times', true); return; }
+    if (!step || step < 1 || step > 1440) { toast('Step must be 1-1440 minutes', true); return; }
+    const [fh, fm] = from.split(':').map(Number);
+    const [th, tm] = to.split(':').map(Number);
+    const fromMin = fh * 60 + fm;
+    const toMin = th * 60 + tm;
+    if (fromMin >= toMin) { toast('From must be before To', true); return; }
+    const entries = [];
+    for (let m = fromMin; m <= toMin; m += step) {
+      const hh = String(Math.floor(m / 60)).padStart(2, '0');
+      const mm = String(m % 60).padStart(2, '0');
+      entries.push({ time: hh + ':' + mm, pulse_ms: pulseMs >= 100 ? pulseMs : 0 });
+    }
+    const added = addScheduleEntries(entries);
+    if (pulseInp) pulseInp.value = '';
+    renderProfileEditor();
+    toast(`Generated ${added} entries`);
+  };
 }
 
 // ── Profile CRUD actions ───────────────────────────────────────────
