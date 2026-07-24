@@ -68,11 +68,11 @@ struct ChannelCfg {
     bool     enabled       = true;
     uint32_t pulse_ms      = 2000;
     uint32_t schedule[MAX_SCHEDULE] = {0};
+    uint32_t schedule_pulse_ms[MAX_SCHEDULE] = {0};
     size_t   schedule_len  = 0;
     char     skip_dates[MAX_SKIP_DATES][11] = {{0}};
     size_t   skip_count    = 0;
 };
-
 struct Channel {
     const uint8_t pin;
     const char *const *server_keys;
@@ -83,6 +83,7 @@ struct Channel {
     uint32_t      pulse_start     = 0;   // millis() when current pulse began
     uint32_t      active_pulse_ms = 0;
     time_t        next_fire       = 0;
+    size_t        next_fire_idx   = 0;   // index into cfg.schedule / cfg.schedule_pulse_ms
 
     Channel(uint8_t p, const char *const *keys, size_t key_count)
         : pin(p), server_keys(keys), server_key_count(key_count) {}

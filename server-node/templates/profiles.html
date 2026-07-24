@@ -709,6 +709,14 @@ function escapeHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function fmtScheduleEntry(e) {
+  if (typeof e === 'string') return e;
+  if (e && typeof e === 'object' && e.time) {
+    return e.pulse_ms ? `${e.time} (${e.pulse_ms}ms)` : e.time;
+  }
+  return String(e);
+}
+
 // ── Load everything ────────────────────────────────────────────────
 async function loadAll() {
   await loadProfilesList();  // must finish first — calendar rendering needs allProfilesMap
@@ -891,10 +899,15 @@ function renderChannelCard(key, ch) {
       <div class="field">
         <label>Schedule (HH:MM)</label>
         <div class="tag-list" data-list="schedule">
-          ${(ch.schedule||[]).map(t => `<span class="tag">${escapeHtml(t)}<button data-remove="schedule" data-val="${escapeHtml(t)}">&times;</button></span>`).join('')}
+          ${(ch.schedule||[]).map(t => {
+            const label = fmtScheduleEntry(t);
+            const val = typeof t === 'string' ? t : (t && t.time || '');
+            return `<span class="tag">${escapeHtml(label)}<button data-remove="schedule" data-val="${escapeHtml(val)}">&times;</button></span>`;
+          }).join('')}
         </div>
         <div class="add-row">
-          <input type="time" data-input="schedule" placeholder="HH:MM">
+          <input type="time" data-input="schedule" placeholder="HH:MM" style="width:130px;">
+          <input type="number" data-input="schedule_pulse" placeholder="ms" min="100" step="100" style="width:70px;" title="Optional pulse duration (uses channel default if empty)">
           <button class="btn btn-add" data-add="schedule">+ Add</button>
         </div>
       </div>
@@ -966,15 +979,31 @@ function wireChannelCard(key, ch) {
         const [h,m] = val.split(':').map(Number);
         if (h<0||h>23||m<0||m>59) { toast('Invalid time', true); return; }
       }
-      if (list === 'skip_dates') {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) { toast('Format: YYYY-MM-DD', true); return; }
+      if (list === 'schedule') {
+        const pulseInp = card.querySelector('[data-input="schedule_pulse"]');
+        const pulseVal = pulseInp ? parseInt(pulseInp.value) : 0;
+        const entry = (pulseVal >= 100) ? { time: val, pulse_ms: pulseVal } : val;
+        const dupCheck = ch[list].some(v => (typeof v === 'string' ? v : (v && v.time || '')) === val);
+        if (dupCheck) { toast('Duplicate', true); return; }
+        ch[list].push(entry);
+        ch[list].sort((a,b) => {
+          const at = typeof a === 'string' ? a : (a && a.time || '');
+          const bt = typeof b === 'string' ? b : (b && b.time || '');
+          return at.localeCompare(bt);
+        });
+        inp.value = '';
+        if (pulseInp) pulseInp.value = '';
+        renderProfileEditor();
+      } else {
+        if (list === 'skip_dates') {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) { toast('Format: YYYY-MM-DD', true); return; }
+        }
+        if (ch[list].includes(val)) { toast('Duplicate', true); return; }
+        ch[list].push(val);
+        ch[list].sort().reverse();
+        inp.value = '';
+        renderProfileEditor();
       }
-      if (ch[list].includes(val)) { toast('Duplicate', true); return; }
-      ch[list].push(val);
-      if (list === 'schedule') ch[list].sort();
-      else ch[list].sort().reverse();
-      inp.value = '';
-      renderProfileEditor();
     };
   });
 
@@ -983,7 +1012,10 @@ function wireChannelCard(key, ch) {
     btn.onclick = () => {
       const list = btn.dataset.remove;
       const val = btn.dataset.val;
-      ch[list] = ch[list].filter(v => v !== val);
+      ch[list] = ch[list].filter(v => {
+        const ev = typeof v === 'string' ? v : (v && v.time || '');
+        return ev !== val;
+      });
       renderProfileEditor();
     };
   });
