@@ -14,6 +14,7 @@
 #include <Wire.h>
 #include <sys/time.h>
 #include <esp_sntp.h>
+#include "led_indicator.h"
 // ============================================================================
 //  SERIAL DEBUG MACROS
 // ============================================================================
@@ -338,6 +339,7 @@ static void trigger_channel_now(Channel &ch, uint32_t pulse_ms,
     relay_write(ch.pin, true);
     ch.phase = Phase::ACTIVE;
     ch.pulse_start = millis();
+    led_pulse_bell(pulse_ms);
     ch.active_pulse_ms = pulse_ms;
 
     // Log locally
@@ -361,14 +363,29 @@ static void trigger_channel_now(Channel &ch, uint32_t pulse_ms,
 }
 
 static bool tick_channel(Channel &ch, const time_t now) {
+    // ── Always process active pulse expiry — manual triggers
+    //     bypass schedule; relay MUST turn off after pulse_ms ──
+    if (ch.phase == Phase::ACTIVE) {
+        const uint32_t pulse_ms = ch.active_pulse_ms ? ch.active_pulse_ms
+                                   : ch.cfg.schedule_pulse_ms[ch.next_fire_idx];
+        if (elapsed_since(ch.pulse_start) >= pulse_ms) {
+            relay_write(ch.pin, false);
+            ch.phase       = Phase::IDLE;
+            ch.active_pulse_ms = 0;
+            char logmsg[64];
+            snprintf(logmsg, sizeof(logmsg), "%s OFF", primary_channel_key(ch));
+            bell_core_log(logmsg);
+            if (time_is_valid() && ch.next_fire > 0) {
+                recompute_next_fire(ch, now + 1);
+            }
+        }
+        return true;
+    }
+
+    // ── Schedule-driven activation requires valid time & next_fire ──
     if (!time_is_valid() || ch.next_fire == 0) return false;
 
     if (!ch.cfg.enabled || is_skip_day(ch.cfg)) {
-        if (ch.phase == Phase::ACTIVE) {
-            relay_write(ch.pin, false);
-            ch.phase = Phase::IDLE;
-            ch.active_pulse_ms = 0;
-        }
         if (ch.next_fire <= now) {
             const time_t midnight = midnight_of(now);
             recompute_next_fire(ch, midnight ? midnight + 86400 : now + 86400);
@@ -376,24 +393,10 @@ static bool tick_channel(Channel &ch, const time_t now) {
         return false;
     }
 
-    if (ch.phase == Phase::IDLE) {
-        if (now >= ch.next_fire) {
-            trigger_channel_now(ch, ch.cfg.schedule_pulse_ms[ch.next_fire_idx],
-                                primary_channel_key(ch), "schedule");
-            return true;
-        }
-    } else {
-        const uint32_t pulse_ms = ch.active_pulse_ms ? ch.active_pulse_ms
-                                   : ch.cfg.schedule_pulse_ms[ch.next_fire_idx];
-        if (elapsed_since(ch.pulse_start) >= pulse_ms) {
-            relay_write(ch.pin, false);
-            ch.phase = Phase::IDLE;
-            ch.active_pulse_ms = 0;
-            char logmsg[64];
-            snprintf(logmsg, sizeof(logmsg), "%s OFF", primary_channel_key(ch));
-            bell_core_log(logmsg);
-            recompute_next_fire(ch, now + 1);
-        }
+    if (now >= ch.next_fire) {
+        trigger_channel_now(ch, ch.cfg.schedule_pulse_ms[ch.next_fire_idx],
+                            primary_channel_key(ch), "schedule");
+        return true;
     }
     return false;
 }
@@ -823,4 +826,8 @@ bool bell_core_pop_log(char *msg_out, size_t msg_max) {
     msg_out[msg_max - 1] = '\0';
     g_log_read = (g_log_read + 1) % LOG_BUF_SIZE;
     return true;
+}
+
+bool bell_core_is_scheduler_ready() {
+    return time_is_valid() && s_schedules_seeded;
 }

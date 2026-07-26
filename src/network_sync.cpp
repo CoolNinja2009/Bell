@@ -15,6 +15,7 @@
 #include "network_sync.h"
 #include "bell_core.h"
 #include "wifi_provision.h"
+#include "led_indicator.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiUdp.h>
@@ -46,6 +47,7 @@ static bool      g_server_seen    = false;
 static uint32_t  g_last_beacon_ms = 0;
 static WiFiUDP   g_udp;
 
+static bool      s_was_server_seen    = false;
 static bool      g_server_config_loaded = false;
 
 // Timing state
@@ -364,6 +366,7 @@ void network_sync_init() {
     g_last_command_poll = millis();
     g_last_heartbeat    = millis();
     g_last_hash_poll    = millis();
+    led_request_state(LedState::OFFLINE_MODE);  // server not yet discovered
 
     Serial.println(F("Network Sync ready."));
 }
@@ -377,12 +380,20 @@ void network_sync_tick() {
     // ── UDP beacon ─────────────────────────────────────
     check_beacon();
 
-    // ── Beacon timeout — revert to fallback ────────────
     if (g_server_seen && elapsed_since(g_last_beacon_ms) >= BEACON_TIMEOUT_MS) {
         DBGLN(F("[BEACON] lost — reverting to fallback IP"));
         g_server_seen = false;
         g_server_ip.fromString(FALLBACK_SERVER_IP);
         g_server_port = SERVER_PORT;
+    }
+
+    // ── Server online/offline LED transitions ───────────
+    if (g_server_seen && !s_was_server_seen) {
+        led_release_state(LedState::OFFLINE_MODE);
+        s_was_server_seen = true;
+    } else if (!g_server_seen && s_was_server_seen) {
+        led_request_state(LedState::OFFLINE_MODE);
+        s_was_server_seen = false;
     }
 
     // ── WiFi watchdog ──────────────────────────────────
