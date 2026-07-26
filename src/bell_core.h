@@ -130,6 +130,10 @@ const char *bell_core_channel_key(uint8_t ch_index);
 /** Get the currently loaded schedule hash (8 chars + null). */
 const char *bell_core_schedule_hash();
 
+/** True once the scheduler has valid time and has computed next_fire.
+ *  Used by main.cpp to release the BOOTING LED state. */
+bool bell_core_is_scheduler_ready();
+
 /** Pop the next pending execution report (non-blocking).
  *  Returns true if a report was available, filling ch_key, pulse_ms, trigger.
  *  The network module should call this periodically and POST to /api/execution. */
