@@ -52,9 +52,8 @@ constexpr uint32_t TIME_STALL_THRESHOLD_S  = 120;
 constexpr uint32_t SCHEDULE_REFRESH_MS     = 3600000;  // hourly recompute
 
 // ============================================================================
-//  RTC CONFIGURATION
+//  RTC CONFIGURATION  (DS3231 via RTClib)
 // ============================================================================
-constexpr uint8_t  RTC_I2C_ADDR   = 0x68;
 constexpr int8_t   RTC_SDA_PIN    = 21;
 constexpr int8_t   RTC_SCL_PIN    = 22;
 constexpr uint32_t RTC_RESYNC_MS  = 3600000;

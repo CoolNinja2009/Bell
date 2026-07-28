@@ -11,7 +11,7 @@
  *   - This file has ZERO WiFi, HTTP, or JSON dependencies.
  */
 #include "bell_core.h"
-#include <Wire.h>
+#include <RTClib.h>
 #include <sys/time.h>
 #include <esp_sntp.h>
 #include "led_indicator.h"
@@ -138,76 +138,57 @@ static bool today_str(char buf[11]) {
 // ============================================================================
 //  RTC DRIVER  (DS1307 / DS3231 / DS3232 compatible)
 // ============================================================================
+//  RTC DRIVER  (DS3231 via RTClib)
+// ============================================================================
+static RTC_DS3231 g_rtc;
 
-static uint8_t bcd2dec(uint8_t v) { return static_cast<uint8_t>((v / 16) * 10 + (v % 16)); }
-static uint8_t dec2bcd(uint8_t v) { return static_cast<uint8_t>((v / 10) * 16 + (v % 10)); }
+static bool rtc_seed_system_clock() {
+    if (!g_rtc_present) return false;
+    DateTime now = g_rtc.now();
+    if (!now.isValid()) return false;
 
-static bool rtc_detect() {
-    Wire.beginTransmission(RTC_I2C_ADDR);
-    return Wire.endTransmission() == 0;
-}
+    struct tm t = {};
+    t.tm_sec  = now.second();
+    t.tm_min  = now.minute();
+    t.tm_hour = now.hour();
+    t.tm_mday = now.day();
+    t.tm_mon  = now.month() - 1;
+    t.tm_year = now.year() - 1900;
 
-static bool rtc_read_time(struct tm &out) {
-    Wire.beginTransmission(RTC_I2C_ADDR);
-    Wire.write(static_cast<uint8_t>(0x00));
-    if (Wire.endTransmission(false) != 0) return false;
-    if (Wire.requestFrom(static_cast<int>(RTC_I2C_ADDR), 7) != 7) return false;
+    const time_t epoch = tm_to_epoch(t);
+    if (epoch <= 0) return false;
 
-    const uint8_t sec   = Wire.read();
-    const uint8_t min_  = Wire.read();
-    const uint8_t hour  = Wire.read();
-    Wire.read();  // day-of-week — unused
-    const uint8_t mday  = Wire.read();
-    const uint8_t month = Wire.read();
-    const uint8_t year  = Wire.read();
+    struct timeval tv = { epoch, 0 };
+    settimeofday(&tv, nullptr);
 
-    out = {};
-    out.tm_sec  = bcd2dec(sec  & 0x7F);
-    out.tm_min  = bcd2dec(min_ & 0x7F);
-    out.tm_hour = bcd2dec(hour & 0x3F);
-    out.tm_mday = bcd2dec(mday & 0x3F);
-    out.tm_mon  = bcd2dec(month & 0x1F) - 1;
-    out.tm_year = bcd2dec(year) + 100;
-    out.tm_isdst = 0;
-
-    if (out.tm_mon < 0 || out.tm_mon > 11 || out.tm_mday < 1 || out.tm_mday > 31
-        || out.tm_hour > 23 || out.tm_min > 59 || out.tm_sec > 59) {
-        return false;
+    static bool s_first_seed = true;
+    if (s_first_seed) {
+        Serial.printf("RTC: clock seeded — %04d-%02d-%02d %02d:%02d:%02d\n",
+                      now.year(), now.month(), now.day(),
+                      now.hour(), now.minute(), now.second());
+        s_first_seed = false;
     }
     return true;
 }
 
-static void rtc_write_time(const struct tm &t) {
-    Wire.beginTransmission(RTC_I2C_ADDR);
-    Wire.write(static_cast<uint8_t>(0x00));
-    Wire.write(dec2bcd(static_cast<uint8_t>(t.tm_sec)));
-    Wire.write(dec2bcd(static_cast<uint8_t>(t.tm_min)));
-    Wire.write(dec2bcd(static_cast<uint8_t>(t.tm_hour)));
-    Wire.write(dec2bcd(static_cast<uint8_t>(t.tm_wday + 1)));
-    Wire.write(dec2bcd(static_cast<uint8_t>(t.tm_mday)));
-    Wire.write(dec2bcd(static_cast<uint8_t>(t.tm_mon + 1)));
-    Wire.write(dec2bcd(static_cast<uint8_t>(t.tm_year - 100)));
-    Wire.endTransmission();
-}
-
-static bool rtc_seed_system_clock() {
-    struct tm t;
-    if (!rtc_read_time(t)) return false;
-    const time_t epoch = tm_to_epoch(t);
-    if (epoch <= 0) return false;
-    struct timeval tv = { epoch, 0 };
-    settimeofday(&tv, nullptr);
-    DBGF("[RTC] system clock set: %04d-%02d-%02d %02d:%02d:%02d\n",
-         t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
-    return true;
-}
-
 static void rtc_sync_from_system() {
+    if (!g_rtc_present) return;
     const time_t now = time(nullptr);
     struct tm t;
     if (!localtime_r(&now, &t)) return;
-    rtc_write_time(t);
-    DBGLN(F("[RTC] resynced from system clock"));
+
+    g_rtc.adjust(DateTime(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+                          t.tm_hour, t.tm_min, t.tm_sec));
+
+    // Read-back verify
+    DateTime verify = g_rtc.now();
+    static bool s_first_sync = true;
+    if (s_first_sync) {
+        Serial.printf("RTC: synced & verified — %04d-%02d-%02d %02d:%02d:%02d\n",
+                      verify.year(), verify.month(), verify.day(),
+                      verify.hour(), verify.minute(), verify.second());
+        s_first_sync = false;
+    }
 }
 
 // ============================================================================
@@ -626,21 +607,19 @@ void bell_core_init() {
     }
 
     // --- 5. RTC detection ---
-    if (RTC_SDA_PIN >= 0 && RTC_SCL_PIN >= 0) {
-        Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
-    } else {
-        Wire.begin();
-    }
-    g_rtc_present = rtc_detect();
-    if (g_rtc_present) {
+    Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
+    Wire.setTimeOut(50);
+    if (g_rtc.begin()) {
+        g_rtc_present = true;
         Serial.println(F("RTC: module detected"));
+        if (g_rtc.lostPower()) {
+            Serial.println(F("RTC: lost power — setting to compile time"));
+            g_rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+        }
         rtc_seed_system_clock();
     } else {
         Serial.println(F("RTC: none detected"));
     }
-
-    // --- 6. Seed timers ---
-    g_last_schedule_refresh = millis();
     g_last_rtc_sync = millis();
 
     Serial.println(F("Bell Core ready."));
