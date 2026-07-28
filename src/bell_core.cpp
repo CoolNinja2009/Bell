@@ -127,11 +127,20 @@ static time_t midnight_of(time_t epoch) {
     return tm_to_epoch(t);
 }
 
+// Cached per second — called from is_skip_day (twice per tick)
 static bool today_str(char buf[11]) {
+    static char   s_cached[11] = {0};
+    static time_t s_cached_at  = 0;
     const time_t now = time(nullptr);
+    if (now == s_cached_at && s_cached[0]) {
+        memcpy(buf, s_cached, 11);
+        return true;
+    }
+    s_cached_at = now;
     struct tm t;
     if (!localtime_r(&now, &t)) return false;
-    snprintf(buf, 11, "%04d-%02d-%02d", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday);
+    snprintf(s_cached, 11, "%04d-%02d-%02d", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday);
+    memcpy(buf, s_cached, 11);
     return true;
 }
 

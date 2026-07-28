@@ -51,11 +51,12 @@ static bool      s_was_server_seen    = false;
 static bool      g_server_config_loaded = false;
 
 // Timing state
-static uint32_t  g_wifi_last_attempt  = 0;
-static uint32_t  g_last_poll          = 0;
-static uint32_t  g_last_command_poll  = 0;
-static uint32_t  g_last_heartbeat     = 0;
-static uint32_t  g_last_hash_poll     = 0;
+static uint32_t  g_wifi_last_attempt   = 0;
+static uint32_t  g_last_poll           = 0;
+static uint32_t  g_last_command_poll   = 0;
+static uint32_t  g_last_heartbeat      = 0;
+static uint32_t  g_last_hash_poll      = 0;
+static uint32_t  g_fallback_attempt_ms = 0;  // throttle fallback HTTP attempts
 
 // ============================================================================
 //  INTERNAL HELPERS
@@ -133,8 +134,9 @@ static bool fetch_schedule() {
         body.trim();
         if (body.length() < 2 || body[0] != '{') continue;
 
-        // Get hash for dedup check
+        // Get hash for dedup check — also used for Bell Core if schedule changed
         const char *current_hash = bell_core_schedule_hash();
+        String server_hash = "________";
         bool hash_unchanged = false;
         {
             WiFiClient hc;
@@ -148,9 +150,11 @@ static bool fetch_schedule() {
 #pragma GCC diagnostic pop
                 if (!deserializeJson(hdoc, hh.getStream())) {
                     const char *h = hdoc["h"] | "";
-                    if (strlen(h) == 8 && strlen(current_hash) == 8
-                        && strcmp(h, current_hash) == 0) {
-                        hash_unchanged = true;
+                    if (strlen(h) == 8) {
+                        server_hash = h;
+                        if (strlen(current_hash) == 8 && strcmp(h, current_hash) == 0) {
+                            hash_unchanged = true;
+                        }
                     }
                 }
             }
@@ -170,28 +174,8 @@ static bool fetch_schedule() {
         }
         if (!doc.is<JsonObject>()) continue;
 
-        // Get the hash for the Bell Core
-        String hash_val = "________";
-        {
-            WiFiClient hc2;
-            HTTPClient hh2;
-            hh2.setTimeout(3000);
-            String hurl2 = server_base_url() + "/api/schedule/hash";
-            if (hh2.begin(hc2, hurl2) && hh2.GET() == 200) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-                StaticJsonDocument<64> hdoc2;
-#pragma GCC diagnostic pop
-                if (!deserializeJson(hdoc2, hh2.getStream())) {
-                    const char *h2 = hdoc2["h"] | "";
-                    if (strlen(h2) == 8) hash_val = h2;
-                }
-            }
-            hh2.end();
-        }
-
-        // Hand off to Bell Core for atomic application
-        if (bell_core_apply_schedule(body.c_str(), hash_val.c_str())) {
+        // Hand off to Bell Core for atomic application (reuses server_hash)
+        if (bell_core_apply_schedule(body.c_str(), server_hash.c_str())) {
             if (!g_server_config_loaded) {
                 Serial.println(F("NET: first server config loaded"));
                 g_server_config_loaded = true;
@@ -234,8 +218,15 @@ static void drain_execution_reports() {
         String url = server_base_url() + "/api/execution";
         if (http.begin(client, url)) {
             http.addHeader("Content-Type", "application/json");
-            String body = "{\"ch\":\"" + String(ch_key) + "\",\"pulse_ms\":" + String(pulse_ms)
-                        + ",\"trigger\":\"" + String(trigger) + "\"}";
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+            StaticJsonDocument<128> doc;
+#pragma GCC diagnostic pop
+            doc["ch"] = ch_key;
+            doc["pulse_ms"] = pulse_ms;
+            doc["trigger"] = trigger;
+            String body;
+            serializeJson(doc, body);
             http.POST(body);
             http.end();
         }
@@ -252,7 +243,14 @@ static void drain_log_buffer() {
         String url = server_base_url() + "/api/log";
         if (http.begin(client, url)) {
             http.addHeader("Content-Type", "application/json");
-            http.POST("{\"msg\":\"" + String(msg) + "\"}");
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+            StaticJsonDocument<256> doc;
+#pragma GCC diagnostic pop
+            doc["msg"] = msg;
+            String body;
+            serializeJson(doc, body);
+            http.POST(body);
             http.end();
         }
     }
@@ -359,11 +357,12 @@ void network_sync_init() {
     configTime(GMT_OFFSET_SEC, DAYLIGHT_SEC, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
 
     // Seed timers
-    g_wifi_last_attempt = millis();
-    g_last_poll         = millis();
-    g_last_command_poll = millis();
-    g_last_heartbeat    = millis();
-    g_last_hash_poll    = millis();
+    g_wifi_last_attempt   = millis();
+    g_last_poll           = millis();
+    g_last_command_poll   = millis();
+    g_last_heartbeat      = millis();
+    g_last_hash_poll      = millis();
+    g_fallback_attempt_ms = millis();  // give beacon 10s head start
     led_request_state(LedState::OFFLINE_MODE);  // server not yet discovered
 
     Serial.println(F("Network Sync ready."));
@@ -378,9 +377,11 @@ void network_sync_tick() {
     // ── UDP beacon ─────────────────────────────────────
     check_beacon();
 
+    // ── Beacon timeout → keep g_server_seen true so HTTP polling
+    //    continues against the fallback IP. check_beacon() will
+    //    update to the real server IP when the beacon returns.
     if (g_server_seen && elapsed_since(g_last_beacon_ms) >= BEACON_TIMEOUT_MS) {
-        DBGLN(F("[BEACON] lost — reverting to fallback IP"));
-        g_server_seen = false;
+        DBGLN(F("[BEACON] lost — switching to fallback IP"));
         g_server_ip.fromString(FALLBACK_SERVER_IP);
         g_server_port = SERVER_PORT;
     }
@@ -394,11 +395,14 @@ void network_sync_tick() {
         bell_core_discard_commands();  // safety: no stale run-now survives server loss
         s_was_server_seen = false;
     }
-
     // ── WiFi watchdog ──────────────────────────────────
     if (WiFi.status() != WL_CONNECTED) {
         if (elapsed_since(g_wifi_last_attempt) >= WIFI_RETRY_MS) {
-            Serial.println(F("WiFi: down — reconnecting…"));
+            static bool s_first_wifi_failure = true;
+            if (s_first_wifi_failure) {
+                Serial.println(F("WiFi: not connected — will keep retrying every 30s"));
+                s_first_wifi_failure = false;
+            }
             WiFi.reconnect();
             g_wifi_last_attempt = now_ms;
         }
@@ -407,6 +411,23 @@ void network_sync_tick() {
     }
 
     // ── Schedule sync ──────────────────────────────────
+    // ── Initial fallback: no beacon after 10s → try HTTP against fallback IP ──
+    if (!g_server_seen && WiFi.status() == WL_CONNECTED
+        && elapsed_since(g_fallback_attempt_ms) >= 10000U) {
+        g_fallback_attempt_ms = now_ms;
+        WiFiClient fc;
+        HTTPClient hc;
+        hc.setTimeout(3000);
+        String url = server_base_url() + "/api/schedule/hash";
+        if (hc.begin(fc, url) && hc.GET() == 200) {
+            g_server_seen = true;
+            Serial.printf("NET: server reachable at fallback %s:%u\n",
+                          g_server_ip.toString().c_str(), g_server_port);
+        }
+        hc.end();
+    }
+
+    // ── Schedule sync (runs immediately if fallback just discovered server) ──
     check_schedule_update();
 
     // ── Everything below requires a known server ────────
