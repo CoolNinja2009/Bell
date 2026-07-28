@@ -108,8 +108,7 @@ static void check_beacon() {
 // ============================================================================
 
 static bool fetch_schedule() {
-    if (WiFi.status() != WL_CONNECTED) return false;
-
+    if (WiFi.status() != WL_CONNECTED || !g_server_seen) return false;
     for (int attempt = 0; attempt < 3; attempt++) {
         if (attempt > 0) delay(attempt * 500);  // backoff: 500ms, 1000ms
 
@@ -286,9 +285,8 @@ static void poll_commands() {
 
 static void check_schedule_update() {
     if (WiFi.status() != WL_CONNECTED) return;
-
-    // Quick hash poll
-    if (elapsed_since(g_last_hash_poll) >= HASH_POLL_MS) {
+    // ── Quick hash poll (only when we have a real server) ──
+    if (g_server_seen && elapsed_since(g_last_hash_poll) >= HASH_POLL_MS) {
         WiFiClient client;
         HTTPClient http;
         http.setTimeout(3000);
@@ -393,6 +391,7 @@ void network_sync_tick() {
         s_was_server_seen = true;
     } else if (!g_server_seen && s_was_server_seen) {
         led_request_state(LedState::OFFLINE_MODE);
+        bell_core_discard_commands();  // safety: no stale run-now survives server loss
         s_was_server_seen = false;
     }
 

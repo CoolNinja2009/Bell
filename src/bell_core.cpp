@@ -769,6 +769,10 @@ void bell_core_queue_command(const char *ch_key, uint32_t pulse_ms) {
     g_cmd_write = next;
 }
 
+void bell_core_discard_commands() {
+    g_cmd_read  = g_cmd_write;
+}
+
 // ============================================================================
 //  PUBLIC API — Status
 // ============================================================================
