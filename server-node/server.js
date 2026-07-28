@@ -223,6 +223,7 @@ function pushLog(msg) {
 // dashboard queues a command, the device picks it up next time it polls
 // GET /api/commands, and the command is cleared as soon as it's delivered.
 const pendingCommands = new Map(); // ch -> { pulse_ms, issued_at }
+const COMMAND_TTL_MS = 300000;     // 5 min — discard if ESP32 never picks it up
 
 // ---------------------------------------------------------------------------
 // Express app
@@ -400,6 +401,11 @@ app.get(
     const ch = (req.query.ch && String(req.query.ch)) || '';
     const cmd = pendingCommands.get(ch);
     if (!cmd) return res.json({ pending: false });
+    // Discard commands older than TTL — ESP32 was offline too long
+    if (Date.now() - cmd.issued_at > COMMAND_TTL_MS) {
+      pendingCommands.delete(ch);
+      return res.json({ pending: false });
+    }
     pendingCommands.delete(ch);
     res.json({ pending: true, ch, pulse_ms: cmd.pulse_ms });
   })
