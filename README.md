@@ -6,23 +6,42 @@ ESP32-based multi-channel relay controller with WiFi, NTP time sync, and a profi
 
 | ESP32 Pin | Purpose             |
 |-----------|---------------------|
+| GPIO 25   | RGB LED — Red       |
+| GPIO 33   | RGB LED — Green     |
+| GPIO 32   | RGB LED — Blue      |
 | GPIO 26   | Channel 1 relay     |
 | GPIO 27   | Channel 2 relay     |
 | GND       | Common ground       |
 | 3.3V/5V   | Relay module power  |
 
-### Wiring (most relay modules)
+### RGB Status LED (4-pin, common anode)
+
+The onboard RGB LED indicates system state at a glance. Common anode to 3.3V; each cathode driven via PWM through a current-limiting resistor (220Ω–1kΩ).
+
+| State | Color | Pattern | Cycle |
+|---|---|---|---|
+| HEALTHY | Green | Breathing | 3s |
+| OFFLINE_MODE | Orange (R full, G ~39%) | Breathing | 3s |
+| CONNECTING_WIFI | Orange | Blink | 500ms on / 500ms off |
+| BOOTING | Cyan | Solid | — |
+| SCHEDULE_SYNC | Blue | Blink | 250ms on / 250ms off |
+| SETUP_MODE | White | Breathing | 2s |
+| CRITICAL_ERROR | Red | Blink | 120ms on / 120ms off |
+
+**Temporary overrides** (interrupt current state, auto-revert):
+
+| Trigger | Color | Pattern | Duration |
+|---|---|---|---|
+| Bell ring | Yellow | Flash (100ms toggle) | Pulse duration |
+| Ack (unused) | White | Flash (100ms toggle) | 1s |
+
+**Priority** (higher numeric = higher priority; highest active state wins):
 
 ```
-ESP32          Relay Module
-─────          ─────────────
-GND     ────── GND
-3.3V    ────── VCC   (use 5V/VIN if module requires 5V logic)
-GPIO26  ────── IN1    (Channel 1)
-GPIO27  ────── IN2    (Channel 2)
+HEALTHY (0) < OFFLINE_MODE (1) < CONNECTING_WIFI (2) < BOOTING (3)
+     < SCHEDULE_SYNC (4) < SETUP_MODE (5) < CRITICAL_ERROR (6)
 ```
-
-Relays trigger on **LOW** by default (`RELAY_ACTIVE_HIGH = false` in `src/main.cpp`). If your module is active-high, flip that constant.
+Relays trigger on **LOW** by default (`RELAY_ACTIVE_HIGH = false` in `src/bell_core.h`). If your module is active-high, flip that constant.
 
 ### Optional: RTC module (DS1307/DS3231/DS3232)
 
@@ -53,11 +72,19 @@ Connect your phone/laptop to `Bell_Setup`, open `http://192.168.4.1`, scan for y
 
 ```
 1. UDP BEACON (live, auto-discovered)
-        ↓ if beacon not heard for 45s
+        ↓ if beacon not heard for 20s
 2. PROVISIONED IP (saved via setup portal)
         ↓ if not set
 3. HARDCODED FALLBACK (FALLBACK_SERVER_IP in main.cpp)
 ```
+
+### Relay safety guarantees
+
+Relays fire **only** on confirmed schedule times or explicit "Run Now" commands:
+
+- **Command discard on server loss** — when the server goes offline, any pending manual commands queued from that server are discarded immediately. No relay fires from a server that's no longer reachable.
+- **No blind fallback polling** — when the ESP32 loses its server and falls back to the provisioned/hardcoded IP, it does **not** attempt HTTP hash polls or schedule fetches against an unknown endpoint. This prevents multi-second blocking timeouts that could delay relay pulse expiry.
+- **Bell Core independence** — the relay/schedule subsystem never touches WiFi or HTTP. It runs from NVS-persisted schedules and an optional RTC. Bells ring on time even if the network module crashes or the server is down for days.
 
 **Resetting WiFi:** Hold the BOOT button (GPIO0) for 5 seconds at any time — erases SSID, password, and provisioned server IP. All other settings (schedules, RTC) are preserved. Non-blocking, runs concurrent with normal operation.
 
@@ -112,9 +139,7 @@ pm2 set pm2-logrotate:compress true
 
 > **Important**: PM2 must be running when the server crosses midnight for day-of-week profile transitions to work. The ESP32 fetches the new profile from the server; if the server is down at midnight, the ESP32 rings the previous day's schedule.
 
-### 2. ESP32
-
-Configure timezone and fallback server IP in `src/bell_core.h`:
+Configure timezone in `src/bell_core.h` and fallback server IP in `src/network_sync.h`:
 
 ```cpp
 constexpr long GMT_OFFSET_SEC = 19800;  // seconds from UTC (India = 19800)
@@ -304,21 +329,23 @@ API-key auth: send `X-API-Key` header on endpoints marked as API-key compatible 
 | File | What to change |
 |------|---------------|
 | `src/bell_core.h` | GPIO pins, relay active logic, timezone, RTC pins |
+| `src/network_sync.h` | Beacon timeout, poll intervals, fallback IP, NTP servers |
+| `src/led_indicator.h` | LED GPIO pins (R=25, G=33, B=32 by default) |
 | `src/wifi_provision.h` | AP SSID/password, connection timeout, BOOT button hold duration, reconnect interval |
 | `src/main.cpp` | Fallback server IP (`FALLBACK_SERVER_IP`) |
 | `platformio.ini` | Board type, upload port, library versions |
-
 ## ESP32 firmware architecture
 
 ```
 src/
-├── main.cpp           Minimal glue: init bell_core → init network_sync
-├── bell_core.h/cpp    Relay control, schedule execution, RTC, NVS persistence
-├── network_sync.h/cpp WiFi, HTTP, schedule download, heartbeats, server discovery
-└── wifi_provision.h   WiFi provisioning portal (AP mode, web config)
+├── main.cpp            Minimal glue: init bell_core → init network_sync
+├── bell_core.h/cpp     Relay control, schedule execution, RTC, NVS persistence
+├── network_sync.h/cpp  WiFi, HTTP, schedule download, heartbeats, server discovery
+├── led_indicator.h/cpp RGB LED status indicator (standalone, no network deps)
+└── wifi_provision.h    WiFi provisioning portal (AP mode, web config)
 ```
 
-**Bell Core** never touches WiFi — it's the highest-priority subsystem. If the network module crashes, bells continue ringing from NVS-persisted schedules.
+**Bell Core** never touches WiFi — it's the highest-priority subsystem. If the network module crashes, bells continue ringing from NVS-persisted schedules. **LED Indicator** is similarly independent — it reflects state but never affects relay operation.
 
 ## BLE client (alternative discovery)
 
@@ -329,6 +356,9 @@ src/
 - **Wi‑Fi provisioning** — configure WiFi from your phone on first boot, no hardcoded credentials
 - **Server provisioning** — optionally set a static server IP/port in the setup portal
 - **Three-tier server resolution** — UDP beacon → provisioned IP → hardcoded fallback
+- **RGB status LED** — 7 system states with color-coded breathing/blink patterns; 3s green=healthy, 3s orange=offline, 2s white=setup, cyan/blue/red for boot/sync/error
+- **Relay safety** — pending commands discarded on server loss; no blind HTTP polling against fallback IP; Bell Core never touches WiFi
+- **20s server-loss detection** — UDP beacon timeout detects offline server within 4 missed beacons
 - **BOOT button factory reset** — hold GPIO0 for 5s to erase network credentials
 - **Zero-config discovery** — UDP beacon on flat networks
 - **Profile-based scheduling** — multiple named schedules with calendar-based daily rotation

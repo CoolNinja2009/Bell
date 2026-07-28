@@ -4,7 +4,7 @@
  * Wiring (common-anode):  LOW = ON, HIGH = OFF
  *   R → GPIO 25   G → GPIO 33   B → GPIO 32
  *
- * HEALTHY: green breathing (~3s).  OFFLINE_MODE: orange breathing.
+ * HEALTHY: green breathing (~3s).  OFFLINE_MODE: orange breathing (~3s).
  * SETUP_MODE: white breathing (~2s).  Bell ring: yellow flash.
  * CONNECTING_WIFI / SCHEDULE_SYNC / CRITICAL_ERROR: blink patterns.
  */

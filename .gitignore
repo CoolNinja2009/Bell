@@ -5,7 +5,8 @@
 .vscode/ipch
 # VS Code
 .vscode/
-
+.server-node/Server.zip
+.circuit diagram.png
 # Defunct server
 defunct/server/
 

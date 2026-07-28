@@ -29,18 +29,17 @@ static bool     s_blink_on       = false;
 
 // Override flash
 static uint32_t s_ack_end_ms     = 0;
-static bool     s_ack_r = false, s_ack_g = false, s_ack_b = false;
-
+static uint8_t  s_ack_r = 0, s_ack_g = 0, s_ack_b = 0;
 // Breathing timer
 static uint32_t s_breath_start   = 0;
 
 // ============================================================================
 //  GPIO HELPERS  (common-anode via LEDC PWM: 0=ON, 255=OFF)
 // ============================================================================
-static inline void led_write(bool r_on, bool g_on, bool b_on) {
-    ledcWrite(s_ledc_r, r_on ? 0 : 255);
-    ledcWrite(s_ledc_g, g_on ? 0 : 255);
-    ledcWrite(s_ledc_b, b_on ? 0 : 255);
+static inline void led_write(uint8_t r, uint8_t g, uint8_t b) {
+    ledcWrite(s_ledc_r, r);
+    ledcWrite(s_ledc_g, g);
+    ledcWrite(s_ledc_b, b);
 }
 
 static inline void led_all_off() {
@@ -69,14 +68,14 @@ static BlinkPattern led_pattern_for(LedState s) {
 
 static void led_apply_color(LedState s) {
     switch (s) {
-    case LedState::HEALTHY:          led_write(false, true,  false); break;
-    case LedState::OFFLINE_MODE:     led_write(true,  true,  false); break;
-    case LedState::CONNECTING_WIFI:  led_write(true,  true,  false); break;
-    case LedState::BOOTING:          led_write(false, true,  true);  break;
-    case LedState::SCHEDULE_SYNC:    led_write(false, false, true);  break;
-    case LedState::SETUP_MODE:       led_write(true,  true,  true);  break;
-    case LedState::CRITICAL_ERROR:   led_write(true,  false, false); break;
-    default:                         led_all_off();                   break;
+    case LedState::HEALTHY:          led_write(255, 0,   255); break;  // green
+    case LedState::OFFLINE_MODE:     led_write(0,   155, 255); break;  // orange (R full, G ~39%)
+    case LedState::CONNECTING_WIFI:  led_write(0,   155, 255); break;  // orange
+    case LedState::BOOTING:          led_write(255, 0,   0);   break;  // cyan
+    case LedState::SCHEDULE_SYNC:    led_write(255, 255, 0);   break;  // blue
+    case LedState::SETUP_MODE:       led_write(0,   0,   0);   break;  // white
+    case LedState::CRITICAL_ERROR:   led_write(0,   255, 255); break;  // red
+    default:                         led_all_off();             break;
     }
 }
 
@@ -148,7 +147,7 @@ void led_release_state(LedState state) {
 
 void led_pulse_ack() {
     s_ack_end_ms    = millis() + 1000;
-    s_ack_r = true;  s_ack_g = true;  s_ack_b = true;
+    s_ack_r = 0;  s_ack_g = 0;  s_ack_b = 0;  // white
     s_blink_on      = true;
     s_last_blink_ms = millis();
     led_write(s_ack_r, s_ack_g, s_ack_b);
@@ -157,7 +156,7 @@ void led_pulse_ack() {
 void led_pulse_bell(uint32_t duration_ms) {
     if (duration_ms < 50) duration_ms = 50;
     s_ack_end_ms    = millis() + duration_ms;
-    s_ack_r = true;  s_ack_g = true;  s_ack_b = false;  // yellow
+    s_ack_r = 0;  s_ack_g = 0;  s_ack_b = 255;  // yellow
     s_blink_on      = true;
     s_last_blink_ms = millis();
     led_write(s_ack_r, s_ack_g, s_ack_b);
@@ -201,7 +200,7 @@ void led_indicator_tick() {
             break;
         case LedState::OFFLINE_MODE:
             ledcWrite(s_ledc_r, 255 - bright);
-            ledcWrite(s_ledc_g, 255 - bright);
+            ledcWrite(s_ledc_g, 255 - bright / 3);
             ledcWrite(s_ledc_b, 255);
             break;
         case LedState::SETUP_MODE:

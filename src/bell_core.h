@@ -119,6 +119,10 @@ bool bell_core_apply_schedule(const char *raw_json, const char *hash_8chars);
  *  The Bell Core executes it on its next tick. */
 void bell_core_queue_command(const char *ch_key, uint32_t pulse_ms);
 
+/** Discard all pending manual commands. Called when server goes
+ *  offline — safety: no relay fires without confirmed intent. */
+void bell_core_discard_commands();
+
 // ============================================================================
 //  STATUS API  —  read by the network module for heartbeats/reporting
 // ============================================================================
