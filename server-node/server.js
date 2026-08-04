@@ -516,6 +516,9 @@ app.get(
 
     const stat = fs.statSync(info.path);
     const totalSize = stat.size;
+    if (totalSize === 0) {
+      return res.status(500).json({ error: 'firmware file is empty' });
+    }
 
     // Parse Range header
     const range = req.headers.range;
@@ -526,19 +529,12 @@ app.get(
       const parts = range.replace(/bytes=/, '').split('-');
       start = parseInt(parts[0], 10);
       if (parts[1]) end = parseInt(parts[1], 10);
-      if (isNaN(start)) start = 0;
+      if (isNaN(start) || start < 0) start = 0;
       if (isNaN(end) || end >= totalSize) end = totalSize - 1;
+      if (start > end) start = 0; // invalid range — serve full file
     }
 
     const chunkSize = (end - start) + 1;
-
-    res.set({
-      'Content-Type': 'application/octet-stream',
-      'Content-Length': chunkSize,
-      'Accept-Ranges': 'bytes',
-      'Cache-Control': 'public, max-age=3600',
-      'ETag': `"${info.version}"`,
-    });
 
     if (range) {
       res.status(206);

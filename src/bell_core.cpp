@@ -828,14 +828,19 @@ int32_t bell_core_next_fire_s() {
     if (!time_is_valid()) return INT32_MAX;
     time_t now = time(nullptr);
     int32_t best = INT32_MAX;
-    // Check both channels
     if (g_ch1.next_fire > 0 && g_ch1.cfg.enabled) {
-        int32_t d = (int32_t)(g_ch1.next_fire - now);
-        if (d >= 0 && d < best) best = d;
+        time_t raw = g_ch1.next_fire - now;
+        if (raw >= 0 && raw <= INT32_MAX) {
+            int32_t d = (int32_t)raw;
+            if (d < best) best = d;
+        }
     }
     if (g_ch2.next_fire > 0 && g_ch2.cfg.enabled) {
-        int32_t d = (int32_t)(g_ch2.next_fire - now);
-        if (d >= 0 && d < best) best = d;
+        time_t raw = g_ch2.next_fire - now;
+        if (raw >= 0 && raw <= INT32_MAX) {
+            int32_t d = (int32_t)raw;
+            if (d < best) best = d;
+        }
     }
     return best;
 }
