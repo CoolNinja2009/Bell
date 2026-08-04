@@ -73,6 +73,18 @@ static String server_base_url() {
     return "http://" + String(FALLBACK_SERVER_IP) + ":" + String(SERVER_PORT);
 }
 
+const char* network_server_base_url() {
+    static char url[64];
+    if (g_server_seen) {
+        snprintf(url, sizeof(url), "http://%s:%u",
+                 g_server_ip.toString().c_str(), g_server_port);
+    } else {
+        snprintf(url, sizeof(url), "http://%s:%u",
+                 FALLBACK_SERVER_IP, SERVER_PORT);
+    }
+    return url;
+}
+
 // ============================================================================
 //  UDP BEACON
 // ============================================================================

@@ -36,6 +36,10 @@ enum class LedState : uint8_t {
     SCHEDULE_SYNC    = 4,
     SETUP_MODE       = 5,
     CRITICAL_ERROR   = 6,
+    OTA_DOWNLOADING  = 7,
+    OTA_VERIFYING    = 8,
+    OTA_APPLYING     = 9,
+    OTA_FAILED       = 10,
 };
 
 // ============================================================================

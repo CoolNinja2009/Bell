@@ -20,6 +20,7 @@
 #include "bell_core.h"
 #include "network_sync.h"
 #include "led_indicator.h"
+#include "ota_update.h"
 
 void setup() {
     // 1. LED first — shows BOOTING (solid cyan) during init
@@ -32,7 +33,8 @@ void setup() {
     // 3. Network — WiFi, NTP, server discovery
     network_sync_init();
 
-    Serial.println(F("=== CONTROLLER READY ==="));
+    // 4. OTA — version tracking + update engine (idle until triggered)
+    ota_init();
 }
 
 void loop() {
@@ -41,6 +43,9 @@ void loop() {
 
     // Network sync ticks second — can fail freely
     network_sync_tick();
+
+    // OTA tick — non-blocking; downloads firmware in background
+    ota_tick();
 
     // Release BOOTING once scheduler has valid time + computed next_fire
     static bool s_booting_released = false;

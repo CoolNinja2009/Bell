@@ -137,6 +137,11 @@ const char *bell_core_schedule_hash();
  *  Used by main.cpp to release the BOOTING LED state. */
 bool bell_core_is_scheduler_ready();
 
+/** Seconds until the next scheduled bell fire across all channels.
+ *  Returns INT32_MAX if no fire is scheduled. OTA uses this to
+ *  pause downloads when a bell is imminent (within 10 minutes). */
+int32_t bell_core_next_fire_s();
+
 /** Pop the next pending execution report (non-blocking).
  *  Returns true if a report was available, filling ch_key, pulse_ms, trigger.
  *  The network module should call this periodically and POST to /api/execution. */

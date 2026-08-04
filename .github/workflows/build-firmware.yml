@@ -1,0 +1,90 @@
+name: Build & Release Firmware
+
+# ── Triggers ────────────────────────────────────────────────────────
+# Every push to the `ota` branch builds and releases firmware.
+# Tags (v1.2.3) use the tag as version; branch pushes use date+short-sha.
+on:
+  push:
+    branches: [ota]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VER="${GITHUB_REF#refs/tags/v}"
+          else
+            VER="$(date +%Y.%m%d).${GITHUB_SHA::7}"
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "Building firmware v$VER"
+
+      - name: Build firmware
+        run: |
+          pio run
+
+      - name: Compute SHA-256
+        id: sha
+        run: |
+          BIN=".pio/build/esp32dev/firmware.bin"
+          cp "$BIN" firmware.bin
+          SHA=$(sha256sum firmware.bin | awk '{print $1}')
+          echo "sha256=$SHA" >> $GITHUB_OUTPUT
+          echo "SHA-256: $SHA"
+
+      - name: Delete old 'latest' release (if exists)
+        continue-on-error: true
+        run: |
+          gh release delete latest --yes 2>/dev/null || true
+          git push origin :refs/tags/latest 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Create / Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "v${{ steps.version.outputs.version }}"
+          tag_name: "${{ github.ref_name }}"
+          files: firmware.bin
+          body: |
+            ## Firmware v${{ steps.version.outputs.version }}
+
+            | Property | Value |
+            |----------|-------|
+            | Version  | `${{ steps.version.outputs.version }}` |
+            | SHA-256  | `${{ steps.sha.outputs.sha256 }}` |
+            | Target   | ESP32 DevKit (`esp32dev`) |
+
+            ### Auto-OTA
+            ESP32 devices check every morning (3 AM local time) for new firmware.
+            If a newer version is found, they download, verify SHA-256, and apply
+            the update automatically — no manual intervention needed.
+
+            Just push to `ota`. That's it.
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+          generate_release_notes: true
