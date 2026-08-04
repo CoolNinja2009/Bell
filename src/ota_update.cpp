@@ -87,9 +87,6 @@ static uint32_t      g_server_size        = 0;
 static uint32_t      g_bytes_written      = 0;
 static bool          g_version_known      = false;
 
-// ── HTTP client (recreated per chunk) ──────────────────────────────
-static WiFiClient    g_tcp;
-static HTTPClient    g_http;
 static uint8_t       g_chunk_buf[OTA_CHUNK_SIZE];
 
 // ── Forward decls ──────────────────────────────────────────────────
@@ -433,7 +430,6 @@ static void tick_verify() {
     }
 
     // Compute SHA‑256 of the written partition
-    const esp_partition_t* running = esp_ota_get_running_partition();
     const esp_partition_t* update_part = esp_ota_get_next_update_partition(nullptr);
     if (!update_part) {
         Serial.println(F("[OTA] No update partition found"));
@@ -446,7 +442,6 @@ static void tick_verify() {
     mbedtls_sha256_init(&ctx);
     mbedtls_sha256_starts(&ctx, 0); // 0 = SHA‑256, not SHA‑224
 
-    const size_t part_size = update_part->size;
     const size_t read_size = g_bytes_written; // only hash what we wrote
     uint8_t read_buf[256];
     size_t offset = 0;

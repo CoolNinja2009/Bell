@@ -57,19 +57,11 @@ jobs:
           echo "sha256=$SHA" >> $GITHUB_OUTPUT
           echo "SHA-256: $SHA"
 
-      - name: Delete old 'latest' release (if exists)
-        continue-on-error: true
-        run: |
-          gh release delete latest --yes 2>/dev/null || true
-          git push origin :refs/tags/latest 2>/dev/null || true
-        env:
-          GH_TOKEN: ${{ github.token }}
-
       - name: Create / Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: "v${{ steps.version.outputs.version }}"
-          tag_name: "${{ github.ref_name }}"
+          tag_name: "v${{ steps.version.outputs.version }}"
           files: firmware.bin
           body: |
             ## Firmware v${{ steps.version.outputs.version }}
