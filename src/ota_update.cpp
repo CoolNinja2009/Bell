@@ -563,9 +563,8 @@ bool ota_tick() {
         // Must wait at least FIRST_CHECK_DELAY after boot (let WiFi/NTP settle)
         if (now < OTA_FIRST_CHECK_DELAY_MS) return false;
 
-        // Re-evaluate time every OTA_TIME_POLL_MS
-        if (now - g_last_time_poll_ms < OTA_TIME_POLL_MS) return false;
-        g_last_time_poll_ms = now;
+        // Don't trigger check if WiFi isn't connected — wait for next poll cycle
+        if (WiFi.status() != WL_CONNECTED) return false;
 
         uint32_t today = pack_today();
 
