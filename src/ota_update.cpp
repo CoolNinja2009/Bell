@@ -163,14 +163,12 @@ static void persist_last_check_day() {
 }
 
 static int version_cmp(const char* a, const char* b) {
-    // Semantic version compare: major.minor.patch
-    int ma = 0, mi = 0, pa = 0;
-    int mb = 0, mj = 0, pb = 0;
-    sscanf(a, "%d.%d.%d", &ma, &mi, &pa);
-    sscanf(b, "%d.%d.%d", &mb, &mj, &pb);
-    if (ma != mb) return ma - mb;
-    if (mi != mj) return mi - mj;
-    return pa - pb;
+    // Lexicographic compare handles all our version formats:
+    //   "1.2.3"           (tag builds)
+    //   "2026.0804.abc1234" (branch builds — date.hexsha)
+    // ASCII ordering: digits < letters, so date+sha sorts correctly
+    // within the same day (different SHA → different string).
+    return strcmp(a, b);
 }
 
 // ── State entry ────────────────────────────────────────────────────
@@ -299,7 +297,7 @@ static void tick_check_version() {
     Serial.printf("[OTA] New version available: %s -> %s (%u bytes)\n",
                   g_current_ver, g_server_ver, g_server_size);
 
-    if (g_server_size == 0 || g_server_size > 0x180000) {
+    if (g_server_size == 0 || g_server_size > 0xF0000) {  // smaller slot = ota_1
         Serial.println(F("[OTA] Invalid firmware size — aborting"));
         enter_state(OtaState::ERROR);
         return;

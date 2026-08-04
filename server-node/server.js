@@ -451,7 +451,11 @@ async function refreshFirmwareCache() {
     const [owner, repo] = FIRMWARE_REPO.split('/');
     if (!owner || !repo) { log('[firmware] Invalid FIRMWARE_REPO'); return firmwareCache; }
 
-    const { data: release } = await octokit.rest.repos.getLatestRelease({ owner, repo });
+    // listReleases returns newest first (including prereleases).
+    // getLatestRelease skips prereleases — would miss every branch build.
+    const { data: releases } = await octokit.rest.repos.listReleases({ owner, repo, per_page: 1 });
+    if (!releases || releases.length === 0) { log('[firmware] No releases found'); return firmwareCache; }
+    const release = releases[0];
     const tag = release.tag_name.replace(/^v/, '');
 
     const asset = release.assets.find(a => a.name === FIRMWARE_ASSET_NAME);
