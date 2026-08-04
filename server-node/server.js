@@ -535,12 +535,20 @@ app.get(
     }
 
     const chunkSize = (end - start) + 1;
+    const status = (range && start > 0) ? 206 : 200;
 
-    if (range) {
-      res.status(206);
-      res.set('Content-Range', `bytes ${start}-${end}/${totalSize}`);
+    const headers = {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': chunkSize,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'public, max-age=3600',
+      'ETag': `"${info.version}"`,
+    };
+    if (status === 206) {
+      headers['Content-Range'] = `bytes ${start}-${end}/${totalSize}`;
     }
 
+    res.writeHead(status, headers);
     const stream = fs.createReadStream(info.path, { start, end });
     stream.pipe(res);
     stream.on('error', (err) => {

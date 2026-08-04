@@ -12,3 +12,6 @@ defunct/server/
 
 # BLE client
 esp32/ble_client/
+
+# OTA firmware cache
+server-node/.firmware_cache/

@@ -161,11 +161,17 @@ devices update themselves the next morning. No USB cable, no manual steps.
 ### How it works
 
 ```
-git push → GitHub Actions builds firmware.bin → GitHub Release
-  → Node.js server caches latest release (30 min TTL)
-    → ESP32 checks every morning at 3 AM local time
-      → version newer? downloads → SHA‑256 verifies → reboots
+git push ota → GitHub Actions builds firmware.bin → GitHub Release
+  → Node.js server fetches latest release (30 min cache)
+    → ESP32 checks on every boot (60s after WiFi connects)
+      → version newer? downloads 939 KB → SHA‑256 verifies → reboots
 ```
+
+### Verified end-to-end
+
+OTA has been tested on real hardware (ESP32 DevKit V3, 4 MB flash).
+Full update from `0.0.0-dev` to `2026.0804.f5d1f5f` completed in ~90 seconds
+with SHA-256 verification and successful reboot to the new firmware.
 
 ### Safety guarantees
 
@@ -175,23 +181,21 @@ git push → GitHub Actions builds firmware.bin → GitHub Release
 | Interrupted download resumes | HTTP Range requests — picks up where it left off |
 | New firmware crashes on boot | ESP‑IDF auto‑rolls back to previous working partition |
 | Factory fallback | Factory partition never touched by OTA — USB flash always works |
-| Never downgrades | Semantic version comparison — only updates when strictly newer |
+| Never downgrades | Lexicographic version comparison — only updates when strictly newer |
 | Bells always ring | Download pauses when a bell is within 10 minutes |
 | Server unreachable | Retries every 30 minutes until a definitive answer |
 
 ### Triggering an update
 
-Push any change to the `main` branch:
+Push any change to the `ota` branch:
 
 ```bash
-git add . && git commit -m "fix relay timing" && git push
+git checkout ota
+git add . && git commit -m "fix relay timing" && git push origin ota
 ```
 
-GitHub Actions builds `firmware.bin`, creates a release, and the server
-picks it up within 30 minutes. ESP32 devices check the next morning at 3 AM.
-
-To force an immediate check, reboot the ESP32 — it checks 60 seconds after
-boot if the calendar day hasn't been checked yet.
+GitHub Actions builds `firmware.bin`, creates a release. The Node.js server
+picks it up within 30 minutes. ESP32 checks on every boot (after WiFi connects).
 
 ### Partition layout
 

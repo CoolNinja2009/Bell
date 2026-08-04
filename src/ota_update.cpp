@@ -71,6 +71,7 @@ static uint32_t      g_dl_retry_at_ms     = 0;
 static uint32_t      g_retry_until_ms     = 0;
 static bool          g_check_requested    = false;
 static bool          g_boot_check_done    = false;  // true once server confirms up-to-date
+static uint8_t       g_error_count        = 0;      // cap retries to prevent loops
 // ── Version tracking ───────────────────────────────────────────────
 static char          g_current_ver[32]    = FIRMWARE_VERSION;
 static char          g_server_ver[32]     = "";
@@ -158,6 +159,7 @@ static void enter_state(OtaState next) {
         led_release_state(LedState::OTA_APPLYING);
         led_request_state(LedState::OTA_FAILED);
         g_error_until_ms = millis() + 10000;
+        g_error_count++;  // cap retries — give up after 3 failures
         break;
     case OtaState::RETRY:
         g_retry_until_ms = millis() + OTA_RETRY_INTERVAL_MS;
@@ -243,6 +245,7 @@ static void tick_check_version() {
         Serial.printf("[OTA] Up to date (current=%s, server=%s)\n",
                       g_current_ver, g_server_ver);
         g_boot_check_done = true;  // confirmed — don't check again this boot
+        g_error_count = 0;         // reset on success
         enter_state(OtaState::IDLE);
         return;
     }
@@ -267,57 +270,47 @@ static void tick_check_version() {
 
 static void tick_download() {
     if (WiFi.status() != WL_CONNECTED) {
-        // WiFi dropped — will resume on reconnect
         g_dl_retry_at_ms = millis() + OTA_RESUME_RETRY_MS;
         return;
     }
-
     if (millis() < g_dl_retry_at_ms) return;
 
-    // ── Bell‑aware pause: don't download when a bell is imminent ──
     int32_t next_s = bell_core_next_fire_s();
     if (next_s >= 0 && next_s < (int32_t)OTA_BELL_SAFE_WINDOW_S) {
-        // Bell within 10 minutes — pause, retry in 30s
         g_dl_retry_at_ms = millis() + 30000;
         return;
     }
-    // First chunk: begin Update
+
     if (g_bytes_written == 0) {
+        Update.abort();
         if (!Update.begin(g_server_size, U_FLASH)) {
             Serial.printf("[OTA] Update.begin() failed: %s\n", Update.errorString());
             enter_state(OtaState::ERROR);
             return;
         }
+        Serial.printf("[OTA] Downloading %u bytes...\n", g_server_size);
     }
 
-    // Build URL — append ?v= to bust any proxy cache
     String url = String(network_server_base_url()) + "/api/firmware/download?v=" + g_server_ver;
-
-    // New connection per chunk (allows server to handle Range independently)
     WiFiClient client;
     HTTPClient http;
     http.setTimeout(OTA_CHUNK_TIMEOUT_MS);
-
     if (!http.begin(client, url)) {
         g_dl_retry_at_ms = millis() + OTA_RESUME_RETRY_MS;
         http.end();
         return;
     }
-
-    // Add Range header for resume
     if (g_bytes_written > 0) {
         http.addHeader("Range", String("bytes=") + g_bytes_written + "-");
     }
 
     int code = http.GET();
     if (code != 200 && code != 206) {
-        Serial.printf("[OTA] Download HTTP %d\n", code);
         http.end();
         g_dl_retry_at_ms = millis() + OTA_RESUME_RETRY_MS;
         return;
     }
 
-    // Read one chunk
     WiFiClient* stream = http.getStreamPtr();
     if (!stream || !stream->connected()) {
         http.end();
@@ -325,19 +318,12 @@ static void tick_download() {
         return;
     }
 
-    // Wait up to OTA_CHUNK_TIMEOUT_MS for data
     uint32_t chunk_start = millis();
     size_t chunk_read = 0;
-    while (chunk_read < OTA_CHUNK_SIZE &&
-           (millis() - chunk_start) < OTA_CHUNK_TIMEOUT_MS) {
+    while (chunk_read < OTA_CHUNK_SIZE && (millis() - chunk_start) < OTA_CHUNK_TIMEOUT_MS) {
         int avail = stream->available();
-        if (avail <= 0) {
-            if (!stream->connected()) break;
-            delay(10);
-            continue;
-        }
-        size_t to_read = (size_t)avail < (OTA_CHUNK_SIZE - chunk_read)
-                       ? (size_t)avail : (OTA_CHUNK_SIZE - chunk_read);
+        if (avail <= 0) { if (!stream->connected()) break; delay(10); continue; }
+        size_t to_read = (size_t)avail < (OTA_CHUNK_SIZE - chunk_read) ? (size_t)avail : (OTA_CHUNK_SIZE - chunk_read);
         int n = stream->read(g_chunk_buf + chunk_read, to_read);
         if (n <= 0) break;
         chunk_read += n;
@@ -346,36 +332,33 @@ static void tick_download() {
     if (chunk_read > 0) {
         size_t written = Update.write(g_chunk_buf, chunk_read);
         if (written != chunk_read) {
-            Serial.printf("[OTA] Flash write error: %s\n", Update.errorString());
+            Serial.printf("[OTA] Write error at %u: %s\n", g_bytes_written, Update.errorString());
             http.end();
             Update.abort();
             enter_state(OtaState::ERROR);
             return;
         }
         g_bytes_written += written;
+        if (g_bytes_written % 65536 == 0 || g_bytes_written >= g_server_size) {
+            Serial.printf("[OTA] Progress: %u / %u bytes\n", g_bytes_written, g_server_size);
+        }
     }
 
-    // Check if we're done
     bool done = (g_bytes_written >= g_server_size);
-    // Also check Content-Length from the response if available
     if (!done && code == 200) {
         int cl = http.getSize();
         if (cl > 0 && g_bytes_written >= (size_t)cl) done = true;
     }
-
     http.end();
 
     if (!done && chunk_read == 0) {
-        // No data — server might be slow; back off
         g_dl_retry_at_ms = millis() + OTA_RESUME_RETRY_MS;
         return;
     }
-
     if (done) {
         Serial.printf("[OTA] Download complete: %u bytes\n", g_bytes_written);
         enter_state(OtaState::VERIFY);
     }
-    // else: continue next tick
 }
 
 static void tick_verify() {
@@ -518,6 +501,9 @@ bool ota_tick() {
 
         // Already confirmed up-to-date this boot — stay idle
         if (g_boot_check_done) return false;
+
+        // Too many errors this boot — give up
+        if (g_error_count >= 3) return false;
 
         // Wait for WiFi to connect + 60s settling time after boot
         if (now < OTA_FIRST_CHECK_DELAY_MS) return false;
