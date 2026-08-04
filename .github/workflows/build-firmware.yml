@@ -45,6 +45,8 @@ jobs:
           echo "Building firmware v$VER"
 
       - name: Build firmware
+        env:
+          PLATFORMIO_BUILD_FLAGS: -D FIRMWARE_VERSION='"${{ steps.version.outputs.version }}"'
         run: |
           pio run
 
