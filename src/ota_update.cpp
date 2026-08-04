@@ -41,12 +41,9 @@
 #endif
 
 // ── Timing ─────────────────────────────────────────────────────────
-// Morning check: every day at or after 3 AM local time (uses NTP).
-// Falls back to 24h millis-based interval when NTP is unavailable.
-constexpr uint32_t OTA_FALLBACK_INTERVAL_MS = 86400000; // 24h — used when NTP is down
-constexpr uint32_t OTA_MORNING_HOUR         = 3;        // check at/after 3 AM local
-constexpr uint32_t OTA_FIRST_CHECK_DELAY_MS = 60000;    // wait 60s after boot before 1st check
-constexpr uint32_t OTA_TIME_POLL_MS         = 5000;     // re-check time every 5s in IDLE
+// Check on every boot: after WiFi connects + 60s delay, poll server.
+// If up-to-date → done until next boot. If unreachable → retry 30 min.
+constexpr uint32_t OTA_FIRST_CHECK_DELAY_MS = 60000;    // wait 60s after boot
 constexpr uint32_t OTA_RETRY_INTERVAL_MS    = 1800000;  // 30 min between retries
 constexpr uint32_t OTA_BELL_SAFE_WINDOW_S   = 600;      // pause OTA if bell within 10 min
 constexpr uint32_t OTA_CHUNK_TIMEOUT_MS     = 15000;    // HTTP timeout per chunk
@@ -57,8 +54,6 @@ constexpr uint32_t OTA_RESUME_RETRY_MS      = 5000;     // backoff after a faile
 static const char OTA_NVS_NS[]      = "ota";
 static const char OTA_KEY_VER[]     = "version";
 static const char OTA_KEY_SHA[]     = "sha256";
-static const char OTA_KEY_LAST_DAY[] = "last_day"; // YYYYMMDD packed as uint32_t
-
 // ── State machine ──────────────────────────────────────────────────
 enum class OtaState : uint8_t {
     IDLE,
@@ -71,13 +66,11 @@ enum class OtaState : uint8_t {
 };
 
 static OtaState      g_state              = OtaState::IDLE;
-static uint32_t      g_last_check_ms      = 0;
 static uint32_t      g_error_until_ms     = 0;
 static uint32_t      g_dl_retry_at_ms     = 0;
-static uint32_t      g_last_time_poll_ms  = 0;
-static uint32_t      g_last_check_day     = 0;   // packed YYYYMMDD, persisted in NVS
-static uint32_t      g_retry_until_ms     = 0;   // when to attempt next retry
+static uint32_t      g_retry_until_ms     = 0;
 static bool          g_check_requested    = false;
+static bool          g_boot_check_done    = false;  // true once server confirms up-to-date
 // ── Version tracking ───────────────────────────────────────────────
 static char          g_current_ver[32]    = FIRMWARE_VERSION;
 static char          g_server_ver[32]     = "";
@@ -113,7 +106,6 @@ static void load_nvs() {
             strncpy(g_last_sha256, s.c_str(), sizeof(g_last_sha256) - 1);
             g_last_sha256[sizeof(g_last_sha256) - 1] = '\0';
         }
-        g_last_check_day = prefs.getUInt(OTA_KEY_LAST_DAY, 0);
         prefs.end();
     }
 }
@@ -127,44 +119,7 @@ static void save_nvs_version() {
     }
 }
 
-// Pack today's local date as YYYYMMDD (e.g. 20260804).
-// Returns 0 if NTP hasn't synced yet (year < 2024).
-static uint32_t pack_today() {
-    time_t now;
-    time(&now);
-    if (now < 1704067200) return 0; // before 2024-01-01 = NTP not synced
-    struct tm ti;
-    localtime_r(&now, &ti);
-    return (uint32_t)(ti.tm_year + 1900) * 10000U
-         + (uint32_t)(ti.tm_mon + 1) * 100U
-         + (uint32_t)ti.tm_mday;
-}
-
-// Check if it's "morning" — hour >= OTA_MORNING_HOUR local time.
-// Returns false if NTP not synced.
-static bool is_morning() {
-    time_t now;
-    time(&now);
-    if (now < 1704067200) return false;
-    struct tm ti;
-    localtime_r(&now, &ti);
-    return ti.tm_hour >= (int)OTA_MORNING_HOUR;
-}
-
-static void persist_last_check_day() {
-    Preferences prefs;
-    if (prefs.begin(OTA_NVS_NS, false)) {
-        prefs.putUInt(OTA_KEY_LAST_DAY, g_last_check_day);
-        prefs.end();
-    }
-}
-
 static int version_cmp(const char* a, const char* b) {
-    // Lexicographic compare handles all our version formats:
-    //   "1.2.3"           (tag builds)
-    //   "2026.0804.abc1234" (branch builds — date.hexsha)
-    // ASCII ordering: digits < letters, so date+sha sorts correctly
-    // within the same day (different SHA → different string).
     return strcmp(a, b);
 }
 
@@ -287,7 +242,8 @@ static void tick_check_version() {
     if (version_cmp(g_server_ver, g_current_ver) <= 0) {
         Serial.printf("[OTA] Up to date (current=%s, server=%s)\n",
                       g_current_ver, g_server_ver);
-        enter_state(OtaState::IDLE);  // definitive — wait until tomorrow
+        g_boot_check_done = true;  // confirmed — don't check again this boot
+        enter_state(OtaState::IDLE);
         return;
     }
 
@@ -560,33 +516,16 @@ bool ota_tick() {
         // Don't check during error cooldown
         if (now < g_error_until_ms) return false;
 
-        // Must wait at least FIRST_CHECK_DELAY after boot (let WiFi/NTP settle)
-        if (now < OTA_FIRST_CHECK_DELAY_MS) return false;
+        // Already confirmed up-to-date this boot — stay idle
+        if (g_boot_check_done) return false;
 
-        // Don't trigger check if WiFi isn't connected — wait for next poll cycle
+        // Wait for WiFi to connect + 60s settling time after boot
+        if (now < OTA_FIRST_CHECK_DELAY_MS) return false;
         if (WiFi.status() != WL_CONNECTED) return false;
 
-        uint32_t today = pack_today();
-
-        if (today > 0 && today >= 20240101) {
-            // ── NTP is synced: morning check ──
-            if (today != g_last_check_day && is_morning()) {
-                Serial.printf("[OTA] Morning check — day %u, new firmware?\n", today);
-                g_last_check_day = today;
-                persist_last_check_day();
-                enter_state(OtaState::CHECK_VERSION);
-                return true;
-            }
-        } else {
-            // ── NTP not synced: fall back to 24h millis interval ──
-            if (now - g_last_check_ms >= OTA_FALLBACK_INTERVAL_MS) {
-                Serial.println(F("[OTA] 24h fallback check (NTP unavailable)"));
-                g_last_check_ms = now;
-                enter_state(OtaState::CHECK_VERSION);
-                return true;
-            }
-        }
-        return false;
+        Serial.println(F("[OTA] Boot check — looking for updates..."));
+        enter_state(OtaState::CHECK_VERSION);
+        return true;
     }
     case OtaState::CHECK_VERSION:
         tick_check_version();
