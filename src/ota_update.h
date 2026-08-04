@@ -24,7 +24,7 @@
  *     - OTA_DOWNLOADING: blue breathing
  *     - OTA_VERIFYING:   blue blink
  *     - OTA_APPLYING:    blue solid → device reboots
- *     - OTA_FAILED:      red blink for 3 s, then clears
+ *     - OTA_FAILED:      red blink for 10 s, then clears
  */
 #pragma once
 

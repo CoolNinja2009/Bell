@@ -214,6 +214,7 @@ void led_indicator_tick() {
             ledcWrite(s_ledc_r, 255 - bright);
             ledcWrite(s_ledc_g, 255 - bright / 3);
             ledcWrite(s_ledc_b, 255);
+            break;
         case LedState::SETUP_MODE:
             ledcWrite(s_ledc_r, 255 - bright);
             ledcWrite(s_ledc_g, 255 - bright);
