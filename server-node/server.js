@@ -66,6 +66,16 @@ const LOGIN_TPL = path.join(__dirname, 'templates', 'login.html');
 const CHANNEL_KEY_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,19}$/; // must start with a letter
 const MAX_CHANNELS = 24;
 
+// ── OTA Firmware ───────────────────────────────────────────────────
+// The server caches the latest firmware binary from GitHub Releases.
+// Set FIRMWARE_REPO to your GitHub "owner/repo". On first request the
+const FIRMWARE_REPO       = process.env.FIRMWARE_REPO       || 'CoolNinja2009/Bell';
+// it locally. Subsequent requests serve the cached copy.
+const FIRMWARE_ASSET_NAME  = process.env.FIRMWARE_ASSET_NAME  || 'firmware.bin';
+const FIRMWARE_CACHE_DIR   = path.join(__dirname, '.firmware_cache');
+const FIRMWARE_TTL_MS      = 30 * 60 * 1000; // re-check GitHub every 30 min
+let   firmwareCache        = null; // { version, sha256, size, path, fetchedAt }
+
 // ---------------------------------------------------------------------------
 // Logging
 // ---------------------------------------------------------------------------
@@ -424,6 +434,119 @@ app.post(
     history.appendHistory({ ch, trigger, status: 'executed', pulse_ms: pulseMs, note: 'confirmed by device' });
     pushLog(`${ch} executed (${trigger})`);
     res.json({ ok: true });
+  })
+);
+
+// ── OTA Firmware endpoints ──────────────────────────────────────────
+
+// Refresh the cached firmware from GitHub Releases.
+// Returns the cache entry or null on failure (never throws).
+async function refreshFirmwareCache() {
+  if (firmwareCache && (Date.now() - firmwareCache.fetchedAt) < FIRMWARE_TTL_MS) {
+    return firmwareCache;
+  }
+  try {
+    const { Octokit } = await import('@octokit/rest');
+    const octokit = new Octokit({ userAgent: 'relay-controller-ota/1.0' });
+    const [owner, repo] = FIRMWARE_REPO.split('/');
+    if (!owner || !repo) { log('[firmware] Invalid FIRMWARE_REPO'); return firmwareCache; }
+
+    const { data: release } = await octokit.rest.repos.getLatestRelease({ owner, repo });
+    const tag = release.tag_name.replace(/^v/, '');
+
+    const asset = release.assets.find(a => a.name === FIRMWARE_ASSET_NAME);
+    if (!asset) { log(`[firmware] Asset "${FIRMWARE_ASSET_NAME}" not found in release ${tag}`); return firmwareCache; }
+
+    const binPath = path.join(FIRMWARE_CACHE_DIR, `${tag}_${FIRMWARE_ASSET_NAME}`);
+    const shaPath = binPath + '.sha256';
+
+    // Download if not cached locally
+    if (!fs.existsSync(binPath)) {
+      fs.mkdirSync(FIRMWARE_CACHE_DIR, { recursive: true });
+      log(`[firmware] Downloading ${asset.name} (${(asset.size / 1024).toFixed(1)} KB) from release ${tag}...`);
+
+      const resp = await fetch(asset.browser_download_url, {
+        headers: { 'User-Agent': 'relay-controller-ota/1.0', 'Accept': 'application/octet-stream' }
+      });
+      if (!resp.ok) { log(`[firmware] Download failed: HTTP ${resp.status}`); return firmwareCache; }
+
+      const buf = Buffer.from(await resp.arrayBuffer());
+      fs.writeFileSync(binPath, buf);
+
+      const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+      fs.writeFileSync(shaPath, sha256);
+    }
+
+    const sha256 = fs.existsSync(shaPath) ? fs.readFileSync(shaPath, 'utf8').trim() : '';
+    const stat = fs.statSync(binPath);
+
+    firmwareCache = { version: tag, sha256, size: stat.size, path: binPath, fetchedAt: Date.now() };
+    log(`[firmware] Cached v${tag} (${(stat.size / 1024).toFixed(1)} KB, sha256=${sha256.substring(0, 16)}...)`);
+    return firmwareCache;
+  } catch (err) {
+    logError('[firmware] refreshFirmwareCache', err);
+    return firmwareCache; // serve stale cache if available
+  }
+}
+
+// Serve firmware version info — ESP32 polls this to decide whether to update.
+// Public: no auth required (ESP32 has no interactive login).
+app.get(
+  '/api/firmware/version',
+  asyncRoute(async (req, res) => {
+    const info = await refreshFirmwareCache();
+    if (!info) return res.status(503).json({ error: 'no firmware available' });
+    res.json({ version: info.version, size: info.size, sha256: info.sha256 });
+  })
+);
+
+// Serve firmware binary with Range support for resume.
+// Public: no auth required.
+app.get(
+  '/api/firmware/download',
+  asyncRoute(async (req, res) => {
+    const info = await refreshFirmwareCache();
+    if (!info || !fs.existsSync(info.path)) {
+      return res.status(503).json({ error: 'firmware not available' });
+    }
+
+    const stat = fs.statSync(info.path);
+    const totalSize = stat.size;
+
+    // Parse Range header
+    const range = req.headers.range;
+    let start = 0;
+    let end = totalSize - 1;
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      start = parseInt(parts[0], 10);
+      if (parts[1]) end = parseInt(parts[1], 10);
+      if (isNaN(start)) start = 0;
+      if (isNaN(end) || end >= totalSize) end = totalSize - 1;
+    }
+
+    const chunkSize = (end - start) + 1;
+
+    res.set({
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': chunkSize,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'public, max-age=3600',
+      'ETag': `"${info.version}"`,
+    });
+
+    if (range) {
+      res.status(206);
+      res.set('Content-Range', `bytes ${start}-${end}/${totalSize}`);
+    }
+
+    const stream = fs.createReadStream(info.path, { start, end });
+    stream.pipe(res);
+    stream.on('error', (err) => {
+      if (!res.headersSent) res.status(500).json({ error: 'stream error' });
+      logError('[firmware] download stream', err);
+    });
   })
 );
 

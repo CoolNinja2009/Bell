@@ -43,3 +43,7 @@ void network_sync_init();
  *  Polls for schedule changes, heartbeats, commands, and
  *  drains execution reports / log buffer. */
 void network_sync_tick();
+
+/** Current server base URL "http://<ip>:<port>", or nullptr if offline.
+ *  Callers (OTA, diagnostics) can use this without knowing internals. */
+const char* network_server_base_url();

@@ -27,20 +27,27 @@ The onboard RGB LED indicates system state at a glance. Common anode to 3.3V; ea
 | SCHEDULE_SYNC | Blue | Blink | 250ms on / 250ms off |
 | SETUP_MODE | White | Breathing | 2s |
 | CRITICAL_ERROR | Red | Blink | 120ms on / 120ms off |
+| OTA_DOWNLOADING | Blue | Breathing | 3s |
+| OTA_VERIFYING | Blue | Blink | 250ms on / 250ms off |
+| OTA_APPLYING | Blue | Solid | — |
+| OTA_FAILED | Red | Blink | 120ms on / 120ms off |
 
 **Temporary overrides** (interrupt current state, auto-revert):
 
 | Trigger | Color | Pattern | Duration |
 |---|---|---|---|
 | Bell ring | Yellow | Flash (100ms toggle) | Pulse duration |
-| Ack (unused) | White | Flash (100ms toggle) | 1s |
-
 **Priority** (higher numeric = higher priority; highest active state wins):
 
 ```
 HEALTHY (0) < OFFLINE_MODE (1) < CONNECTING_WIFI (2) < BOOTING (3)
      < SCHEDULE_SYNC (4) < SETUP_MODE (5) < CRITICAL_ERROR (6)
+     < OTA_DOWNLOADING (7) < OTA_VERIFYING (8) < OTA_APPLYING (9)
+     < OTA_FAILED (10)
 ```
+OTA states outrank everything except each other — firmware updates are
+system‑critical and must be visible. The relay scheduler still runs
+during OTA; only the LED priority changes.
 Relays trigger on **LOW** by default (`RELAY_ACTIVE_HIGH = false` in `src/bell_core.h`). If your module is active-high, flip that constant.
 
 ### Optional: RTC module (DS1307/DS3231/DS3232)
@@ -145,7 +152,71 @@ Configure timezone in `src/bell_core.h` and fallback server IP in `src/network_s
 constexpr long GMT_OFFSET_SEC = 19800;  // seconds from UTC (India = 19800)
 ```
 
-Then flash:
+
+## OTA Firmware Updates
+
+Firmware updates are fully automated. You push code to GitHub — ESP32
+devices update themselves the next morning. No USB cable, no manual steps.
+
+### How it works
+
+```
+git push → GitHub Actions builds firmware.bin → GitHub Release
+  → Node.js server caches latest release (30 min TTL)
+    → ESP32 checks every morning at 3 AM local time
+      → version newer? downloads → SHA‑256 verifies → reboots
+```
+
+### Safety guarantees
+
+| Guarantee | Mechanism |
+|---|---|
+| Corrupt download caught | SHA‑256 verified before committing |
+| Interrupted download resumes | HTTP Range requests — picks up where it left off |
+| New firmware crashes on boot | ESP‑IDF auto‑rolls back to previous working partition |
+| Factory fallback | Factory partition never touched by OTA — USB flash always works |
+| Never downgrades | Semantic version comparison — only updates when strictly newer |
+| Bells always ring | Download pauses when a bell is within 10 minutes |
+| Server unreachable | Retries every 30 minutes until a definitive answer |
+
+### Triggering an update
+
+Push any change to the `main` branch:
+
+```bash
+git add . && git commit -m "fix relay timing" && git push
+```
+
+GitHub Actions builds `firmware.bin`, creates a release, and the server
+picks it up within 30 minutes. ESP32 devices check the next morning at 3 AM.
+
+To force an immediate check, reboot the ESP32 — it checks 60 seconds after
+boot if the calendar day hasn't been checked yet.
+
+### Partition layout
+
+```
+4 MB flash:
+  nvs (20 KB) | otadata (8 KB) | factory (1.5 MB) | ota_0 (1.5 MB) | ota_1 (960 KB)
+```
+
+- **factory** — golden image, USB-flashed only, never OTA'd
+- **ota_0 / ota_1** — alternate on each update. ESP-IDF auto-rolls back
+  if the new partition fails to boot.
+
+### LED feedback during OTA
+
+| State | LED | What's happening |
+|---|---|---|
+| OTA_DOWNLOADING | Blue breathing | Downloading firmware in background |
+| OTA_VERIFYING | Blue blink | Computing SHA‑256 of downloaded firmware |
+| OTA_APPLYING | Blue solid | Committing — reboot imminent (~1 second) |
+| OTA_FAILED | Red blink (10 s) | Download/verify failed — will retry tomorrow |
+
+### First-time flash (USB)
+
+The very first time, flash via USB to get the OTA-capable firmware onto
+the device:
 
 ```bash
 pio run -t upload

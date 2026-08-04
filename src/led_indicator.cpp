@@ -62,19 +62,26 @@ static BlinkPattern led_pattern_for(LedState s) {
     case LedState::SCHEDULE_SYNC:    return {250, 250};
     case LedState::SETUP_MODE:       return {0, 0};
     case LedState::CRITICAL_ERROR:   return {120, 120};
+    case LedState::OTA_DOWNLOADING:  return {0, 0};   // breathing
+    case LedState::OTA_VERIFYING:    return {250, 250}; // blink
+    case LedState::OTA_APPLYING:     return {0, 0};   // solid
+    case LedState::OTA_FAILED:       return {120, 120}; // fast red blink
     default:                         return {0, 0};
     }
 }
-
 static void led_apply_color(LedState s) {
     switch (s) {
     case LedState::HEALTHY:          led_write(255, 0,   255); break;  // green
-    case LedState::OFFLINE_MODE:     led_write(0,   155, 255); break;  // orange (R full, G ~39%)
+    case LedState::OFFLINE_MODE:     led_write(0,   155, 255); break;  // orange
     case LedState::CONNECTING_WIFI:  led_write(0,   155, 255); break;  // orange
     case LedState::BOOTING:          led_write(255, 0,   0);   break;  // cyan
     case LedState::SCHEDULE_SYNC:    led_write(255, 255, 0);   break;  // blue
     case LedState::SETUP_MODE:       led_write(0,   0,   0);   break;  // white
     case LedState::CRITICAL_ERROR:   led_write(0,   255, 255); break;  // red
+    case LedState::OTA_DOWNLOADING:  led_write(255, 255, 0);   break;  // blue
+    case LedState::OTA_VERIFYING:    led_write(255, 255, 0);   break;  // blue
+    case LedState::OTA_APPLYING:     led_write(255, 255, 0);   break;  // blue
+    case LedState::OTA_FAILED:       led_write(0,   255, 255); break;  // red
     default:                         led_all_off();             break;
     }
 }
@@ -97,6 +104,10 @@ static const char *led_state_name(LedState s) {
     case LedState::SCHEDULE_SYNC:    return "SCHEDULE_SYNC";
     case LedState::SETUP_MODE:       return "SETUP_MODE";
     case LedState::CRITICAL_ERROR:   return "CRITICAL_ERROR";
+    case LedState::OTA_DOWNLOADING:  return "OTA_DOWNLOADING";
+    case LedState::OTA_VERIFYING:    return "OTA_VERIFYING";
+    case LedState::OTA_APPLYING:     return "OTA_APPLYING";
+    case LedState::OTA_FAILED:       return "OTA_FAILED";
     default:                         return "?";
     }
 }
@@ -184,7 +195,8 @@ void led_indicator_tick() {
 
     if (s_current_state == LedState::HEALTHY
         || s_current_state == LedState::OFFLINE_MODE
-        || s_current_state == LedState::SETUP_MODE) {
+        || s_current_state == LedState::SETUP_MODE
+        || s_current_state == LedState::OTA_DOWNLOADING) {
         if (s_breath_start == 0) s_breath_start = millis();
         const uint32_t cycle_ms =
             (s_current_state == LedState::SETUP_MODE) ? 2000 : 3000;
@@ -202,14 +214,25 @@ void led_indicator_tick() {
             ledcWrite(s_ledc_r, 255 - bright);
             ledcWrite(s_ledc_g, 255 - bright / 3);
             ledcWrite(s_ledc_b, 255);
-            break;
         case LedState::SETUP_MODE:
             ledcWrite(s_ledc_r, 255 - bright);
             ledcWrite(s_ledc_g, 255 - bright);
             ledcWrite(s_ledc_b, 255 - bright);
             break;
+        case LedState::OTA_DOWNLOADING:
+            ledcWrite(s_ledc_r, 255);
+            ledcWrite(s_ledc_g, 255);
+            ledcWrite(s_ledc_b, 255 - bright);  // blue breathing
+            break;
         default: break;
         }
+        return;
+    }
+
+    // Solid states — just show the color
+    if (s_current_state == LedState::BOOTING
+        || s_current_state == LedState::OTA_APPLYING) {
+        led_apply_color(s_current_state);
         return;
     }
 
