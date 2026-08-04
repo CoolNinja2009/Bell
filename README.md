@@ -161,7 +161,7 @@ devices update themselves the next morning. No USB cable, no manual steps.
 ### How it works
 
 ```
-git push ota → GitHub Actions builds firmware.bin → GitHub Release
+git push → GitHub Actions builds firmware.bin → GitHub Release
   → Node.js server fetches latest release (30 min cache)
     → ESP32 checks on every boot (60s after WiFi connects)
       → version newer? downloads 939 KB → SHA‑256 verifies → reboots
@@ -187,11 +187,10 @@ with SHA-256 verification and successful reboot to the new firmware.
 
 ### Triggering an update
 
-Push any change to the `ota` branch:
+Push any change to the `main` branch:
 
 ```bash
-git checkout ota
-git add . && git commit -m "fix relay timing" && git push origin ota
+git add . && git commit -m "fix relay timing" && git push
 ```
 
 GitHub Actions builds `firmware.bin`, creates a release. The Node.js server
