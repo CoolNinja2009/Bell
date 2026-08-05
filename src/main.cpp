@@ -21,6 +21,7 @@
 #include "network_sync.h"
 #include "led_indicator.h"
 #include "ota_update.h"
+#include "storage.h"
 
 void setup() {
     // 1. LED first — shows BOOTING (solid cyan) during init
@@ -35,6 +36,9 @@ void setup() {
 
     // 4. OTA — version tracking + update engine (idle until triggered)
     ota_init();
+
+    // 5. Storage — LittleFS mount (auto-formats on first boot)
+    storage_init();
 }
 
 void loop() {
