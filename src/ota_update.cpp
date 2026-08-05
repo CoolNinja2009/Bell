@@ -49,6 +49,7 @@ constexpr uint32_t OTA_BELL_SAFE_WINDOW_S   = 600;      // pause OTA if bell wit
 constexpr uint32_t OTA_CHUNK_TIMEOUT_MS     = 15000;    // HTTP timeout per chunk
 constexpr uint32_t OTA_CHUNK_SIZE           = 4096;     // bytes per loop tick
 constexpr uint32_t OTA_RESUME_RETRY_MS      = 5000;     // backoff after a failed chunk
+constexpr uint32_t OTA_DAILY_CHECK_INTERVAL_MS = 86400000;  // 24 h between periodic checks
 
 // ── NVS keys ───────────────────────────────────────────────────────
 static const char OTA_NVS_NS[]      = "ota";
@@ -72,6 +73,7 @@ static uint32_t      g_retry_until_ms     = 0;
 static bool          g_check_requested    = false;
 static bool          g_boot_check_done    = false;  // true once server confirms up-to-date
 static uint8_t       g_error_count        = 0;      // cap retries to prevent loops
+static uint32_t      g_next_daily_check_ms = 0;      // 0 = no daily check scheduled
 // ── Version tracking ───────────────────────────────────────────────
 static char          g_current_ver[32]    = FIRMWARE_VERSION;
 static char          g_server_ver[32]     = "";
@@ -214,6 +216,7 @@ static void tick_check_version() {
         // 4xx client errors are definitive — no retry
         if (code >= 400 && code < 500 && code != 429) {
             Serial.printf("[OTA] Server returned %d — will retry tomorrow\n", code);
+            g_next_daily_check_ms = millis() + OTA_DAILY_CHECK_INTERVAL_MS;
             enter_state(OtaState::IDLE);
         } else {
             enter_state(OtaState::RETRY);
@@ -264,8 +267,9 @@ static void tick_check_version() {
     if (version_cmp(g_server_ver, g_current_ver) <= 0) {
         Serial.printf("[OTA] Up to date (current=%s, server=%s)\n",
                       g_current_ver, g_server_ver);
-        g_boot_check_done = true;  // confirmed — don't check again this boot
+        g_boot_check_done = true;  // confirmed — don't check again this cycle
         g_error_count = 0;         // reset on success
+        g_next_daily_check_ms = millis() + OTA_DAILY_CHECK_INTERVAL_MS;
         enter_state(OtaState::IDLE);
         return;
     }
@@ -480,6 +484,11 @@ static void tick_error() {
     // Hold ERROR LED state for cooldown, then clear
     if (millis() >= g_error_until_ms) {
         led_release_state(LedState::OTA_FAILED);
+        // After 3 consecutive errors, back off until the next daily check
+        // instead of giving up permanently.
+        if (g_error_count >= 3) {
+            g_next_daily_check_ms = millis() + OTA_DAILY_CHECK_INTERVAL_MS;
+        }
         enter_state(OtaState::IDLE);
     }
 }
@@ -509,9 +518,10 @@ bool ota_tick() {
     case OtaState::IDLE: {
         uint32_t now = millis();
 
-        // Manual trigger bypasses all scheduling
+        // Manual trigger bypasses all scheduling — cancel any pending daily timer
         if (g_check_requested) {
             g_check_requested = false;
+            g_next_daily_check_ms = 0;
             enter_state(OtaState::CHECK_VERSION);
             return true;
         }
@@ -519,17 +529,23 @@ bool ota_tick() {
         // Don't check during error cooldown
         if (now < g_error_until_ms) return false;
 
-        // Already confirmed up-to-date this boot — stay idle
-        if (g_boot_check_done) return false;
+        // Daily check timer: block if not yet due, reset blockers if expired
+        if (g_next_daily_check_ms) {
+            if ((int32_t)(now - g_next_daily_check_ms) < 0) return false;  // not yet due
+            g_boot_check_done = false;
+            g_error_count    = 0;
+            g_next_daily_check_ms = 0;
+        }
 
-        // Too many errors this boot — give up
+        // Still blocked after any daily reset?
+        if (g_boot_check_done) return false;
         if (g_error_count >= 3) return false;
 
-        // Wait for WiFi to connect + 60s settling time after boot
+        // Wait for WiFi to settle after boot (first 60 s only — irrelevant after that)
         if (now < OTA_FIRST_CHECK_DELAY_MS) return false;
         if (WiFi.status() != WL_CONNECTED) return false;
 
-        Serial.println(F("[OTA] Boot check — looking for updates..."));
+        Serial.println(F("[OTA] Checking for updates..."));
         enter_state(OtaState::CHECK_VERSION);
         return true;
     }
