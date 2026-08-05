@@ -5,3 +5,7 @@ schedule.json
 history.jsonl
 api_keys.json
 *.log
+update-state.json
+updater.log
+pm2-error.log
+pm2-out.log
