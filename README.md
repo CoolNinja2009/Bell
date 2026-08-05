@@ -1,6 +1,6 @@
 # Relay Controller
 
-ESP32-based multi-channel relay controller with WiFi, NTP time sync, and a profile-driven web dashboard for remote management. The ESP32 auto-discovers the server via UDP beacon — no static IP needed on flat networks. Falls back to a user-configurable provisioned IP, and finally to a compiled-in static IP if provisioned IP also fails.
+ESP32-based multi-channel relay controller with WiFi, NTP time sync, auto-updating Node.js server, and a profile-driven web dashboard. **11,069 lines** across 49 files (C++ firmware + Node.js backend + dashboard UI).
 
 ## Hardware
 
@@ -95,7 +95,53 @@ Relays fire **only** on confirmed schedule times or explicit "Run Now" commands:
 
 **Resetting WiFi:** Hold the BOOT button (GPIO0) for 5 seconds at any time — erases SSID, password, and provisioned server IP. All other settings (schedules, RTC) are preserved. Non-blocking, runs concurrent with normal operation.
 
-### 1. Server (Raspberry Pi or PC)
+## Deployment (Windows PC)
+
+### One-time setup
+
+On a fresh school PC, run `setup.bat` once. It installs Node.js and Git via `winget`, clones the repository, and runs the first bootstrap.
+
+```
+setup.bat
+```
+
+### Every boot
+
+Add `start.bat` to Windows Startup. It runs `bootstrap.js` which:
+
+- Verifies Node.js, Git, PM2, and the repository
+- Checks GitHub for updates (only during startup)
+- Auto-updates the repository if a newer commit exists
+- Installs dependencies only when `package.json` changed
+- Starts or restarts the server via PM2
+- Health-checks `GET /health` — rolls back on failure
+- Exits — only PM2 and the server remain running
+
+```
+start.bat  →  bootstrap.js  →  PM2 + server
+```
+
+```
+========================================================
+      Relay Controller Server v2026.0805
+========================================================
+
+[✓] Node.js              v24.15.0
+[✓] Git                  2.53.0
+[✓] PM2                  7.0.3
+[✓] Repository           OK
+[✓] GitHub               Reachable
+[✓] Local Commit         d6d63b9
+[✓] Remote Commit        a9f4c21
+[→] Update Available     Yes
+
+Updating repository...
+Health check........ PASS
+Server online.
+Dashboard: http://localhost:8080
+```
+
+### Manual (Raspberry Pi / Linux)
 
 ```bash
 cd server-node
@@ -103,36 +149,6 @@ npm install
 npm start
 # → Dashboard at http://<host>:8080
 # → Beacon broadcasts on UDP port 9999
-```
-
-#### Production deployment with PM2
-
-PM2 keeps the server running 24/7 with automatic restarts on crash, log rotation, and startup-on-boot.
-
-```bash
-# Install PM2 globally
-npm install -g pm2
-
-# Start the server
-cd server-node
-pm2 start server.js --name relay-server --cwd .
-
-# Save the process list so it survives reboots
-pm2 save
-
-# Register PM2 as a system service (auto-starts on boot)
-pm2 startup
-# → Follow the printed command (needs sudo on Linux)
-```
-
-Daily operations:
-
-```bash
-pm2 status              # list all processes
-pm2 logs relay-server   # tail logs (--lines 200 for more)
-pm2 restart relay-server
-pm2 stop relay-server
-pm2 monit               # real-time CPU/memory dashboard
 ```
 
 Log rotation (prevents disk fill on long-running deployments):
@@ -144,7 +160,7 @@ pm2 set pm2-logrotate:retain 7
 pm2 set pm2-logrotate:compress true
 ```
 
-> **Important**: PM2 must be running when the server crosses midnight for day-of-week profile transitions to work. The ESP32 fetches the new profile from the server; if the server is down at midnight, the ESP32 rings the previous day's schedule.
+> **Important**: The server must be running when crossing midnight for day-of-week profile transitions to work. The ESP32 fetches the active profile from the server on every poll; if the server is down at midnight, the ESP32 continues ringing the previous day's schedule until the server returns.
 
 Configure timezone in `src/bell_core.h` and fallback server IP in `src/network_sync.h`:
 
