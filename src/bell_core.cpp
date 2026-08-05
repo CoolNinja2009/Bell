@@ -10,7 +10,7 @@
  *   - The schedule state machine runs entirely from tick_channel().
  *   - This file has ZERO WiFi, HTTP, or JSON dependencies.
  */
-#include "bell_core.h"
+#include "bell_core.h".
 #include <RTClib.h>
 #include <sys/time.h>
 #include <esp_sntp.h>
