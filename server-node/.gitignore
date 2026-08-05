@@ -9,3 +9,5 @@ update-state.json
 updater.log
 pm2-error.log
 pm2-out.log
+state/update_state.json
+state/update_state.json.tmp
