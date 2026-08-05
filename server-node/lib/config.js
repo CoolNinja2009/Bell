@@ -37,7 +37,7 @@ module.exports = {
     stateFile: path.join(__dirname, '..', 'update-state.json'),
 
     /** Path to updater log. */
-    logFile: path.join(__dirname, '..', 'updater.log'),
+    logFile: path.join(__dirname, '..', 'logs', 'updater.log'),
 
     /** Health check URL (relative — server is localhost). */
     healthUrl: 'http://127.0.0.1:8080/health',
