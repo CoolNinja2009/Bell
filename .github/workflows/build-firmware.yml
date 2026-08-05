@@ -1,11 +1,15 @@
 name: Build & Release Firmware
 
 # ── Triggers ────────────────────────────────────────────────────────
-# Every push to main builds and releases firmware automatically.
-# Tags (v1.2.3) use the tag as version; branch pushes use date+short-sha.
+# Only rebuild firmware when ESP32 source files actually change.
+# Tags always trigger. workflow_dispatch is the manual escape hatch.
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'partitions_ota.csv'
+      - 'platformio.ini'
     tags: ['v*']
   workflow_dispatch:
 
