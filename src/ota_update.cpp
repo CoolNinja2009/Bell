@@ -121,7 +121,27 @@ static void save_nvs_version() {
 }
 
 static int version_cmp(const char* a, const char* b) {
-    return strcmp(a, b);
+    for (;;) {
+        // Parse next dotted numeric component from each side.
+        unsigned long na = 0;
+        while (*a >= '0' && *a <= '9') { na = na * 10 + (unsigned long)(*a - '0'); a++; }
+        unsigned long nb = 0;
+        while (*b >= '0' && *b <= '9') { nb = nb * 10 + (unsigned long)(*b - '0'); b++; }
+
+        if (na < nb) return -1;
+        if (na > nb) return  1;
+
+        // Both exhausted at the same time → equal.
+        if (*a == '\0' && *b == '\0') return 0;
+
+        // Either side hit a non-numeric suffix (e.g. "-beta", ".git.abc").
+        // Suffixes are ignored — treat as equal.
+        if ((*a && *a != '.') || (*b && *b != '.')) return 0;
+
+        // Advance past the dot separator for the next component.
+        if (*a == '.') a++;
+        if (*b == '.') b++;
+    }
 }
 
 // ── State entry ────────────────────────────────────────────────────
