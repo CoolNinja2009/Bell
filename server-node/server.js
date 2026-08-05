@@ -48,7 +48,6 @@ const profiles = require('./lib/profiles');
 const calendar = require('./lib/calendar');
 const profileSettings = require('./lib/settings');
 const profileScheduler = require('./lib/profile-scheduler');
-
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -549,7 +548,6 @@ app.get(
     }
 
     res.writeHead(status, headers);
-    const stream = fs.createReadStream(info.path, { start, end });
     stream.pipe(res);
     stream.on('error', (err) => {
       if (!res.headersSent) res.status(500).json({ error: 'stream error' });
@@ -557,6 +555,16 @@ app.get(
     });
   })
 );
+
+// ── Health check — public endpoint for updater / monitoring ──────────
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    node: process.version,
+  });
+});
 
 // ---------------------------------------------------------------------------
 // REST API — consumed by the dashboard (requires login)
@@ -1147,6 +1155,7 @@ const server = http.createServer(app);
 server.listen(PORT, HOST, () => {
   const localIp = getLocalIPv4();
   log(`[server] Relay Controller listening on http://${HOST}:${PORT} (accessible at http://${localIp}:${PORT})`);
+
 });
 
 // Graceful shutdown on SIGTERM/SIGINT (e.g. `systemctl stop`, Ctrl+C)
