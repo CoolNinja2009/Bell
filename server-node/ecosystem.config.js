@@ -23,8 +23,8 @@ module.exports = {
       },
       // PM2 native log rotation
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
-      error_file: 'pm2-error.log',
-      out_file: 'pm2-out.log',
+      error_file: require('path').join(__dirname, 'logs', 'pm2-error.log'),
+      out_file: require('path').join(__dirname, 'logs', 'pm2-out.log'),
       merge_logs: true,
       // Wait before considering the process "online"
       listen_timeout: 10000,
