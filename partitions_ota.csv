@@ -1,24 +1,28 @@
 # Name,   Type, SubType,   Offset,    Size,       Flags
 # ─────────────────────────────────────────────────────────────────────
-# 4 MB flash — dual OTA with factory fallback.
+# 4 MB flash — dual OTA with factory fallback, LittleFS, and coredump.
+# OTA slots are EQUAL size so direction never matters.
 # Factory = USB‑flashed golden image, never OTA'd.
-# ota_0 / ota_1 alternate on each update. ESP-IDF auto‑rolls back
-# to the last known‑good partition if the new one fails to boot.
+# LittleFS = logs, config, web assets (256 KB).
+# Coredump = crash diagnostic storage (64 KB).
 #
 # Offset  Size      Partition   Purpose
 # ──────  ────────  ─────────   ──────────────────────────────────────
 # 0x1000   0x7000   (reserved)   Bootloader
 # 0x8000   0x1000   (reserved)   Partition table
-# 0x9000   0x5000   nvs          WiFi creds, provisioned IP
-# 0xE000   0x2000   otadata      OTA rollback state (ESP-IDF managed)
-# 0x10000  0x180000 factory      Golden image — USB flash only
-# 0x190000 0x180000 ota_0        OTA slot A
-# 0x310000 0xF0000  ota_1        OTA slot B  (smaller — 960 KB)
+# 0x9000   0x5000   nvs          WiFi creds, config (unchanged)
+# 0xE000   0x2000   otadata      OTA rollback state (unchanged)
+# 0x10000  0x100000 factory      Golden image — USB flash only (1 MB)
+# 0x110000 0x150000 ota_0        OTA slot A (1344 KB)
+# 0x260000 0x150000 ota_1        OTA slot B (1344 KB)
+# 0x3B0000 0x10000  coredump     Crash dump storage (64 KB)
+# 0x3C0000 0x40000  littlefs     Logs / config / web assets (256 KB)
 #
-# Total: 4 MiB (0x400000). Factory + ota_0 are 1.5 MiB each
-# (generous — current firmware is ~750 KB).
-nvs,      data, nvs,      0x9000,   0x5000,
-otadata,  data, ota,      0xE000,   0x2000,
-factory,  app,  factory,  0x10000,  0x180000,
-ota_0,    app,  ota_0,    0x190000, 0x180000,
-ota_1,    app,  ota_1,    0x310000, 0xF0000,
+# Total: 4 MiB (0x400000) exactly.
+nvs,      data, nvs,       0x9000,   0x5000,
+otadata,  data, ota,       0xE000,   0x2000,
+factory,  app,  factory,   0x10000,  0x100000,
+ota_0,    app,  ota_0,     0x110000, 0x150000,
+ota_1,    app,  ota_1,     0x260000, 0x150000,
+coredump, data, coredump,  0x3B0000, 0x10000,
+littlefs, data, littlefs, 0x3C0000, 0x40000,

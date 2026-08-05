@@ -277,7 +277,9 @@ static void tick_check_version() {
     Serial.printf("[OTA] New version available: %s -> %s (%u bytes)\n",
                   g_current_ver, g_server_ver, g_server_size);
 
-    if (g_server_size == 0 || g_server_size > 0xF0000) {  // smaller slot = ota_1
+    const esp_partition_t* next_ota = esp_ota_get_next_update_partition(nullptr);
+    uint32_t max_ota_size = next_ota ? next_ota->size : 0;
+    if (g_server_size == 0 || g_server_size > max_ota_size) {
         Serial.println(F("[OTA] Invalid firmware size — aborting"));
         enter_state(OtaState::ERROR);
         return;
