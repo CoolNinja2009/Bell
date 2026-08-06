@@ -248,6 +248,7 @@ async function verifyEnvironment() {
     results.push({ ok: true, label: 'Dependencies', value: 'OK' });
   }
 
+
   // Output results
   for (const r of results) {
     checkLine(r.ok, r.label, r.value);
