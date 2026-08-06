@@ -5,43 +5,109 @@
       "channels": {
         "ch1": {
           "enabled": true,
-          "pulse_ms": 2000,
-          "schedule": ["08:00", "12:00", "13:00", "17:00"],
+          "pulse_ms": 1700,
+          "schedule": [
+            "08:55",
+            "09:00",
+            "09:40",
+            "10:20",
+            "10:30",
+            "11:10",
+            "11:50",
+            {
+              "time": "12:30",
+              "pulse_ms": 2500
+            },
+            "13:10",
+            "13:50",
+            "14:30",
+            "14:40",
+            "15:20",
+            "15:58",
+            {
+              "time": "16:00",
+              "pulse_ms": 2500
+            }
+          ],
           "skip_dates": [],
-          "label": "Channel 1"
+          "label": "Bell Middle School"
         },
         "ch2": {
           "enabled": true,
-          "pulse_ms": 2000,
-          "schedule": ["06:30", "18:45"],
+          "pulse_ms": 1700,
+          "schedule": [
+            "08:55",
+            "09:00",
+            "09:40",
+            "10:20",
+            "11:00",
+            "11:10",
+            "11:50",
+            {
+              "time": "12:30",
+              "pulse_ms": 2500
+            },
+            "13:10",
+            "13:50",
+            "14:30",
+            {
+              "time": "15:10",
+              "pulse_ms": 2500
+            }
+          ],
           "skip_dates": [],
-          "label": "Channel 2"
+          "label": "Bell High School"
         }
       },
-      "created": "2026-01-01T00:00:00.000Z",
-      "updated": "2026-01-01T00:00:00.000Z"
+      "created": "2026-08-06T19:30:00.000Z",
+      "updated": "2026-08-06T19:30:00.000Z"
     },
     "saturday": {
       "name": "Saturday",
       "channels": {
         "ch1": {
           "enabled": true,
-          "pulse_ms": 2000,
-          "schedule": ["09:00", "12:30"],
-          "skip_dates": [],
-          "label": "Channel 1"
-        },
-        "ch2": {
-          "enabled": false,
-          "pulse_ms": 2000,
+          "pulse_ms": 1700,
           "schedule": [],
           "skip_dates": [],
-          "label": "Channel 2"
+          "label": "Bell Middle School"
+        },
+        "ch2": {
+          "enabled": true,
+          "pulse_ms": 1700,
+          "schedule": [],
+          "skip_dates": [],
+          "label": "Bell High School"
         }
       },
-      "created": "2026-01-01T00:00:00.000Z",
-      "updated": "2026-01-01T00:00:00.000Z"
+      "created": "2026-08-06T19:30:00.000Z",
+      "updated": "2026-08-06T19:30:00.000Z"
+    },
+    "sunday": {
+      "name": "Sunday",
+      "channels": {
+        "ch1": {
+          "enabled": true,
+          "pulse_ms": 1700,
+          "schedule": [],
+          "skip_dates": [],
+          "label": "Bell Middle School"
+        },
+        "ch2": {
+          "enabled": true,
+          "pulse_ms": 1700,
+          "schedule": [],
+          "skip_dates": [],
+          "label": "Bell High School"
+        }
+      },
+      "created": "2026-08-06T19:30:00.000Z",
+      "updated": "2026-08-06T19:30:00.000Z"
     }
   },
-  "order": ["regular-working-day", "saturday"]
+  "order": [
+    "regular-working-day",
+    "saturday",
+    "sunday"
+  ]
 }
