@@ -230,6 +230,24 @@ async function verifyEnvironment() {
     results.push({ ok: true, label: 'PM2', value: pm2Version });
   }
 
+  // --- npm dependencies ---
+  if (!depsSvc.nodeModulesExist(ROOT)) {
+    results.push({ ok: false, label: 'Dependencies', value: 'Installing...' });
+    logToFile(BOOTSTRAP_LOG, 'node_modules not found — installing dependencies');
+
+    const depResult = await depsSvc.install(ROOT);
+    if (depResult.ok) {
+      results.push({ ok: true, label: 'Dependencies', value: depResult.command });
+      logToFile(BOOTSTRAP_LOG, `Dependencies installed via ${depResult.command}`);
+    } else {
+      results.push({ ok: false, label: 'Dependencies', value: `FAILED: ${depResult.error}` });
+      logToFile(BOOTSTRAP_LOG, `Dependency install failed: ${depResult.error}`);
+      allOk = false;
+    }
+  } else {
+    results.push({ ok: true, label: 'Dependencies', value: 'OK' });
+  }
+
   // Output results
   for (const r of results) {
     checkLine(r.ok, r.label, r.value);
@@ -316,6 +334,34 @@ async function performUpdate(localSha, remoteSha) {
   console.log('  Stopping server...');
   await pm2Svc.stop(ROOT, config.pm2.ecosystemFile);
 
+  // Step 1b: Back up runtime data before git reset destroys it
+  console.log('  Backing up runtime data...');
+  const RUNTIME_FILES = ['profiles.json', 'settings.json', 'calendar.json'];
+  const runtimeBackups = {};
+  let backupDir = null;
+  try {
+    const fs = require('fs');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    backupDir = path.join(ROOT, 'backups');
+    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+
+    for (const f of RUNTIME_FILES) {
+      const src = path.join(ROOT, f);
+      if (fs.existsSync(src)) {
+        runtimeBackups[f] = fs.readFileSync(src, 'utf8');
+        const dest = path.join(backupDir, `${path.basename(f, '.json')}_${ts}.json`);
+        fs.writeFileSync(dest, runtimeBackups[f], 'utf8');
+      }
+    }
+    const count = Object.keys(runtimeBackups).length;
+    logToFile(UPDATE_LOG, `Backed up ${count} runtime file(s) to ${backupDir}`);
+    console.log(`  Backed up ${count} runtime file(s) to backups/`);
+  } catch (e) {
+    logError(`Runtime data backup failed: ${e.message}`);
+    // Non-fatal — continue with update, data may be lost
+    console.log(`  Backup failed (continuing): ${e.message}`);
+  }
+
   // Step 2: Check if deps changed BEFORE resetting
   let depsChanged = false;
   try {
@@ -362,6 +408,22 @@ async function performUpdate(localSha, remoteSha) {
     logError(`Reset failed: ${e.message}`);
     try { await ensurePm2Running(); } catch (e2) { logError(`PM2 start failed: ${e2.message}`); }
     return { ok: false, rollback: false };
+  }
+
+  // Step 4b: Restore runtime data backed up before reset
+  if (Object.keys(runtimeBackups).length > 0) {
+    try {
+      const fs = require('fs');
+      for (const [f, content] of Object.entries(runtimeBackups)) {
+        const dest = path.join(ROOT, f);
+        fs.writeFileSync(dest, content, 'utf8');
+      }
+      logToFile(UPDATE_LOG, `Restored ${Object.keys(runtimeBackups).length} runtime file(s)`);
+      console.log(`  Restored ${Object.keys(runtimeBackups).length} runtime file(s)`);
+    } catch (e) {
+      logError(`Runtime data restore failed: ${e.message}`);
+      console.log(`  ${CROSS} Runtime data restore failed — backups saved to backups/`);
+    }
   }
 
   // Step 5: Install dependencies if changed
@@ -434,6 +496,22 @@ async function performRollback(prevCommit) {
   console.log('  Stopping server...');
   await pm2Svc.stop(ROOT, config.pm2.ecosystemFile);
 
+  // Back up runtime data before reset
+  console.log('  Backing up runtime data...');
+  const RUNTIME_FILES = ['profiles.json', 'settings.json', 'calendar.json'];
+  const rbBackups = {};
+  try {
+    const fs = require('fs');
+    for (const f of RUNTIME_FILES) {
+      const src = path.join(ROOT, f);
+      if (fs.existsSync(src)) {
+        rbBackups[f] = fs.readFileSync(src, 'utf8');
+      }
+    }
+  } catch (e) {
+    logError(`Rollback backup failed: ${e.message}`);
+  }
+
   // Reset to previous commit
   try {
     await gitSvc.resetToCommit(ROOT, prevCommit);
@@ -442,6 +520,21 @@ async function performRollback(prevCommit) {
     logError(`Rollback reset failed: ${e.message}`);
     logToFile(BOOTSTRAP_LOG, 'CRITICAL: Rollback failed — manual intervention required');
     return false;
+  }
+
+  // Restore runtime data after reset
+  if (Object.keys(rbBackups).length > 0) {
+    try {
+      const fs = require('fs');
+      for (const [f, content] of Object.entries(rbBackups)) {
+        const dest = path.join(ROOT, f);
+        fs.writeFileSync(dest, content, 'utf8');
+      }
+      logToFile(UPDATE_LOG, `Rollback: restored ${Object.keys(rbBackups).length} runtime file(s)`);
+      console.log(`  Restored ${Object.keys(rbBackups).length} runtime file(s)`);
+    } catch (e) {
+      logError(`Rollback restore failed: ${e.message}`);
+    }
   }
 
   // Install deps (may have changed due to rollback)

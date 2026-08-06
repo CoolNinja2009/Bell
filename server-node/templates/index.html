@@ -230,6 +230,7 @@
     box-shadow: 0 2px 8px rgba(0,0,0,0.3), 0 0 0 1px rgba(0,230,160,0.2);
   }
 
+
   /* ── Profile switcher bar ──────────────── */
   .profile-bar {
     display: flex;
@@ -499,6 +500,35 @@
     font-family: inherit;
   }
   .tag button:hover { opacity: 1; transform: scale(1.15); }
+.tag[data-list="schedule"] { cursor: pointer; }
+.tag.editing {
+  gap: 5px;
+  padding: 3px 9px;
+  background: rgba(0,230,160,0.12);
+  border-color: var(--accent);
+  border-radius: 10px;
+  min-width: 0;
+}
+.tag.editing input {
+  background: #060c14;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-family: inherit;
+}
+.tag.editing input:focus { outline: none; border-color: var(--accent); }
+.tag.editor-actions { display: flex; gap: 3px; flex-shrink: 0; }
+.tag.editor-actions button {
+  background: none; border: 1px solid var(--border);
+  color: var(--text); cursor: pointer;
+  padding: 2px 7px; border-radius: 5px;
+  font-size: 0.7rem; font-family: inherit; opacity: 0.8;
+}
+.tag.editor-actions button:hover { opacity: 1; }
+.tag.editor-actions .edit-save { border-color: var(--accent); color: var(--accent); }
+.tag.editor-actions .edit-cancel { color: var(--dim); }
   .add-row {
     display: flex;
     gap: 8px;
@@ -924,7 +954,7 @@ function renderChannel(key, ch) {
         ${(ch.schedule||[]).map(t => {
           const label = fmtScheduleEntry(t);
           const val = typeof t === 'string' ? t : (t && t.time || '');
-          return `<span class="tag">${escapeHtml(label)}${isOn ? '<button data-remove="schedule" data-val="'+escapeHtml(val)+'">&times;</button>' : ''}</span>`;
+          return `<span class="tag" data-list="schedule" data-val="${escapeHtml(val)}">${escapeHtml(label)}${isOn ? '<button data-remove="schedule" data-val="'+escapeHtml(val)+'">&times;</button>' : ''}</span>`;
         }).join('')}
       </div>
       ${isOn ? `
@@ -1086,6 +1116,66 @@ function renderChannel(key, ch) {
         });
         renderAll(schedule);
       };
+    });
+  }
+
+  // Click schedule tag to edit inline (only when enabled)
+  if (isOn) {
+    div.querySelectorAll('.tag[data-list="schedule"]').forEach(tag => {
+      tag.addEventListener('click', (e) => {
+        if (e.target.closest('[data-remove]') || tag.classList.contains('editing')) return;
+        const oldTime = tag.dataset.val;
+        const idx = ch.schedule.findIndex(v =>
+          (typeof v === 'string' ? v : (v && v.time || '')) === oldTime
+        );
+        if (idx === -1) return;
+        const entry = ch.schedule[idx];
+        const entryTime = typeof entry === 'string' ? entry : (entry && entry.time || '');
+        const entryPulse = (entry && typeof entry === 'object' && entry.pulse_ms) ? entry.pulse_ms : '';
+
+        tag.classList.add('editing');
+        tag.innerHTML = `
+          <input type="time" value="${entryTime}" class="edit-time" style="width:108px;">
+          <input type="number" value="${entryPulse}" class="edit-pulse" placeholder="ms" min="100" step="100" style="width:62px;" title="Pulse duration (ms)">
+          <span class="editor-actions">
+            <button class="edit-save">Save</button>
+            <button class="edit-cancel">Cancel</button>
+          </span>
+        `;
+
+        const saveBtn = tag.querySelector('.edit-save');
+        const cancelBtn = tag.querySelector('.edit-cancel');
+        const timeInp = tag.querySelector('.edit-time');
+        const pulseInp = tag.querySelector('.edit-pulse');
+
+        cancelBtn.onclick = (e2) => { e2.stopPropagation(); renderAll(schedule); };
+
+        const doSave = () => {
+          const newTime = timeInp.value.trim();
+          if (!/^\d{2}:\d{2}$/.test(newTime)) { toast('Format: HH:MM', true); return; }
+          const [h,m] = newTime.split(':').map(Number);
+          if (h<0||h>23||m<0||m>59) { toast('Invalid time', true); return; }
+          const dup = ch.schedule.some((v, i2) => {
+            if (i2 === idx) return false;
+            return (typeof v === 'string' ? v : (v && v.time || '')) === newTime;
+          });
+          if (dup) { toast('Duplicate time', true); return; }
+          const newPulse = parseInt(pulseInp.value) || 0;
+          ch.schedule[idx] = (newPulse >= 100) ? { time: newTime, pulse_ms: newPulse } : newTime;
+          ch.schedule.sort((a,b) => {
+            const at = typeof a === 'string' ? a : (a && a.time || '');
+            const bt = typeof b === 'string' ? b : (b && b.time || '');
+            return at.localeCompare(bt);
+          });
+          renderAll(schedule);
+        };
+
+        saveBtn.onclick = (e2) => { e2.stopPropagation(); doSave(); };
+        timeInp.addEventListener('keydown', (e2) => { if (e2.key === 'Enter') doSave(); });
+        pulseInp.addEventListener('keydown', (e2) => { if (e2.key === 'Enter') doSave(); });
+
+        timeInp.focus();
+      });
     });
   }
 
