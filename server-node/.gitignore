@@ -7,7 +7,8 @@ api_keys.json
 *.log
 state/update_state.json
 state/update_state.json.tmp
-profiles.json
-settings.json
-calendar.json
-backups/
+/profiles.json
+/settings.json
+/calendar.json
+/backups/
+!defaults/
