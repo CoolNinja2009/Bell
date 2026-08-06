@@ -1,4 +1,5 @@
 node_modules/
+/sync-profiles.js
 password.json
 secret.key
 schedule.json

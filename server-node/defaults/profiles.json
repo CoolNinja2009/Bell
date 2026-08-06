@@ -68,20 +68,36 @@
         "ch1": {
           "enabled": true,
           "pulse_ms": 1700,
-          "schedule": [],
+          "schedule": [
+            "08:55",
+            "09:00",
+            "09:40",
+            "10:20",
+            "10:30",
+            "11:10",
+            "11:50"
+          ],
           "skip_dates": [],
           "label": "Bell Middle School"
         },
         "ch2": {
           "enabled": true,
           "pulse_ms": 1700,
-          "schedule": [],
+          "schedule": [
+            "08:55",
+            "09:00",
+            "09:40",
+            "10:20",
+            "11:00",
+            "11:10",
+            "11:50"
+          ],
           "skip_dates": [],
           "label": "Bell High School"
         }
       },
       "created": "2026-08-06T19:30:00.000Z",
-      "updated": "2026-08-06T19:30:00.000Z"
+      "updated": "2026-08-06T22:06:00.000Z"
     },
     "sunday": {
       "name": "Sunday",
