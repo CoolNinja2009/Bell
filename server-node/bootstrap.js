@@ -351,7 +351,9 @@ async function performUpdate(localSha, remoteSha) {
       if (fs.existsSync(src)) {
         runtimeBackups[f] = fs.readFileSync(src, 'utf8');
         const dest = path.join(backupDir, `${path.basename(f, '.json')}_${ts}.json`);
-        fs.writeFileSync(dest, runtimeBackups[f], 'utf8');
+        const tmp = dest + '.tmp';
+        fs.writeFileSync(tmp, runtimeBackups[f], 'utf8');
+        fs.renameSync(tmp, dest);
       }
     }
     const count = Object.keys(runtimeBackups).length;
@@ -417,7 +419,9 @@ async function performUpdate(localSha, remoteSha) {
       const fs = require('fs');
       for (const [f, content] of Object.entries(runtimeBackups)) {
         const dest = path.join(ROOT, f);
-        fs.writeFileSync(dest, content, 'utf8');
+        const tmp = dest + '.tmp';
+        fs.writeFileSync(tmp, content, 'utf8');
+        fs.renameSync(tmp, dest);
       }
       logToFile(UPDATE_LOG, `Restored ${Object.keys(runtimeBackups).length} runtime file(s)`);
       console.log(`  Restored ${Object.keys(runtimeBackups).length} runtime file(s)`);
@@ -529,7 +533,9 @@ async function performRollback(prevCommit) {
       const fs = require('fs');
       for (const [f, content] of Object.entries(rbBackups)) {
         const dest = path.join(ROOT, f);
-        fs.writeFileSync(dest, content, 'utf8');
+        const tmp = dest + '.tmp';
+        fs.writeFileSync(tmp, content, 'utf8');
+        fs.renameSync(tmp, dest);
       }
       logToFile(UPDATE_LOG, `Rollback: restored ${Object.keys(rbBackups).length} runtime file(s)`);
       console.log(`  Restored ${Object.keys(rbBackups).length} runtime file(s)`);
