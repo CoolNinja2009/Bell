@@ -1,0 +1,12 @@
+{
+  "dates": {},
+  "dow": {
+    "monday": "regular-working-day",
+    "tuesday": "regular-working-day",
+    "wednesday": "regular-working-day",
+    "thursday": "regular-working-day",
+    "friday": "regular-working-day",
+    "saturday": "saturday",
+    "sunday": "sunday"
+  }
+}
