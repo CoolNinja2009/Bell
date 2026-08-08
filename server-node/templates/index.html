@@ -760,6 +760,18 @@
     .nav-tabs { width: 100%; }
     .nav-tab { flex: 1; text-align: center; }
   }
+
+  /* ── Footer ─────────────────────────────── */
+  .site-footer {
+    text-align: center;
+    padding: 32px 16px 20px;
+    font-size: 0.72rem;
+    color: var(--dim);
+    letter-spacing: 0.2px;
+    opacity: 0.55;
+    transition: opacity 0.3s;
+  }
+  .site-footer:hover { opacity: 1; }
 </style>
 </head>
 <body>
@@ -1649,5 +1661,7 @@ $('#btn-clear-override-sched').onclick = async () => {
   });
 })();
 </script>
+
+<footer class="site-footer">&#x1F514; Built from silicon to server. &mdash; Chinmayakeshav</footer>
 </body>
 </html>
