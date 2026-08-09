@@ -15,6 +15,9 @@ const path = require('path');
 const os = require('os');
 const dns = require('dns');
 const cp = require('child_process');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
 
 // ── Internal modules ──────────────────────────────────────────────────
 const config = require('./config');
@@ -941,6 +944,21 @@ async function main() {
 
   // --- Save state ---
   saveState(finalSha, prevState.currentCommit, finalStatus);
+
+  // --- Phase 7: Daily restart cron (4:30 PM) ---
+  try {
+    const cronCmd = 'cd /home/bell/Bell/server-node && bash start.sh --update >> /tmp/bell-cron.log 2>&1';
+    const cronEntry = `30 16 * * * ${cronCmd}`;
+    const { stdout: existing } = await execAsync('crontab -l 2>/dev/null || true');
+    if (!existing.includes('start.sh --update')) {
+      await execAsync(`(crontab -l 2>/dev/null || true; echo "${cronEntry}") | crontab -`);
+      checkLine(true, 'Daily Restart Cron', '4:30 PM — bash start.sh --update');
+    } else {
+      checkLine(true, 'Daily Restart Cron', 'already configured');
+    }
+  } catch (e) {
+    checkLine(true, 'Daily Restart Cron', `skipped (${e.message})`);
+  }
 
   // --- Done ---
   printServerOnline(mdnsInfo);
