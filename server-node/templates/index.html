@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<link rel="icon" type="image/svg+xml" href="/bell.svg">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#00a87a">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Relay Controller</title>
 <style>
@@ -549,6 +552,8 @@
   /* ── Buttons ────────────────────────────── */
   .btn {
     padding: 10px 18px;
+    min-height: 44px;
+    min-width: 44px;
     border-radius: 10px;
     border: none;
     font-size: 0.8rem;
@@ -559,6 +564,9 @@
     font-family: inherit;
     position: relative;
     overflow: hidden;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .btn:hover { transform: translateY(-1px); }
   .btn:active { transform: translateY(0); }
@@ -759,6 +767,30 @@
     .grid { grid-template-columns: 1fr; }
     .nav-tabs { width: 100%; }
     .nav-tab { flex: 1; text-align: center; }
+
+    /* Channel cards reflow to single column */
+    .ch-header { flex-direction: column; align-items: flex-start; }
+    .ch-controls { width: 100%; justify-content: space-between; }
+    .ch-body { padding: 0 16px 18px; }
+    .btn-row { flex-direction: column; padding: 0 16px 16px; }
+    .btn-row .btn { width: 100%; }
+
+    /* Profile bar stacks vertically */
+    .profile-bar { flex-direction: column; align-items: stretch; }
+    .profile-bar-select { min-width: 0; }
+    .profile-bar-actions { justify-content: flex-end; }
+
+    /* Chart & history table: horizontal scroll wrapper */
+    #hist-table-wrap {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    table.hist-table { min-width: 560px; font-size: 0.74rem; }
+    table.hist-table th,
+    table.hist-table td { padding: 8px 10px; }
+
+    /* Header compact */
+    header { padding: 14px 16px; }
   }
 
   /* ── Footer ─────────────────────────────── */
@@ -1660,6 +1692,13 @@ $('#btn-clear-override-sched').onclick = async () => {
     }
   });
 })();
+</script>
+
+<!-- ── Service Worker ─────────────────────────────────────────────── -->
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js', { scope: '/' });
+}
 </script>
 
 <footer class="site-footer">&#x1F514; Built from silicon to server. &mdash; Chinmayakeshav</footer>

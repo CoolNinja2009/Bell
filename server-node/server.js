@@ -62,6 +62,12 @@ const BEACON_MSG = Buffer.from(`RELAY_CTRL:${PORT}\n`);
 const INDEX_TPL = path.join(__dirname, 'templates', 'index.html');
 const LOGIN_TPL = path.join(__dirname, 'templates', 'login.html');
 
+const MANIFEST_PATH = path.join(__dirname, 'manifest.json');
+const SW_PATH = path.join(__dirname, 'sw.js');
+const ICON_192_PATH = path.join(__dirname, 'icon-192.png');
+const ICON_512_PATH = path.join(__dirname, 'icon-512.png');
+const BELL_SVG_PATH = path.join(__dirname, 'bell.svg');
+
 const CHANNEL_KEY_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,19}$/; // must start with a letter
 const MAX_CHANNELS = 24;
 
@@ -1049,6 +1055,29 @@ app.get(
     res.set('Cache-Control', 'no-store').type('html').send(html);
   })
 );
+
+// ---------------------------------------------------------------------------
+// PWA assets — public (no auth; service workers MUST be scope-root)
+// ---------------------------------------------------------------------------
+app.get('/manifest.json', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=3600').type('json').sendFile(MANIFEST_PATH);
+});
+
+app.get('/sw.js', (req, res) => {
+  res.set('Cache-Control', 'no-cache').type('application/javascript').sendFile(SW_PATH);
+});
+
+app.get('/icon-192.png', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=86400').type('png').sendFile(ICON_192_PATH);
+});
+
+app.get('/icon-512.png', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=86400').type('png').sendFile(ICON_512_PATH);
+});
+
+app.get('/bell.svg', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=86400').type('svg').sendFile(BELL_SVG_PATH);
+});
 
 // ---------------------------------------------------------------------------
 // 404 + centralized error handling
