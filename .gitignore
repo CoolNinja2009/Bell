@@ -11,6 +11,7 @@
 defunct/
 __pycache__/
 *.pyc
+*CHECKPOINT.md
 
 # BLE client
 esp32/ble_client/
