@@ -553,6 +553,7 @@ app.get(
       headers['Content-Range'] = `bytes ${start}-${end}/${totalSize}`;
     }
 
+    const stream = fs.createReadStream(info.path, { start, end });
     res.writeHead(status, headers);
     stream.pipe(res);
     stream.on('error', (err) => {
