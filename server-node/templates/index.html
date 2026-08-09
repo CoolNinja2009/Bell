@@ -993,7 +993,7 @@ function renderChannel(key, ch) {
       <input type="number" value="${ch.pulse_ms}" min="100" step="100" data-field="pulse_ms"${isOn ? '' : ' disabled'}>
     </div>
     <div class="field">
-      <label>Schedule (HH:MM)</label>
+      <label>Schedule (H:MM)</label>
       <div class="tag-list" data-list="schedule">
         ${(ch.schedule||[]).map(t => {
           const label = fmtScheduleEntry(t);
@@ -1003,7 +1003,7 @@ function renderChannel(key, ch) {
       </div>
       ${isOn ? `
       <div class="add-row">
-        <input type="time" data-input="schedule" placeholder="HH:MM" style="width:130px;">
+        <input type="time" data-input="schedule" placeholder="H:MM" style="width:130px;">
         <input type="number" data-input="schedule_pulse" placeholder="ms" min="100" step="100" style="width:70px;" title="Optional pulse duration (uses channel default if empty)">
         <button class="btn btn-add" data-add="schedule">+ Add</button>
       </div>
@@ -1016,7 +1016,7 @@ function renderChannel(key, ch) {
           <button class="bulk-tab" data-tab="range" style="flex:1;padding:5px 0;background:none;border:none;border-bottom:2px solid transparent;color:var(--dim);font-size:0.75rem;cursor:pointer;">Range</button>
         </div>
         <div class="bulk-panel" data-panel="paste">
-          <textarea data-input="bulk_paste" rows="3" placeholder="One per line: HH:MM [pulse_ms]&#10;08:00&#10;09:00 5000&#10;10:30" style="width:100%;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);font:0.8rem monospace;padding:6px 8px;resize:vertical;box-sizing:border-box;"></textarea>
+          <textarea data-input="bulk_paste" rows="3" placeholder="One per line: H:MM [pulse_ms]&#10;8:00&#10;9:00 5000&#10;10:30" style="width:100%;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);font:0.8rem monospace;padding:6px 8px;resize:vertical;box-sizing:border-box;"></textarea>
           <button class="btn btn-add" data-action="bulk-add" style="margin-top:6px;width:100%;">Add All</button>
         </div>
         <div class="bulk-panel" data-panel="range" style="display:none;">
@@ -1112,12 +1112,14 @@ function renderChannel(key, ch) {
       btn.onclick = () => {
         const list = btn.dataset.add;
         const inp = div.querySelector(`[data-input="${list}"]`);
-        const val = inp.value.trim();
+        let val = inp.value.trim();
         if (!val) return;
         if (list === 'schedule') {
-          if (!/^\d{2}:\d{2}$/.test(val)) { toast('Format: HH:MM', true); return; }
-          const [h,m] = val.split(':').map(Number);
+          if (!/^\d{1,2}:\d{2}$/.test(val)) { toast('Format: H:MM', true); return; }
+          const parts = val.split(':');
+          const h = parseInt(parts[0], 10), m = parseInt(parts[1], 10);
           if (h<0||h>23||m<0||m>59) { toast('Invalid time', true); return; }
+          val = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
         }
         if (list === 'schedule') {
           const pulseInp = div.querySelector('[data-input="schedule_pulse"]');
@@ -1195,10 +1197,12 @@ function renderChannel(key, ch) {
         cancelBtn.onclick = (e2) => { e2.stopPropagation(); renderAll(schedule); };
 
         const doSave = () => {
-          const newTime = timeInp.value.trim();
-          if (!/^\d{2}:\d{2}$/.test(newTime)) { toast('Format: HH:MM', true); return; }
-          const [h,m] = newTime.split(':').map(Number);
+          let newTime = timeInp.value.trim();
+          if (!/^\d{1,2}:\d{2}$/.test(newTime)) { toast('Format: H:MM', true); return; }
+          const parts = newTime.split(':');
+          const h = parseInt(parts[0], 10), m = parseInt(parts[1], 10);
           if (h<0||h>23||m<0||m>59) { toast('Invalid time', true); return; }
+          newTime = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
           const dup = ch.schedule.some((v, i2) => {
             if (i2 === idx) return false;
             return (typeof v === 'string' ? v : (v && v.time || '')) === newTime;
@@ -1286,10 +1290,12 @@ function renderChannel(key, ch) {
         line = line.trim();
         if (!line || line.startsWith('#')) continue;
         const parts = line.split(/\s+/);
-        const timeStr = parts[0];
-        if (!/^\d{2}:\d{2}$/.test(timeStr)) continue;
-        const [h, m] = timeStr.split(':').map(Number);
+        let timeStr = parts[0];
+        if (!/^\d{1,2}:\d{2}$/.test(timeStr)) continue;
+        const tp = timeStr.split(':');
+        const h = parseInt(tp[0], 10), m = parseInt(tp[1], 10);
         if (h < 0 || h > 23 || m < 0 || m > 59) continue;
+        timeStr = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
         const pulseMs = parts[1] ? parseInt(parts[1]) : 0;
         entries.push({ time: timeStr, pulse_ms: pulseMs >= 100 ? pulseMs : 0 });
       }
