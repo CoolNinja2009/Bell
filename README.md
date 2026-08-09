@@ -1,6 +1,6 @@
 # Relay Controller
 
-ESP32-based multi-channel relay controller with WiFi, NTP time sync, auto-updating Node.js server, and a profile-driven web dashboard. **11,069 lines** across 49 files (C++ firmware + Node.js backend + dashboard UI).
+ESP32-based multi-channel relay controller with WiFi, NTP time sync, auto-updating Node.js server, and a profile-driven web dashboard. **~11,000 lines** across 48 files (C++ firmware + Node.js backend + dashboard UI).
 
 ## Hardware
 
@@ -95,19 +95,20 @@ Relays fire **only** on confirmed schedule times or explicit "Run Now" commands:
 
 **Resetting WiFi:** Hold the BOOT button (GPIO0) for 5 seconds at any time — erases SSID, password, and provisioned server IP. All other settings (schedules, RTC) are preserved. Non-blocking, runs concurrent with normal operation.
 
-## Deployment (Windows PC)
+## Deployment
 
 ### One-time setup
 
-On a fresh school PC, run `setup.bat` once. It installs Node.js and Git via `winget`, clones the repository, and runs the first bootstrap.
+On a fresh PC, run the setup script once. It installs Node.js and Git, clones the repository, and runs the first bootstrap.
 
-```
-setup.bat
-```
+| Platform | Script |
+|----------|--------|
+| Windows  | `setup.bat` |
+| Linux / Raspberry Pi | `setup.sh` |
 
 ### Every boot
 
-Add `start.bat` to Windows Startup. It runs `bootstrap.js` which:
+Add `start.bat` (Windows) or `start.sh` (Linux) to your system's startup. It runs `bootstrap.js` which:
 
 - Verifies Node.js, Git, PM2, and the repository
 - Checks GitHub for updates (only during startup)
@@ -115,6 +116,7 @@ Add `start.bat` to Windows Startup. It runs `bootstrap.js` which:
 - Installs dependencies only when `package.json` changed
 - Starts or restarts the server via PM2
 - Health-checks `GET /health` — rolls back on failure
+- Checks mDNS / LAN reachability (Linux only, auto-installs avahi-daemon)
 - Exits — only PM2 and the server remain running
 
 ```
@@ -138,7 +140,44 @@ start.bat  →  bootstrap.js  →  PM2 + server
 Updating repository...
 Health check........ PASS
 Server online.
-Dashboard: http://localhost:8080
+Dashboard: http://my-pi.local:8080
+           http://192.168.0.104:8080
+```
+
+### CLI flags
+
+Both `start.bat` and `start.sh` support these flags for scripting and remote management:
+
+| Flag | Effect |
+|------|--------|
+| *(none)* | Full bootstrap: check for updates, start server |
+| `--update` | `git fetch` + `git reset --hard origin/main`, then restart the server |
+| `--restart` | `pm2 restart relay-server` (skip bootstrap — fast restart) |
+
+### Stopping the server
+
+```bash
+# Windows
+stop.bat
+
+# Linux
+./stop.sh
+```
+
+Both stop the PM2-managed server process. The ESP32 continues running its last-known schedule.
+
+### mDNS / LAN hostname (Linux)
+
+On Linux, the bootstrap auto-configures mDNS so you can reach the dashboard at `http://<hostname>.local:8080` instead of remembering an IP address. It:
+
+- Detects and optionally auto-installs `avahi-daemon` via `apt`
+- Verifies `<hostname>.local` resolves to the LAN IP
+- Confirms the health endpoint is reachable via mDNS
+
+If `sudo` requires a password, the auto-install is skipped — install manually:
+
+```bash
+sudo apt-get install -y avahi-daemon
 ```
 
 ### Manual (Raspberry Pi / Linux)
@@ -162,11 +201,33 @@ pm2 set pm2-logrotate:compress true
 
 > **Important**: The server must be running when crossing midnight for day-of-week profile transitions to work. The ESP32 fetches the active profile from the server on every poll; if the server is down at midnight, the ESP32 continues ringing the previous day's schedule until the server returns.
 
-Configure timezone in `src/bell_core.h` and fallback server IP in `src/network_sync.h`:
+### Time zone
+
+The firmware timezone is set in `src/bell_core.h`. **This MUST be changed before deploying outside India.** The offset is seconds EAST of UTC (POSIX convention).
+
+| Region | UTC Offset | `GMT_OFFSET_SEC` |
+|--------|-----------|-------------------|
+| India (IST) | UTC+5:30 | `19800` *(default)* |
+| UK (GMT/BST) | UTC+0 / +1 | `0` (or `3600` for BST) |
+| US Eastern | UTC-5 / -4 | `-18000` (or `-14400` for EDT) |
+| US Central | UTC-6 / -5 | `-21600` (or `-18000` for CDT) |
+| US Pacific | UTC-8 / -7 | `-28800` (or `-25200` for PDT) |
+| Japan (JST) | UTC+9 | `32400` |
+| Australia East (AEST) | UTC+10 | `36000` |
+| UAE / Gulf | UTC+4 | `14400` |
+
+To calculate: `GMT_OFFSET_SEC = (hours * 3600) + (minutes * 60)`. Example for UTC+5:30 → `5*3600 + 30*60 = 19800`.
+
+If your region observes Daylight Saving Time, you'll need to toggle `DAYLIGHT_SEC` seasonally or set `GMT_OFFSET_SEC` to the standard-time offset and handle DST elsewhere.
 
 ```cpp
-constexpr long GMT_OFFSET_SEC = 19800;  // seconds from UTC (India = 19800)
+// src/bell_core.h
+constexpr long GMT_OFFSET_SEC = 19800;   // India IST = UTC+5:30
+constexpr long DAYLIGHT_SEC   = 0;       // set to 3600 for DST
 ```
+
+Also set the fallback server IP in `src/network_sync.h` if the server has a static address on your network.
+
 
 
 ## OTA Firmware Updates
@@ -354,8 +415,9 @@ Temporarily switch to any profile regardless of calendar. Optionally set an auto
 - **Run Now** — queue an immediate relay trigger for any channel
 - **Variable bell timings** — each schedule entry can have its own pulse duration. In the schedule array, plain `"HH:MM"` strings use the channel default; `{"time":"HH:MM","pulse_ms":N}` objects override per-entry. The ESP32 parses this directly from JSON and stores it in NVS — zero config needed on the device.
 - **Bulk add** — two tools under each channel's schedule (click "+ Bulk add"):
-  - **Paste** — paste multiple times at once, one per line (`HH:MM` or `HH:MM pulse_ms`). Skips duplicates, validates, sorts.
+  - **Paste** — paste multiple times at once, one per line (`H:MM` or `H:MM pulse_ms`). Single-digit hours accepted (e.g. `8:00` = `08:00`). Skips duplicates, validates, sorts.
   - **Range** — generate a repeating sequence ("every 45 min from 08:00 to 15:00"). Optional pulse applies to all generated entries. Great for period bells.
+- **Inline editing** — click any schedule time tag to edit it in-place
 - **Add Channel** — dynamically add new relay channels (up to 24)
 - **History & analytics** — filterable event table, 14-day runs-per-day chart, CSV export
 - **Device log** — raw ESP32 log messages in real time
@@ -364,6 +426,7 @@ Temporarily switch to any profile regardless of calendar. Optionally set an auto
 - **Settings modal** — change password, manage API keys
 - **Backup / Restore** — download or upload a full JSON snapshot
 - **Dark mode** — auto-detected from system preference, manually togglable
+- **Installable PWA** — add to home screen on Android/iOS/desktop for a native app experience, with offline support via service worker
 ### Profiles page (`/profiles`)
 
 - **Profile sidebar** — create, rename, duplicate, delete profiles
@@ -376,12 +439,14 @@ Temporarily switch to any profile regardless of calendar. Optionally set an auto
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| `GET` | `/api/schedule` | Download active profile's channels for today. Schedule entries may be plain `"HH:MM"` strings (use channel `pulse_ms`) or `{"time":"HH:MM","pulse_ms":N}` objects (per-entry override). |
+| `GET` | `/api/schedule` | Download active profile's channels for today. Schedule entries may be plain `"HH:MM"` strings (use channel `pulse_ms`) or `{"time":"HH:MM","pulse_ms":N}` objects (per-entry override). Single-digit hours (e.g. `"8:00"`) are accepted and normalized. |
 | `GET` | `/api/schedule/hash` | Quick change detection (MD5, 8 hex chars) |
 | `POST` | `/api/heartbeat?ch=ch1` | Device liveness ping per channel |
 | `POST` | `/api/log` | Device pushes a log line |
 | `GET` | `/api/commands?ch=ch1` | Poll for queued manual trigger |
 | `POST` | `/api/execution` | Optional: confirm a relay actually fired |
+| `GET` | `/api/firmware/version` | Latest firmware version + SHA-256 hash |
+| `GET` | `/api/firmware/download` | Firmware binary with HTTP Range support for resume |
 
 ### Dashboard endpoints (login required)
 
@@ -432,6 +497,8 @@ src/
 ├── bell_core.h/cpp     Relay control, schedule execution, RTC, NVS persistence
 ├── network_sync.h/cpp  WiFi, HTTP, schedule download, heartbeats, server discovery
 ├── led_indicator.h/cpp RGB LED status indicator (standalone, no network deps)
+├── ota_update.h/cpp    OTA firmware update engine (download, verify, apply)
+├── storage.h/cpp       LittleFS storage for logs and persistent state
 └── wifi_provision.h    WiFi provisioning portal (AP mode, web config)
 ```
 
@@ -443,16 +510,18 @@ src/
 - **Wi‑Fi provisioning** — configure WiFi from your phone on first boot, no hardcoded credentials
 - **Server provisioning** — optionally set a static server IP/port in the setup portal
 - **Three-tier server resolution** — UDP beacon → provisioned IP → hardcoded fallback
-- **RGB status LED** — 7 system states with color-coded breathing/blink patterns; 3s green=healthy, 3s orange=offline, 2s white=setup, cyan/blue/red for boot/sync/error
+- **mDNS auto-discovery** — bootstrap configures avahi-daemon on Linux for `http://<hostname>.local` access
+- **RGB status LED** — 11 system states with color-coded breathing/blink patterns covering boot, sync, error, and OTA phases
 - **Relay safety** — pending commands discarded on server loss; no blind HTTP polling against fallback IP; Bell Core never touches WiFi
 - **20s server-loss detection** — UDP beacon timeout detects offline server within 4 missed beacons
 - **BOOT button factory reset** — hold GPIO0 for 5s to erase network credentials
 - **Zero-config discovery** — UDP beacon on flat networks
+- **OTA firmware updates** — push to GitHub → ESP32 updates itself next boot; SHA‑256 verified, auto-rollback, resume support
 - **Profile-based scheduling** — multiple named schedules with calendar-based daily rotation
 - **Calendar assignments** — date-specific and day-of-week profile mapping
 - **Manual override** — temporarily switch profiles with optional auto-expiry
 - **Variable bell timings** — per-entry pulse durations in schedule arrays; ESP32 parses directly, no config
-- **Bulk schedule entry** — paste or generate repeating time sequences to fill schedules fast
+- **Bulk schedule entry** — paste or generate repeating time sequences; single-digit hours accepted (`8:00` = `08:00`)
 - **Multi-channel** — any number of relay channels (up to 24), not just ch1/ch2
 - **Channel on/off** — disable a channel to grey it out and lock editing; save and toggle remain functional
 - **Manual trigger** — "Run Now" queues an immediate relay pulse
@@ -462,7 +531,10 @@ src/
 - **API keys** — mint scoped tokens for external integrations (Home Assistant, cron, etc.)
 - **Password-protected dashboard** — bcrypt-hashed, changeable in-app or via `reset_password.js`
 - **Dark mode** — auto-detected from system preference, manually togglable
+- **Installable PWA** — add to home screen on mobile/desktop; offline support via service worker
 - **NVS persistence** — survives ESP32 reboots without server
 - **Optional RTC** — DS1307/DS3231/DS3232 keeps time through network outages
 - **Per-channel control** — custom pulse width, time schedules, skip dates
+- **CLI management** — `--update` pulls latest from git, `--restart` restarts the server
+- **Multi-platform scripts** — `.bat` (Windows) and `.sh` (Linux) for setup, start, stop
 - **Non-blocking** — no `delay()`, deterministic loop, 24/7 safe
