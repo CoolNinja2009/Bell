@@ -12,6 +12,9 @@
  * This script EXITS after completing startup. Only PM2 and the server remain.
  */
 const path = require('path');
+const os = require('os');
+const dns = require('dns');
+const cp = require('child_process');
 
 // ── Internal modules ──────────────────────────────────────────────────
 const config = require('./config');
@@ -92,12 +95,23 @@ function phaseHeader(text) {
 
 /**
  * Print final status.
+ * @param {{ lanIp: string, portStr: string, mdnsHost: string, mdnsOk: boolean } | null} mdnsInfo
  */
-function printServerOnline() {
-  const port = config.health.url.match(/:(\d+)/);
-  const portStr = port ? port[1] : '8080';
+function printServerOnline(mdnsInfo) {
+  let portStr = mdnsInfo && mdnsInfo.portStr;
+  if (!portStr) {
+    const m = config.health.url.match(/:(\d+)/);
+    portStr = m ? m[1] : '8080';
+  }
   console.log(`\nServer online.`);
-  console.log(`Dashboard: http://localhost:${portStr}`);
+  if (mdnsInfo && mdnsInfo.mdnsOk) {
+    console.log(`Dashboard: http://${mdnsInfo.mdnsHost}:${portStr}`);
+    console.log(`           http://${mdnsInfo.lanIp}:${portStr}`);
+  } else if (mdnsInfo) {
+    console.log(`Dashboard: http://${mdnsInfo.lanIp}:${portStr}`);
+  } else {
+    console.log(`Dashboard: http://localhost:${portStr}`);
+  }
   console.log();
 }
 
@@ -124,6 +138,18 @@ function sleep(ms) {
 
 function isoNow() {
   return new Date().toISOString();
+}
+
+// ── Network helpers ────────────────────────────────────────────────────
+
+function getLocalIPv4() {
+  const ifaces = os.networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    for (const iface of ifaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) return iface.address;
+    }
+  }
+  return '127.0.0.1';
 }
 
 
@@ -657,6 +683,154 @@ function saveState(currentCommit, previousCommit, status) {
   }
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 6: mDNS / LAN reachability
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Check avahi-daemon, mDNS resolution, and mDNS HTTP reachability.
+ * Attempts to auto-install avahi-daemon on Linux with apt if missing.
+ * All failures are non-fatal — mDNS is a nice-to-have.
+ * @returns {{ lanIp: string, portStr: string, mdnsHost: string, mdnsOk: boolean }}
+ */
+async function checkMdnsReachability() {
+  const lanIp = getLocalIPv4();
+  const portMatch = config.health.url.match(/:(\d+)/);
+  const portStr = portMatch ? portMatch[1] : '8080';
+  const hostname = os.hostname();
+  const mdnsHost = `${hostname}.local`;
+
+  phaseHeader('Phase 6: mDNS / LAN reachability');
+
+  // ── 1. avahi-daemon ──────────────────────────────────────────────
+  let avahiActive = false;
+
+  // Check if installed (dpkg -s is Debian/Ubuntu/Raspberry Pi OS specific)
+  const installed = cp.spawnSync('dpkg', ['-s', 'avahi-daemon'], {
+    timeout: 5000,
+    stdio: 'pipe',
+    windowsHide: true,
+  });
+  const isInstalled = installed.status === 0;
+
+  if (!isInstalled) {
+    checkLine(false, 'avahi-daemon', 'not installed');
+
+    // Auto-install: only on Linux with apt
+    const isLinux = process.platform === 'linux';
+    const aptCheck = isLinux
+      ? cp.spawnSync('command', ['-v', 'apt-get'], { timeout: 5000, stdio: 'pipe', windowsHide: true })
+      : { status: 1 };
+    const hasApt = aptCheck.status === 0;
+
+    if (!isLinux || !hasApt) {
+      checkLine(false, 'avahi-daemon', 'skipped (not Linux / no apt)');
+    } else {
+      const steps = [
+        { args: ['-n', 'apt-get', 'update', '-qq'], label: 'apt-get update' },
+        { args: ['-n', 'apt-get', 'install', '-y', 'avahi-daemon'], label: 'install avahi-daemon' },
+        { args: ['-n', 'systemctl', 'enable', '--now', 'avahi-daemon'], label: 'enable avahi-daemon' },
+      ];
+
+      let installFailed = false;
+      let sudoDenied = false;
+
+      for (const step of steps) {
+        if (installFailed) break;
+        const r = cp.spawnSync('sudo', step.args, {
+          timeout: 60000,
+          stdio: 'pipe',
+          windowsHide: true,
+        });
+
+        if (r.status !== 0) {
+          installFailed = true;
+          const stderr = (r.stderr || '').toString().trim();
+          const isSudoDenied = stderr.includes('a password is required') ||
+                               stderr.includes('not allowed to execute') ||
+                               stderr.includes('sudo:');
+          if (isSudoDenied) sudoDenied = true;
+        } else {
+          checkLine(true, step.label, 'OK');
+          logToFile(BOOTSTRAP_LOG, `mDNS install step OK: ${step.label}`);
+        }
+      }
+
+      if (installFailed) {
+        if (sudoDenied) {
+          const username = os.userInfo().username;
+          checkLine(false, 'avahi-daemon', 'auto-install needs passwordless sudo — see below');
+          logToFile(BOOTSTRAP_LOG, 'avahi-daemon auto-install failed: sudo requires password');
+          console.log('');
+          console.log(`  To enable auto-install of avahi-daemon, add this to /etc/sudoers.d/bell-avahi`);
+          console.log(`  (run \`sudo visudo -f /etc/sudoers.d/bell-avahi\`):`);
+          console.log(`    ${username} ALL=(ALL) NOPASSWD: /usr/bin/apt-get, /usr/bin/systemctl enable --now avahi-daemon`);
+          console.log(`  Or just install it once manually: sudo apt-get install -y avahi-daemon`);
+          console.log('');
+        } else {
+          checkLine(false, 'avahi-daemon', 'auto-install failed');
+          logToFile(BOOTSTRAP_LOG, 'avahi-daemon auto-install failed (non-sudo error)');
+        }
+      } else {
+        // Install succeeded — re-check active status
+        checkLine(true, 'avahi-daemon', 'installed');
+        const activeCheck = cp.spawnSync('systemctl', ['is-active', 'avahi-daemon'], {
+          timeout: 5000,
+          stdio: 'pipe',
+          windowsHide: true,
+        });
+        avahiActive = (activeCheck.stdout || '').toString().trim() === 'active';
+        checkLine(avahiActive, 'avahi-daemon', avahiActive ? 'active' : 'inactive');
+      }
+    }
+  } else {
+    // Installed — check if active
+    const activeCheck = cp.spawnSync('systemctl', ['is-active', 'avahi-daemon'], {
+      timeout: 5000,
+      stdio: 'pipe',
+      windowsHide: true,
+    });
+    const status = (activeCheck.stdout || '').toString().trim();
+    avahiActive = status === 'active';
+    checkLine(avahiActive, 'avahi-daemon', avahiActive ? 'active' : (status || 'inactive'));
+  }
+
+  // ── 2. mDNS resolution ───────────────────────────────────────────
+  let mdnsResolvedIp = null;
+  if (avahiActive) {
+    try {
+      mdnsResolvedIp = await new Promise((resolve, reject) => {
+        dns.lookup(mdnsHost, { family: 4 }, (err, address) => {
+          if (err) reject(err);
+          else resolve(address);
+        });
+      });
+      const matchesLan = mdnsResolvedIp === lanIp;
+      checkLine(matchesLan, 'mDNS resolution', `${mdnsHost} → ${mdnsResolvedIp}${matchesLan ? '' : ' (≠ LAN)'}`);
+      logToFile(BOOTSTRAP_LOG, `mDNS resolution: ${mdnsHost} → ${mdnsResolvedIp} (LAN: ${lanIp})`);
+    } catch (e) {
+      checkLine(false, 'mDNS resolution', `${mdnsHost} — ${e.code || 'unresolved'}`);
+      logToFile(BOOTSTRAP_LOG, `mDNS resolution FAILED: ${mdnsHost} — ${e.code || e.message}`);
+    }
+  } else {
+    checkLine(false, 'mDNS resolution', 'skipped (avahi not active)');
+  }
+
+  // ── 3. mDNS HTTP ─────────────────────────────────────────────────
+  let mdnsHttpOk = false;
+  if (mdnsResolvedIp) {
+    const mdnsUrl = `http://${mdnsHost}:${portStr}/health`;
+    mdnsHttpOk = await healthSvc.checkOnce(mdnsUrl, config.health.timeoutMs);
+    checkLine(mdnsHttpOk, 'mDNS HTTP', mdnsUrl);
+    logToFile(BOOTSTRAP_LOG, `mDNS HTTP check: ${mdnsUrl} — ${mdnsHttpOk ? 'PASS' : 'FAIL'}`);
+  } else {
+    checkLine(false, 'mDNS HTTP', 'skipped (no mDNS resolution)');
+  }
+
+  const mdnsOk = !!(mdnsResolvedIp && mdnsHttpOk);
+  return { lanIp, portStr, mdnsHost, mdnsOk };
+}
 // ═══════════════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════════════
@@ -761,11 +935,15 @@ async function main() {
     logToFile(HEALTH_LOG, 'Health check PASS');
   }
 
+
+  // --- Phase 6: mDNS / LAN reachability ---
+  const mdnsInfo = await checkMdnsReachability();
+
   // --- Save state ---
   saveState(finalSha, prevState.currentCommit, finalStatus);
 
   // --- Done ---
-  printServerOnline();
+  printServerOnline(mdnsInfo);
   logToFile(BOOTSTRAP_LOG, `Bootstrap complete — status: ${finalStatus}`);
 }
 
