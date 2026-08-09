@@ -49,6 +49,7 @@ static WiFiUDP   g_udp;
 
 static bool      s_was_server_seen    = false;
 static bool      g_server_config_loaded = false;
+static bool      s_was_connected       = false;
 
 // Timing state
 static uint32_t  g_wifi_last_attempt   = 0;
@@ -192,7 +193,7 @@ static bool fetch_schedule() {
                 Serial.println(F("NET: first server config loaded"));
                 g_server_config_loaded = true;
             } else {
-                DBGLN(F("NET: schedule updated from server"));
+                Serial.println(F("NET: schedule updated from server"));
             }
             return true;
         }
@@ -409,6 +410,7 @@ void network_sync_tick() {
     }
     // ── WiFi watchdog ──────────────────────────────────
     if (WiFi.status() != WL_CONNECTED) {
+        s_was_connected = false;
         if (elapsed_since(g_wifi_last_attempt) >= WIFI_RETRY_MS) {
             static bool s_first_wifi_failure = true;
             if (s_first_wifi_failure) {
@@ -419,7 +421,10 @@ void network_sync_tick() {
             g_wifi_last_attempt = now_ms;
         }
     } else {
-        g_wifi_last_attempt = now_ms;
+        if (!s_was_connected) {
+            Serial.println(F("WiFi: connected"));
+            s_was_connected = true;
+        }
     }
 
     // ── Schedule sync ──────────────────────────────────
