@@ -14,8 +14,10 @@ const fs = require('fs');
 const path = require('path');
 
 const HISTORY_FILE = path.join(__dirname, '..', 'history.jsonl');
-const MAX_ENTRIES = 5000; // trim threshold
-const TRIM_CHECK_EVERY = 25; // check file size every N appends (avoid stat-ing every write)
+const MAX_ENTRIES        = 5000;   // entry-count ceiling
+const MAX_FILE_SIZE      = 10 * 1024 * 1024; // 10 MiB — hard filesystem ceiling (well under 400 MB)
+const TRIM_CHECK_EVERY   = 25;     // check every N appends
+const TRIM_AGGRESSIVE    = 2000;   // target entry count when MAX_FILE_SIZE is breached
 
 let appendsSinceTrim = 0;
 
@@ -54,15 +56,36 @@ function readAllRaw() {
   return out;
 }
 
-/** Keep only the most recent MAX_ENTRIES lines. */
+/** Check file size + entry count. Trim if either limit is breached.
+ *  When file size exceeds MAX_FILE_SIZE we trim to TRIM_AGGRESSIVE
+ *  entries instead of MAX_ENTRIES to give headroom. */
 function trimIfNeeded() {
+  let ceiling = MAX_ENTRIES;
+
+  // File-size guard — if the file somehow blew past the ceiling
+  // (e.g. MAX_ENTRIES was raised temporarily, or entries grew huge),
+  // drop to an aggressive target to protect the Pi's filesystem.
+  try {
+    const stat = fs.statSync(HISTORY_FILE);
+    if (stat.size > MAX_FILE_SIZE) {
+      console.log(`[history] File size ${(stat.size / 1024 / 1024).toFixed(1)} MiB > ${MAX_FILE_SIZE / 1024 / 1024} MiB limit — aggressive trim to ${TRIM_AGGRESSIVE} entries`);
+      ceiling = TRIM_AGGRESSIVE;
+    }
+  } catch (_) { /* file missing — nothing to trim */ return; }
+
   const all = readAllRaw();
-  if (all.length <= MAX_ENTRIES) return;
-  const trimmed = all.slice(all.length - MAX_ENTRIES);
+  if (all.length <= ceiling) return;
+
+  const trimmed = all.slice(all.length - ceiling);
   const tmp = HISTORY_FILE + '.tmp';
   fs.writeFileSync(tmp, trimmed.map((r) => JSON.stringify(r)).join('\n') + '\n');
   fs.renameSync(tmp, HISTORY_FILE);
+  console.log(`[history] Trimmed ${all.length - trimmed.length} entries → ${trimmed.length} (ceiling: ${ceiling})`);
 }
+
+// ── Startup: force a size check on module load so a previously-unbounded
+//    file doesn't sit around bloated until the next append-triggered trim.
+trimIfNeeded();
 
 /**
  * Read history with optional filters.
