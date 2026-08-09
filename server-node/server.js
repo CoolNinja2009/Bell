@@ -1188,6 +1188,23 @@ server.listen(PORT, HOST, () => {
 
 });
 
+// ── Daily restart at 16:30 local time ──────────────────────────────
+// PM2 restarts the process when it exits, so process.exit(0)
+// gives us a clean daily recycle without manual intervention.
+(function scheduleDailyRestart() {
+  const H = 16, M = 30; // 4:30 PM
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(H, M, 0, 0);
+  if (target <= now) target.setDate(target.getDate() + 1);
+  const ms = target - now;
+  log(`[server] Daily restart scheduled for ${target.toISOString()} (${(ms / 3600000).toFixed(1)}h from now)`);
+  setTimeout(() => {
+    log('[server] Daily restart — exiting cleanly, PM2 will bring me back');
+    process.exit(0);
+  }, ms).unref();
+})();
+
 // Graceful shutdown on SIGTERM/SIGINT (e.g. `systemctl stop`, Ctrl+C)
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, () => {
