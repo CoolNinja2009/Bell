@@ -35,6 +35,11 @@
 /** One‑shot: call once during setup(). No WiFi / server dependency. */
 void ota_init();
 
+/** Call once per loop() iteration. Defers rollback-cancel until the
+ *  scheduler is ready AND OTA_BOOT_CONFIRM_DELAY_MS has elapsed.
+ *  Non‑blocking; becomes a no‑op after first confirmation. */
+void ota_confirm_boot_if_stable();
+
 /** Non‑blocking tick. Call every loop() iteration.
  *  Returns true while an update is in progress (caller may choose to
  *  suppress network poll timers to avoid contention). */
