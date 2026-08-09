@@ -58,6 +58,9 @@ void loop() {
         s_booting_released = true;
     }
 
+    // OTA boot confirmation — defers rollback cancel until scheduler ready + stable uptime
+    ota_confirm_boot_if_stable();
+
     // LED tick last — applies blink patterns for current state
     led_indicator_tick();
 }

@@ -50,6 +50,7 @@ constexpr uint32_t OTA_CHUNK_TIMEOUT_MS     = 15000;    // HTTP timeout per chun
 constexpr uint32_t OTA_CHUNK_SIZE           = 4096;     // bytes per loop tick
 constexpr uint32_t OTA_RESUME_RETRY_MS      = 5000;     // backoff after a failed chunk
 constexpr uint32_t OTA_DAILY_CHECK_INTERVAL_MS = 86400000;  // 24 h between periodic checks
+constexpr uint32_t OTA_BOOT_CONFIRM_DELAY_MS = 90000;   // 90 s — defer rollback cancel until this much stable uptime
 
 // ── NVS keys ───────────────────────────────────────────────────────
 static const char OTA_NVS_NS[]      = "ota";
@@ -510,11 +511,21 @@ void ota_init() {
     if (g_last_sha256[0]) {
         Serial.printf("[OTA] Last applied SHA‑256: %.16s...\n", g_last_sha256);
     }
-    // Boot confirmation: tell ESP-IDF the current image is good
-    // (this resets the rollback counter — if we booted, we're stable)
-    esp_ota_mark_app_valid_cancel_rollback();
 }
 
+
+void ota_confirm_boot_if_stable() {
+    static bool confirmed = false;
+    if (confirmed) return;
+
+    if (!bell_core_is_scheduler_ready()) return;
+
+    if (millis() < OTA_BOOT_CONFIRM_DELAY_MS) return;
+
+    esp_ota_mark_app_valid_cancel_rollback();
+    Serial.println("[OTA] Boot confirmed stable — rollback protection cancelled");
+    confirmed = true;
+}
 bool ota_tick() {
     switch (g_state) {
     case OtaState::IDLE: {
