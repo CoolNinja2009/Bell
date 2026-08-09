@@ -10,7 +10,7 @@
 module.exports = {
   apps: [
     {
-      name: 'relay-server',
+      name: require('./config').pm2.processName,
       script: 'server.js',
       cwd: __dirname,
       instances: 1,

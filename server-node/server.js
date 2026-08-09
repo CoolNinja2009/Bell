@@ -49,36 +49,35 @@ const calendar = require('./lib/calendar');
 const profileSettings = require('./lib/settings');
 const profileScheduler = require('./lib/profile-scheduler');
 // ---------------------------------------------------------------------------
-// Config
+const config = require('./config');
+
+// Config — sourced from config/index.js
 // ---------------------------------------------------------------------------
-const HOST = '0.0.0.0';
-const PORT = 8080;
+const HOST = config.server.host;
+const PORT = config.server.port;
 const SCHEDULE_FILE = path.join(__dirname, 'schedule.json'); // legacy — kept for migration
 const PROFILES_TPL = path.join(__dirname, 'templates', 'profiles.html');
-const PROFILE_REFRESH_INTERVAL_MS = 60000; // check every minute for midnight rollover
-const BEACON_PORT = 9999;
-const BEACON_INTERVAL_MS = 5000;
+const PROFILE_REFRESH_INTERVAL_MS = config.profileRefresh.intervalMs;
+const BEACON_PORT = config.beacon.port;
+const BEACON_INTERVAL_MS = config.beacon.intervalMs;
 const BEACON_MSG = Buffer.from(`RELAY_CTRL:${PORT}\n`);
 const INDEX_TPL = path.join(__dirname, 'templates', 'index.html');
 const LOGIN_TPL = path.join(__dirname, 'templates', 'login.html');
 
-const MANIFEST_PATH = path.join(__dirname, 'manifest.json');
-const SW_PATH = path.join(__dirname, 'sw.js');
-const ICON_192_PATH = path.join(__dirname, 'icon-192.png');
-const ICON_512_PATH = path.join(__dirname, 'icon-512.png');
-const BELL_SVG_PATH = path.join(__dirname, 'bell.svg');
+const MANIFEST_PATH = config.pwaAssets.manifest;
+const SW_PATH = config.pwaAssets.sw;
+const ICON_192_PATH = config.pwaAssets.icon192;
+const ICON_512_PATH = config.pwaAssets.icon512;
+const BELL_SVG_PATH = config.pwaAssets.bellSvg;
 
-const CHANNEL_KEY_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,19}$/; // must start with a letter
-const MAX_CHANNELS = 24;
+const CHANNEL_KEY_RE = new RegExp(config.channels.keyPattern); // must start with a letter
+const MAX_CHANNELS = config.channels.maxChannels;
 
 // ── OTA Firmware ───────────────────────────────────────────────────
-// The server caches the latest firmware binary from GitHub Releases.
-// Set FIRMWARE_REPO to your GitHub "owner/repo". On first request the
-const FIRMWARE_REPO       = process.env.FIRMWARE_REPO       || 'CoolNinja2009/Bell';
-// it locally. Subsequent requests serve the cached copy.
-const FIRMWARE_ASSET_NAME  = process.env.FIRMWARE_ASSET_NAME  || 'firmware.bin';
-const FIRMWARE_CACHE_DIR   = path.join(__dirname, '.firmware_cache');
-const FIRMWARE_TTL_MS      = 30 * 60 * 1000; // re-check GitHub every 30 min
+const FIRMWARE_REPO       = config.firmware.repo;
+const FIRMWARE_ASSET_NAME  = config.firmware.assetName;
+const FIRMWARE_CACHE_DIR   = config.firmware.cacheDir;
+const FIRMWARE_TTL_MS      = config.firmware.ttlMs; // re-check GitHub every 30 min
 let   firmwareCache        = null; // { version, sha256, size, path, fetchedAt }
 
 // ---------------------------------------------------------------------------
