@@ -437,9 +437,6 @@ src/
 
 **Bell Core** never touches WiFi — it's the highest-priority subsystem. If the network module crashes, bells continue ringing from NVS-persisted schedules. **LED Indicator** is similarly independent — it reflects state but never affects relay operation.
 
-## BLE client (alternative discovery)
-
-`esp32/ble_client/` contains an alternative ESP32 sketch that discovers the server via BLE advertisement instead of UDP beacon. See `esp32/ble_client/README.md` for setup.
 
 ## Features
 

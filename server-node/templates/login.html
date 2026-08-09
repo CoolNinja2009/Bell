@@ -1,7 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <link rel="icon" type="image/svg+xml" href="/bell.svg">
 <meta charset="UTF-8">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#00a87a">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Relay Controller — Login</title>
 <style>
@@ -119,5 +122,12 @@
   </div>
 
 <footer class="site-footer">&#x1F514; Built from silicon to server. &mdash; Chinmayakeshav</footer>
+
+<!-- ── Service Worker ─────────────────────────────────────────────── -->
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js', { scope: '/' });
+}
+</script>
 </body>
 </html>
