@@ -102,8 +102,19 @@ static void load_nvs() {
     if (prefs.begin(OTA_NVS_NS, true)) {
         String v = prefs.getString(OTA_KEY_VER, "");
         if (v.length() > 0) {
-            strncpy(g_current_ver, v.c_str(), sizeof(g_current_ver) - 1);
-            g_current_ver[sizeof(g_current_ver) - 1] = '\0';
+            // Reject old-format versions (e.g. "2026.0811.c9aa525").
+            // Only accept clean integer versions from NVS.
+            // This prevents stale NVS data from masking a freshly
+            // flashed firmware version.
+            const char *s = v.c_str();
+            bool clean = true;
+            for (size_t i = 0; s[i]; i++) {
+                if (s[i] < '0' || s[i] > '9') { clean = false; break; }
+            }
+            if (clean) {
+                strncpy(g_current_ver, v.c_str(), sizeof(g_current_ver) - 1);
+                g_current_ver[sizeof(g_current_ver) - 1] = '\0';
+            }
         }
         String s = prefs.getString(OTA_KEY_SHA, "");
         if (s.length() > 0) {
