@@ -5,12 +5,8 @@
  * Stores in settings.json:
  *   - active_profile: the currently active profile ID (resolved daily)
  *   - default_profile: fallback when no calendar assignment matches
- *   - manual_override: profile ID when dashboard override is active
- *   - override_until: optional ISO date for auto-expiry
- *   - override_date: YYYY-MM-DD when the override was set (cleared on day change)
- *
- * Overrides are persisted to file so they survive server restarts.
- * Midnight rollover clears them (handled by server.js setInterval).
+ *   - manual_override: temporary override profile ID (or null)
+ *   - override_until: ISO date string (null = until disabled)
  */
 const fs = require('fs');
 const path = require('path');
@@ -29,7 +25,6 @@ function defaults() {
     default_profile: null,
     manual_override: null,
     override_until: null,
-    override_date: null,
   };
 }
 
@@ -46,56 +41,40 @@ function load() {
 function save(data) {
   writeFileAtomic(SETTINGS_FILE, JSON.stringify(data, null, 2));
 }
-/** Get all settings — returns persisted state.
- *  Auto-clears expired override and stale (previous-day) overrides. */
-function getSettings() {
-  const s = load();
 
-  // Auto-clear expired override
+/** Get all settings. */
+function getSettings() {
+  // Auto-clear expired overrides
+  const s = load();
   if (s.manual_override && s.override_until) {
     const until = new Date(s.override_until);
     if (!isNaN(until.getTime()) && until <= new Date()) {
       s.manual_override = null;
       s.override_until = null;
-      s.override_date = null;
       save(s);
     }
   }
-
-  // Auto-clear stale override (set on a previous day)
-  if (s.manual_override && s.override_date) {
-    const today = new Date().toISOString().slice(0, 10);
-    if (s.override_date !== today) {
-      s.manual_override = null;
-      s.override_until = null;
-      s.override_date = null;
-      save(s);
-    }
-  }
-
   return s;
 }
 
-/** Set manual override to a profile ID (persisted, survives restart).
- *  `until` is an optional ISO date for auto-expiry. */
+/** Set manual override to a profile ID. `until` is an optional ISO date. */
 function setOverride(profileId, until) {
   const s = load();
   s.manual_override = profileId || null;
   s.override_until = until || null;
-  s.override_date = profileId ? new Date().toISOString().slice(0, 10) : null;
   if (profileId) {
+    // If overriding, also set as active
     s.active_profile = profileId;
   }
   save(s);
   return s;
 }
 
-/** Clear manual override. */
+/** Clear manual override, forcing re-resolution on next cycle. */
 function clearOverride() {
   const s = load();
   s.manual_override = null;
   s.override_until = null;
-  s.override_date = null;
   save(s);
   return s;
 }

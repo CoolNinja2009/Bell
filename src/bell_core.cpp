@@ -47,7 +47,7 @@ static Channel    g_ch2{ CH2_RELAY_PIN, CH2_SERVER_KEYS, sizeof(CH2_SERVER_KEYS)
 // NVS
 static const char NVS_NS[] = "relay";
 static char       g_cfg_hash[9] = {0};
-static char       g_raw_config[2048] = {0};
+static String     g_raw_config;
 static bool       g_nvs_has_config = false;
 
 // RTC
@@ -250,7 +250,7 @@ static void nvs_save_config() {
     Preferences prefs;
     prefs.begin(NVS_NS, false);
     prefs.putString("hash", g_cfg_hash);
-    prefs.putString("cfg",  String(g_raw_config));
+    prefs.putString("cfg",  g_raw_config);
     prefs.end();
     g_nvs_has_config = true;
     DBGLN(F("[NVS] config saved"));
@@ -260,15 +260,14 @@ static bool nvs_load_config() {
     Preferences prefs;
     prefs.begin(NVS_NS, true);
     String hash = prefs.getString("hash", "");
-    String cfg = prefs.getString("cfg", "");
-    strncpy(g_raw_config, cfg.c_str(), 2047);
-    g_raw_config[2047] = '\0';
-    if (hash.length() == 0 || g_raw_config[0] == '\0') return false;
+    g_raw_config = prefs.getString("cfg", "");
+    prefs.end();
+    if (hash.length() == 0 || g_raw_config.length() == 0) return false;
     strncpy(g_cfg_hash, hash.c_str(), 8);
     g_cfg_hash[8] = '\0';
     g_nvs_has_config = true;
     DBGF("[NVS] loaded config  hash=%s  bytes=%u\n", g_cfg_hash,
-         static_cast<unsigned>(strlen(g_raw_config)));
+         static_cast<unsigned>(g_raw_config.length()));
     return true;
 }
 
@@ -420,13 +419,8 @@ static bool parse_channel_cfg(JsonObject root, ChannelCfg &cfg) {
     JsonArray sched = root["schedule"];
     cfg.schedule_len = 0;
     if (sched) {
-        size_t total = 0;
         for (JsonVariant v : sched) {
-            if (cfg.schedule_len >= MAX_SCHEDULE) {
-                ++total;  // count but don't parse
-                continue;
-            }
-            ++total;
+            if (cfg.schedule_len >= MAX_SCHEDULE) break;
             const char *t = nullptr;
             uint32_t    sm = 0xFFFFFFFF;
             uint32_t    entry_pulse = cfg.pulse_ms;  // default to channel pulse
@@ -455,10 +449,6 @@ static bool parse_channel_cfg(JsonObject root, ChannelCfg &cfg) {
             cfg.schedule[pos] = sm;
             cfg.schedule_pulse_ms[pos] = entry_pulse;
             ++cfg.schedule_len;
-        }
-        if (total > MAX_SCHEDULE) {
-            Serial.printf("WARNING: schedule truncated — %u entries, only %u fit (MAX_SCHEDULE=%u)\n",
-                          static_cast<unsigned>(total), static_cast<unsigned>(MAX_SCHEDULE), static_cast<unsigned>(MAX_SCHEDULE));
         }
     }
 
@@ -559,15 +549,15 @@ static bool apply_raw_schedule(const char *raw_json, const char *hash_8chars) {
 
     // Update hash and persist
     strncpy(g_cfg_hash, hash_8chars, 8);
-    strncpy(g_raw_config, raw_json, 2047);
-    g_raw_config[2047] = '\0';
+    g_cfg_hash[8] = '\0';
+    g_raw_config = raw_json;
 
     // Persist to NVS
     {
         Preferences prefs;
         prefs.begin(NVS_NS, false);
         prefs.putString("hash", g_cfg_hash);
-        prefs.putString("cfg",  String(g_raw_config));
+        prefs.putString("cfg",  g_raw_config);
         prefs.end();
         g_nvs_has_config = true;
     }

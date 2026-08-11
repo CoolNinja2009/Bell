@@ -424,19 +424,17 @@ void network_sync_tick() {
         if (!s_was_connected) {
             Serial.println(F("WiFi: connected"));
             s_was_connected = true;
-            // Trigger fallback HTTP check immediately
-            g_fallback_attempt_ms = 0;
         }
     }
 
     // ── Schedule sync ──────────────────────────────────
-    // Fallback HTTP: try immediately when WiFi connects, retry every 3s
+    // ── Initial fallback: no beacon after 10s → try HTTP against fallback IP ──
     if (!g_server_seen && WiFi.status() == WL_CONNECTED
-        && elapsed_since(g_fallback_attempt_ms) >= 3000U) {
+        && elapsed_since(g_fallback_attempt_ms) >= 10000U) {
         g_fallback_attempt_ms = now_ms;
         WiFiClient fc;
         HTTPClient hc;
-        hc.setTimeout(2000);
+        hc.setTimeout(3000);
         String url = server_base_url() + "/api/schedule/hash";
         if (hc.begin(fc, url) && hc.GET() == 200) {
             g_server_seen = true;

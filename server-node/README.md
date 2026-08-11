@@ -136,8 +136,7 @@ server-node/
 ├── package.json
 │
 ├── config/
-│   ├── bell.conf          Human-readable settings (edit this file)
-│   └── index.js           Reads bell.conf, exports structured config
+│   └── index.js           Bootstrap configuration (80 lines)
 │
 ├── lib/
 │   ├── profiles.js        Profile CRUD + import/export (222 lines)
@@ -184,45 +183,28 @@ server-node/
 
 ---
 
-All settings live in one file: **`config/bell.conf`** — edit it, restart, done.
-No more hunting through source code for constants.
+## Configuration
 
-### Quick reference
+### server.js constants
 
-| Section | Key | Default | What it does |
-|---|---|---|---|
-| `[Repository]` | `url` | `github.com/.../Bell.git` | Where updates come from |
-| | `remote` | `origin` | Git remote name |
-| | `branch` | `main` | Branch to track |
-| | `fetch_retries` | `3` | Retry git fetch N times |
-| | `fetch_retry_delay` | `5` s | Wait between fetch retries |
-| `[PM2]` | `process_name` | `relay-server` | Name in `pm2 list` (auto-wired to ecosystem) |
-| | `startup_grace` | `5` s | Wait after restart before health check |
-| `[Health]` | `url` | `http://127.0.0.1:8080/health` | Endpoint checked on startup |
-| | `timeout` | `10` s | Per-attempt timeout |
-| | `retries` | `10` | Health check attempts |
-| | `retry_delay` | `2` s | Wait between retries |
-| `[Logging]` | `max_log_size` | `1048576` (1 MB) | Rotate log files at this size |
-| | `max_log_files` | `5` | Keep N rotated backups |
-| `[Server]` | `host` | `0.0.0.0` | Listen on all interfaces |
-| | `port` | `8080` | Dashboard + API port |
-| `[Beacon]` | `port` | `9999` | UDP broadcast for ESP32 discovery |
-| | `interval_ms` | `5000` | Broadcast every 5 seconds |
-| `[ProfileRefresh]` | `interval_ms` | `60000` | Check for profile changes every minute |
-| `[Channels]` | `max_channels` | `24` | Max relay channels |
-| | `key_pattern` | regex | Valid channel name format (letter first, max 20 chars) |
-| `[Firmware]` | `repo` | `CoolNinja2009/Bell` | GitHub repo for OTA firmware |
-| | `asset_name` | `firmware.bin` | File to download from release |
-| | `cache_minutes` | `30` | Re-check GitHub when ESP32 asks (auto) |
-| `[Cron]` | `daily_check` | `30 16 * * *` | Daily restart at 4:30 PM |
-| | `update_command` | `cd {root} && ...` | Cron shell command (`{root}` auto-filled) |
+| Constant | Default | Purpose |
+|----------|---------|---------|
+| `PORT` | `8080` | HTTP listen port |
+| `HOST` | `0.0.0.0` | Bind address |
+| `BEACON_PORT` | `9999` | UDP broadcast port |
+| `BEACON_INTERVAL_MS` | `5000` | Beacon broadcast interval |
+| `BEACON_MSG` | `RELAY_CTRL:8080\n` | Beacon payload |
+| `HEARTBEAT_TTL_MS` | `120000` | Heartbeat staleness threshold (2 min) |
+| `COMMAND_TTL_MS` | `300000` | Pending command expiry (5 min) |
+| `MAX_LOG_ENTRIES` | `100` | Device log ring buffer size |
+| `MAX_CHANNELS` | `24` | Maximum relay channels |
+| `CHANNEL_KEY_RE` | `/^[a-zA-Z][a-zA-Z0-9_-]{0,19}$/` | Valid channel key pattern |
+| `PROFILE_REFRESH_INTERVAL_MS` | `60000` | Midnight rollover check interval |
+| `FIRMWARE_REPO` | `CoolNinja2009/Bell` | GitHub repo for OTA firmware |
+| `FIRMWARE_ASSET_NAME` | `firmware.bin` | Asset name in release |
+| `FIRMWARE_TTL_MS` | `1800000` | Firmware cache TTL (30 min) |
 
-### How it works
-
-- `config/index.js` reads `bell.conf` on startup, applies defaults for anything missing, and exports structured config to `server.js`, `bootstrap.js`, and `ecosystem.config.js`.
-- If `bell.conf` is missing, the JS defaults kick in — same values, server runs fine.
-- **Firmware repo/asset can also be set via environment variables** (`FIRMWARE_REPO`, `FIRMWARE_ASSET_NAME`) — env vars win over the conf file.
-- The `{root}` placeholder in `update_command` resolves to the actual server directory path automatically.
+All can be overridden via environment variables: `FIRMWARE_REPO`, `FIRMWARE_ASSET_NAME`.
 
 ### Session configuration
 
@@ -808,15 +790,12 @@ The download endpoint parses `Range: bytes=N-M` headers and serves partial conte
 
 ### Configuration
 
-Firmware repo and asset name are set in `config/bell.conf` under `[Firmware]`.
-You can also override them via environment variables for CI/deployment:
+| Env Var | Default | Purpose |
+|---------|---------|---------|
+| `FIRMWARE_REPO` | `CoolNinja2009/Bell` | GitHub owner/repo |
+| `FIRMWARE_ASSET_NAME` | `firmware.bin` | Release asset filename |
 
-| Env Var | Conf key | Default | Purpose |
-|---|---|---|---|
-| `FIRMWARE_REPO` | `repo` | `CoolNinja2009/Bell` | GitHub owner/repo |
-| `FIRMWARE_ASSET_NAME` | `asset_name` | `firmware.bin` | Release asset filename |
-
-Env vars take priority over the conf file. The server uses the **latest release** (via `listReleases` with `per_page=1`) — not `getLatestRelease` which skips prereleases.
+The server uses the **latest release** (via `listReleases` with `per_page=1`) — not `getLatestRelease` which skips prereleases.
 
 ---
 
@@ -1072,13 +1051,13 @@ If no profiles exist at all (fresh install):
 
 Bootstrap-only (not loaded by server.js):
 - `pm2` — Process manager (system dependency, not in package.json)
+
 ---
 
 ## Environment Variables
 
-Most settings live in `config/bell.conf`. These env vars override specific values for CI/deployment:
-
-| Variable | Overrides conf key | Default |
-|---|---|---|
-| `FIRMWARE_REPO` | `[Firmware]` `repo` | `CoolNinja2009/Bell` |
-| `FIRMWARE_ASSET_NAME` | `[Firmware]` `asset_name` | `firmware.bin` |
+| Variable | Default | Used by |
+|----------|---------|---------|
+| `FIRMWARE_REPO` | `CoolNinja2009/Bell` | server.js |
+| `FIRMWARE_ASSET_NAME` | `firmware.bin` | server.js |
+| `PORT` | — | (use PM2 ecosystem.config.js or pass to node) |

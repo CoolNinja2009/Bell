@@ -947,8 +947,8 @@ async function main() {
 
   // --- Phase 7: Daily restart cron (4:30 PM) ---
   try {
-    const cronCmd = config.cron.updateCommandTemplate.replace('{root}', config.paths.root);
-    const cronEntry = `${config.cron.dailyCheckTime} ${cronCmd}`;
+    const cronCmd = 'cd /home/bell/Bell/server-node && bash start.sh --update >> /tmp/bell-cron.log 2>&1';
+    const cronEntry = `30 16 * * * ${cronCmd}`;
     const { stdout: existing } = await execAsync('crontab -l 2>/dev/null || true');
     if (!existing.includes('start.sh --update')) {
       await execAsync(`(crontab -l 2>/dev/null || true; echo "${cronEntry}") | crontab -`);
