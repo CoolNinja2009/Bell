@@ -17,3 +17,8 @@ esp32/ble_client/
 
 # OTA firmware cache
 server-node/.firmware_cache/
+
+# Test artifacts from development
+cookies*.txt
+schedule_payload.json
+*.tmp

@@ -24,7 +24,7 @@ constexpr bool     RELAY_ACTIVE_HIGH = false;  // false → LOW = relay closed
 // ============================================================================
 //  CAPACITY
 // ============================================================================
-constexpr size_t MAX_SCHEDULE   = 24;
+constexpr size_t MAX_SCHEDULE   = 48;
 constexpr size_t MAX_SKIP_DATES = 32;
 constexpr size_t MAX_CH_KEY     = 21;  // channel key max length + null
 

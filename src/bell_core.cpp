@@ -420,8 +420,13 @@ static bool parse_channel_cfg(JsonObject root, ChannelCfg &cfg) {
     JsonArray sched = root["schedule"];
     cfg.schedule_len = 0;
     if (sched) {
+        size_t total = 0;
         for (JsonVariant v : sched) {
-            if (cfg.schedule_len >= MAX_SCHEDULE) break;
+            if (cfg.schedule_len >= MAX_SCHEDULE) {
+                ++total;  // count but don't parse
+                continue;
+            }
+            ++total;
             const char *t = nullptr;
             uint32_t    sm = 0xFFFFFFFF;
             uint32_t    entry_pulse = cfg.pulse_ms;  // default to channel pulse
@@ -450,6 +455,10 @@ static bool parse_channel_cfg(JsonObject root, ChannelCfg &cfg) {
             cfg.schedule[pos] = sm;
             cfg.schedule_pulse_ms[pos] = entry_pulse;
             ++cfg.schedule_len;
+        }
+        if (total > MAX_SCHEDULE) {
+            Serial.printf("WARNING: schedule truncated — %u entries, only %u fit (MAX_SCHEDULE=%u)\n",
+                          static_cast<unsigned>(total), static_cast<unsigned>(MAX_SCHEDULE), static_cast<unsigned>(MAX_SCHEDULE));
         }
     }
 
