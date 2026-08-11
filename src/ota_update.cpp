@@ -124,27 +124,13 @@ static void save_nvs_version() {
 }
 
 static int version_cmp(const char* a, const char* b) {
-    for (;;) {
-        // Parse next dotted numeric component from each side.
-        unsigned long na = 0;
-        while (*a >= '0' && *a <= '9') { na = na * 10 + (unsigned long)(*a - '0'); a++; }
-        unsigned long nb = 0;
-        while (*b >= '0' && *b <= '9') { nb = nb * 10 + (unsigned long)(*b - '0'); b++; }
-
-        if (na < nb) return -1;
-        if (na > nb) return  1;
-
-        // Both exhausted at the same time → equal.
-        if (*a == '\0' && *b == '\0') return 0;
-
-        // Either side hit a non-numeric suffix (e.g. "-beta", ".git.abc").
-        // Suffixes are ignored — treat as equal.
-        if ((*a && *a != '.') || (*b && *b != '.')) return 0;
-
-        // Advance past the dot separator for the next component.
-        if (*a == '.') a++;
-        if (*b == '.') b++;
-    }
+    // Simple linear version: "1" < "2" < "3" ...
+    // Larger integer = newer firmware. Non-numeric prefixes are ignored.
+    long na = atol(a);
+    long nb = atol(b);
+    if (na < nb) return -1;
+    if (na > nb) return  1;
+    return 0;
 }
 
 // ── State entry ────────────────────────────────────────────────────
@@ -235,7 +221,7 @@ static void tick_check_version() {
     String body = http.getString();
     http.end();
 
-    // Parse: {"version":"1.2.3","size":786432,"sha256":"abc...64 hex chars"}
+    // Parse: {"version":"5","size":786432,"sha256":"abc...64 hex chars"}
     const char* p = body.c_str();
 
     // Extract version

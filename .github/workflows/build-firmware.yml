@@ -50,9 +50,13 @@ jobs:
         id: version
         run: |
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Tagged release: "v3" → version "3"
             VER="${GITHUB_REF#refs/tags/v}"
+            echo "is_release=true" >> $GITHUB_OUTPUT
           else
-            VER="$(date +%Y.%m%d).${GITHUB_SHA::7}"
+            # Push to main: dev build, version "0" (never auto-updated to)
+            VER="0"
+            echo "is_release=false" >> $GITHUB_OUTPUT
           fi
           echo "version=$VER" >> $GITHUB_OUTPUT
           echo "Building firmware v$VER"
@@ -71,8 +75,8 @@ jobs:
           SHA=$(sha256sum firmware.bin | awk '{print $1}')
           echo "sha256=$SHA" >> $GITHUB_OUTPUT
           echo "SHA-256: $SHA"
-
-      - name: Create / Update GitHub Release
+      - name: Create GitHub Release
+        if: steps.version.outputs.is_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           name: "v${{ steps.version.outputs.version }}"
@@ -88,10 +92,13 @@ jobs:
             | Target   | ESP32 DevKit (`esp32dev`) |
 
             ### Auto-OTA
-            ESP32 devices check every morning (3 AM local time) for new firmware.
-            If a newer version is found, they download, verify SHA-256, and apply
-            the update automatically — no manual intervention needed.
+            Devices poll the server daily. If a newer version is found
+            (larger integer = newer), they download, verify SHA-256,
+            and apply the update automatically.
 
-            Just push to `main`. That's it.
-          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+            ### Creating a release
+            ```sh
+            git tag v${{ steps.version.outputs.version }}
+            git push origin v${{ steps.version.outputs.version }}
+            ```
           generate_release_notes: true
