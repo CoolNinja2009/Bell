@@ -158,3 +158,16 @@ void bell_core_log(const char *msg);
 
 /** Pop the next pending log message. Returns true if available. */
 bool bell_core_pop_log(char *msg_out, size_t msg_max);
+
+
+// ============================================================================
+//  MUTEX API  —  for cross-task synchronization with network module
+// ============================================================================
+
+/** Acquire the Bell Core mutex. Blocks until available.
+ *  The network task MUST hold this mutex when calling any Bell Core
+ *  function that touches ring buffers, ChannelCfg, or g_cfg_hash. */
+void bell_core_lock();
+
+/** Release the Bell Core mutex. */
+void bell_core_unlock();

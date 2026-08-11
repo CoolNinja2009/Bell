@@ -11,6 +11,9 @@
  *   - This file has ZERO WiFi, HTTP, or JSON dependencies.
  */
 #include "bell_core.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+
 #include <RTClib.h>
 #include <sys/time.h>
 #include <esp_sntp.h>
@@ -57,6 +60,12 @@ static bool       g_rtc_present = false;
 static time_t     g_last_known_time       = 0;
 static uint32_t   g_time_stall_since      = 0;
 static uint32_t   g_last_schedule_refresh = 0;
+
+// ============================================================================
+//  CROSS-TASK SYNCHRONIZATION
+// ============================================================================
+static SemaphoreHandle_t g_mutex = nullptr;
+static bool s_schedule_dirty = false;  // set by apply_schedule, cleared by bell_core_tick
 static uint32_t   g_last_rtc_sync         = 0;
 static bool       s_schedules_seeded      = false;
 static bool       s_ntp_confirmed         = false;
@@ -134,6 +143,7 @@ static bool today_str(char buf[11]) {
     const time_t now = time(nullptr);
     if (now == s_cached_at && s_cached[0]) {
         memcpy(buf, s_cached, 11);
+
         return true;
     }
     s_cached_at = now;
@@ -143,6 +153,20 @@ static bool today_str(char buf[11]) {
     memcpy(buf, s_cached, 11);
     return true;
 }
+// ============================================================================
+//  MUTEX IMPLEMENTATION
+// ============================================================================
+
+void bell_core_lock() {
+    if (g_mutex) xSemaphoreTake(g_mutex, portMAX_DELAY);
+}
+
+void bell_core_unlock() {
+    if (g_mutex) xSemaphoreGive(g_mutex);
+}
+
+// Forward declaration — used by trigger_channel_now / tick_channel (above its definition)
+static void log_to_buffer_locked(const char *msg);
 
 // ============================================================================
 //  RTC DRIVER  (DS1307 / DS3231 / DS3232 compatible)
@@ -332,11 +356,20 @@ static void trigger_channel_now(Channel &ch, uint32_t pulse_ms,
     led_pulse_bell(pulse_ms);
     ch.active_pulse_ms = pulse_ms;
 
-    // Log locally
-    char logmsg[128];
-    snprintf(logmsg, sizeof(logmsg), "%s ON (%lums, %s)", ch_key,
-             static_cast<unsigned long>(pulse_ms), trigger);
-    bell_core_log(logmsg);
+    // Log locally (caller holds g_mutex; use internal helper)
+    {
+        char logmsg[128];
+        snprintf(logmsg, sizeof(logmsg), "%s ON (%lums, %s)", ch_key,
+                 static_cast<unsigned long>(pulse_ms), trigger);
+        // Serial output
+        time_t n = time(nullptr);
+        struct tm t;
+        if (localtime_r(&n, &t))
+            Serial.printf("[%02d:%02d:%02d] %s\n", t.tm_hour, t.tm_min, t.tm_sec, logmsg);
+        else
+            Serial.println(logmsg);
+        log_to_buffer_locked(logmsg);
+    }
 
     // Queue execution report for network module
     uint8_t next = (g_report_write + 1) % 8;
@@ -362,9 +395,18 @@ static bool tick_channel(Channel &ch, const time_t now) {
             relay_write(ch.pin, false);
             ch.phase       = Phase::IDLE;
             ch.active_pulse_ms = 0;
-            char logmsg[64];
-            snprintf(logmsg, sizeof(logmsg), "%s OFF", primary_channel_key(ch));
-            bell_core_log(logmsg);
+            // Log locally (caller holds g_mutex; use internal helper)
+            {
+                char logmsg[64];
+                snprintf(logmsg, sizeof(logmsg), "%s OFF", primary_channel_key(ch));
+                time_t n = time(nullptr);
+                struct tm t;
+                if (localtime_r(&n, &t))
+                    Serial.printf("[%02d:%02d:%02d] %s\n", t.tm_hour, t.tm_min, t.tm_sec, logmsg);
+                else
+                    Serial.println(logmsg);
+                log_to_buffer_locked(logmsg);
+            }
             if (time_is_valid() && ch.next_fire > 0) {
                 recompute_next_fire(ch, now + 1);
             }
@@ -535,7 +577,8 @@ static bool apply_raw_schedule(const char *raw_json, const char *hash_8chars) {
         }
     }
 
-    // ATOMIC SWAP — all validation passed, now apply
+    // ATOMIC SWAP under mutex — all validation passed, now apply
+    bell_core_lock();
     g_ch1.cfg = tmp_ch1.cfg;
     g_ch2.cfg = tmp_ch2.cfg;
     if (ch1_ok) {
@@ -562,14 +605,9 @@ static bool apply_raw_schedule(const char *raw_json, const char *hash_8chars) {
         g_nvs_has_config = true;
     }
 
-    // Recompute next fire times
-    const time_t now = time(nullptr);
-    if (time_is_valid()) {
-        recompute_next_fire(g_ch1, now);
-        recompute_next_fire(g_ch2, now);
-        s_schedules_seeded = true;
-        g_last_schedule_refresh = millis();
-    }
+    // Defer next_fire recompute to bell_core_tick — avoids cross-task race
+    s_schedule_dirty = true;
+    bell_core_unlock();
 
     DBGF("[CORE] schedule applied — hash=%s  ch1_ok=%d  ch2_ok=%d\n",
          g_cfg_hash, ch1_ok, ch2_ok);
@@ -632,6 +670,10 @@ void bell_core_init() {
     g_last_rtc_sync = millis();
 
     Serial.println(F("Bell Core ready."));
+
+    // --- 6. Cross-task mutex ---
+    g_mutex = xSemaphoreCreateMutex();
+    if (!g_mutex) Serial.println(F("FATAL: mutex creation failed"));
 }
 
 void bell_core_tick() {
@@ -665,6 +707,21 @@ void bell_core_tick() {
         && elapsed_since(g_last_rtc_sync) >= RTC_RESYNC_MS) {
         rtc_sync_from_system();
         g_last_rtc_sync = now_ms;
+    }
+
+    // ── Shared-state section: everything below touches cfg or ring buffers ──
+    bell_core_lock();
+
+    // ── Deferred schedule recompute (from network task) ─────────
+    if (s_schedule_dirty) {
+        const time_t now2 = time(nullptr);
+        if (time_is_valid()) {
+            recompute_next_fire(g_ch1, now2);
+            recompute_next_fire(g_ch2, now2);
+            s_schedules_seeded = true;
+            g_last_schedule_refresh = now_ms;
+        }
+        s_schedule_dirty = false;
     }
 
     // ── NTP first-sync correction ───────────────────────────────
@@ -731,6 +788,8 @@ void bell_core_tick() {
     // ── Tick both channels ──────────────────────────────────────
     tick_channel(g_ch1, now);
     tick_channel(g_ch2, now);
+
+    bell_core_unlock();
 }
 
 // ============================================================================
@@ -747,18 +806,22 @@ bool bell_core_apply_schedule(const char *raw_json, const char *hash_8chars) {
 
 void bell_core_queue_command(const char *ch_key, uint32_t pulse_ms) {
     if (!ch_key || pulse_ms < 100) return;
+    bell_core_lock();
     uint8_t next = (g_cmd_write + 1) % 4;
-    if (next == g_cmd_read) return;  // buffer full — drop command
+    if (next == g_cmd_read) { bell_core_unlock(); return; }  // buffer full — drop command
     PendingCommand &cmd = g_pending_cmds[g_cmd_write];
     strncpy(cmd.ch_key, ch_key, MAX_CH_KEY - 1);
     cmd.ch_key[MAX_CH_KEY - 1] = '\0';
     cmd.pulse_ms = pulse_ms;
     cmd.pending = true;
     g_cmd_write = next;
+    bell_core_unlock();
 }
 
 void bell_core_discard_commands() {
+    bell_core_lock();
     g_cmd_read  = g_cmd_write;
+    bell_core_unlock();
 }
 
 // ============================================================================
@@ -772,20 +835,25 @@ const char *bell_core_channel_key(uint8_t ch_index) {
 }
 
 const char *bell_core_schedule_hash() {
-    return g_cfg_hash;
+    bell_core_lock();
+    const char *h = g_cfg_hash;
+    bell_core_unlock();
+    return h;
 }
 
 bool bell_core_pop_execution_report(char *ch_key_out, size_t ch_key_max,
                                      uint32_t *pulse_ms_out, const char **trigger_out) {
-    if (g_report_read == g_report_write) return false;
+    bell_core_lock();
+    if (g_report_read == g_report_write) { bell_core_unlock(); return false; }
     ExecReport &r = g_exec_reports[g_report_read];
-    if (!r.pending) return false;
+    if (!r.pending) { bell_core_unlock(); return false; }
     strncpy(ch_key_out, r.ch_key, ch_key_max - 1);
     ch_key_out[ch_key_max - 1] = '\0';
     *pulse_ms_out = r.pulse_ms;
     *trigger_out = r.trigger;
     r.pending = false;
     g_report_read = (g_report_read + 1) % 8;
+    bell_core_unlock();
     return true;
 }
 
@@ -793,17 +861,8 @@ bool bell_core_pop_execution_report(char *ch_key_out, size_t ch_key_max,
 //  PUBLIC API — Logging
 // ============================================================================
 
-void bell_core_log(const char *msg) {
-    // Serial output (always)
-    time_t now = time(nullptr);
-    struct tm t;
-    if (localtime_r(&now, &t)) {
-        Serial.printf("[%02d:%02d:%02d] %s\n", t.tm_hour, t.tm_min, t.tm_sec, msg);
-    } else {
-        Serial.println(msg);
-    }
-
-    // Ring buffer for network module
+// Internal: push a log message to the ring buffer. Caller MUST hold g_mutex.
+static void log_to_buffer_locked(const char *msg) {
     uint8_t next = (g_log_write + 1) % LOG_BUF_SIZE;
     if (next != g_log_read) {  // not full
         strncpy(g_log_buf[g_log_write], msg, 127);
@@ -812,11 +871,29 @@ void bell_core_log(const char *msg) {
     }
 }
 
+void bell_core_log(const char *msg) {
+    // Serial output (always) — no lock needed
+    time_t now = time(nullptr);
+    struct tm t;
+    if (localtime_r(&now, &t)) {
+        Serial.printf("[%02d:%02d:%02d] %s\n", t.tm_hour, t.tm_min, t.tm_sec, msg);
+    } else {
+        Serial.println(msg);
+    }
+
+    // Ring buffer for network module — protect with mutex
+    bell_core_lock();
+    log_to_buffer_locked(msg);
+    bell_core_unlock();
+}
+
 bool bell_core_pop_log(char *msg_out, size_t msg_max) {
-    if (g_log_read == g_log_write) return false;
+    bell_core_lock();
+    if (g_log_read == g_log_write) { bell_core_unlock(); return false; }
     strncpy(msg_out, g_log_buf[g_log_read], msg_max - 1);
     msg_out[msg_max - 1] = '\0';
     g_log_read = (g_log_read + 1) % LOG_BUF_SIZE;
+    bell_core_unlock();
     return true;
 }
 
@@ -828,6 +905,7 @@ int32_t bell_core_next_fire_s() {
     if (!time_is_valid()) return INT32_MAX;
     time_t now = time(nullptr);
     int32_t best = INT32_MAX;
+    bell_core_lock();
     if (g_ch1.next_fire > 0 && g_ch1.cfg.enabled) {
         time_t raw = g_ch1.next_fire - now;
         if (raw >= 0 && raw <= INT32_MAX) {
@@ -842,5 +920,6 @@ int32_t bell_core_next_fire_s() {
             if (d < best) best = d;
         }
     }
+    bell_core_unlock();
     return best;
 }

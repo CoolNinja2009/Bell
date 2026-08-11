@@ -2,15 +2,15 @@
  * main.cpp  —  ESP32 Dual‑Channel Relay Controller
  * ─────────────────────────────────────────────────────────────────
  * Minimal glue. Initialises the Bell Management Core first (so bells
- * can ring from NVS immediately), then starts network synchronisation.
+ * can ring from NVS immediately), then starts network synchronisation
+ * on a dedicated FreeRTOS task (core 0).
  *
- * Architecture:
- *   bell_core.h/cpp     — Relay control, schedule execution, RTC, NVS
- *   network_sync.h/cpp  — WiFi, HTTP, schedule download, heartbeats
- *   led_indicator.h     — RGB LED status (standalone, no network deps)
+ * Architecture (dual-core):
+ *   core 1 (loop):  bell_core_tick → ota_tick → led_indicator_tick
+ *   core 0 (task):  network_sync_task_fn — all HTTP I/O
  *
- * These modules are independent. The Bell Core never touches WiFi.
- * If the network module crashes, bells continue ringing.
+ * The Bell Core never touches WiFi. Network I/O never blocks the Bell
+ * Core. If the network module crashes, bells continue ringing.
  *
  * LED lifecycle:
  *   BOOTING → requested before any init, released when scheduler ready
@@ -42,11 +42,10 @@ void setup() {
 }
 
 void loop() {
-    // Bell Core ticks first — highest priority
+    // Bell Core ticks first — highest priority, never blocked by network I/O
     bell_core_tick();
 
-    // Network sync ticks second — can fail freely
-    network_sync_tick();
+    // Network sync runs on its own FreeRTOS task (core 0) — no tick needed here
 
     // OTA tick — non-blocking; downloads firmware in background
     ota_tick();
