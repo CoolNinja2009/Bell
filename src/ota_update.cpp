@@ -56,6 +56,10 @@ constexpr uint32_t OTA_BOOT_CONFIRM_DELAY_MS = 90000;   // 90 s — defer rollba
 static const char OTA_NVS_NS[]      = "ota";
 static const char OTA_KEY_VER[]     = "version";
 static const char OTA_KEY_SHA[]     = "sha256";
+
+static inline uint32_t elapsed_since(uint32_t t0) {
+    return millis() - t0;
+}
 // ── State machine ──────────────────────────────────────────────────
 enum class OtaState : uint8_t {
     IDLE,
@@ -304,6 +308,11 @@ static void tick_download() {
 
     int32_t next_s = bell_core_next_fire_s();
     if (next_s >= 0 && next_s < (int32_t)OTA_BELL_SAFE_WINDOW_S) {
+        static uint32_t s_last_bell_pause_log = 0;
+        if (elapsed_since(s_last_bell_pause_log) >= 30000) {
+            s_last_bell_pause_log = millis();
+            Serial.printf("[OTA] Paused — bell in %ds\n", next_s);
+        }
         g_dl_retry_at_ms = millis() + 30000;
         return;
     }
@@ -315,7 +324,8 @@ static void tick_download() {
             enter_state(OtaState::ERROR);
             return;
         }
-        Serial.printf("[OTA] Downloading %u bytes...\n", g_server_size);
+        Serial.printf("[OTA] Downloading %u bytes (%u KB)...\n",
+                      g_server_size, g_server_size / 1024);
     }
 
     String url = String(network_server_base_url()) + "/api/firmware/download?v=" + g_server_ver;
@@ -323,6 +333,7 @@ static void tick_download() {
     HTTPClient http;
     http.setTimeout(OTA_CHUNK_TIMEOUT_MS);
     if (!http.begin(client, url)) {
+        Serial.println(F("[OTA] HTTP begin failed — retrying"));
         g_dl_retry_at_ms = millis() + OTA_RESUME_RETRY_MS;
         http.end();
         return;
@@ -333,6 +344,7 @@ static void tick_download() {
 
     int code = http.GET();
     if (code != 200 && code != 206) {
+        Serial.printf("[OTA] Server returned %d — retrying\n", code);
         http.end();
         g_dl_retry_at_ms = millis() + OTA_RESUME_RETRY_MS;
         return;
@@ -340,6 +352,7 @@ static void tick_download() {
 
     WiFiClient* stream = http.getStreamPtr();
     if (!stream || !stream->connected()) {
+        Serial.println(F("[OTA] Stream not connected — retrying"));
         http.end();
         g_dl_retry_at_ms = millis() + OTA_RESUME_RETRY_MS;
         return;
@@ -366,8 +379,14 @@ static void tick_download() {
             return;
         }
         g_bytes_written += written;
-        if (g_bytes_written % 65536 == 0 || g_bytes_written >= g_server_size) {
-            Serial.printf("[OTA] Progress: %u / %u bytes\n", g_bytes_written, g_server_size);
+        // Progress every 5% or 64KB, whichever is more frequent
+        static uint32_t s_last_progress = 0;
+        uint32_t pct = (uint32_t)((uint64_t)g_bytes_written * 100 / g_server_size);
+        if (pct > 0 && (g_bytes_written % 65536 == 0 || g_bytes_written >= g_server_size
+                        || elapsed_since(s_last_progress) >= 2000)) {
+            s_last_progress = millis();
+            Serial.printf("[OTA] %3u%%  %u / %u KB\n",
+                          pct, g_bytes_written / 1024, g_server_size / 1024);
         }
     }
 
@@ -379,6 +398,7 @@ static void tick_download() {
     http.end();
 
     if (!done && chunk_read == 0) {
+        Serial.println(F("[OTA] Read 0 bytes — retrying"));
         g_dl_retry_at_ms = millis() + OTA_RESUME_RETRY_MS;
         return;
     }
