@@ -5,18 +5,17 @@
  * Stores in settings.json:
  *   - active_profile: the currently active profile ID (resolved daily)
  *   - default_profile: fallback when no calendar assignment matches
+ *   - manual_override: profile ID when dashboard override is active
+ *   - override_until: optional ISO date for auto-expiry
+ *   - override_date: YYYY-MM-DD when the override was set (cleared on day change)
  *
- * Manual override is session-only (in-memory, cleared on server restart).
- * Within a session, an optional `until` ISO date auto-expires the override.
+ * Overrides are persisted to file so they survive server restarts.
+ * Midnight rollover clears them (handled by server.js setInterval).
  */
 const fs = require('fs');
 const path = require('path');
 
 const SETTINGS_FILE = path.join(__dirname, '..', 'settings.json');
-
-// In-memory session-only override — cleared on server restart
-let sessionOverride = null;       // profileId or null
-let sessionOverrideUntil = null;  // ISO date string or null (within-session expiry)
 
 function writeFileAtomic(filePath, contents) {
   const tmp = filePath + '.tmp';
@@ -28,6 +27,9 @@ function defaults() {
   return {
     active_profile: null,
     default_profile: null,
+    manual_override: null,
+    override_until: null,
+    override_date: null,
   };
 }
 
@@ -44,45 +46,58 @@ function load() {
 function save(data) {
   writeFileAtomic(SETTINGS_FILE, JSON.stringify(data, null, 2));
 }
-
-/** Get all settings — merges session-only override into persisted state. */
+/** Get all settings — returns persisted state.
+ *  Auto-clears expired override and stale (previous-day) overrides. */
 function getSettings() {
   const s = load();
 
-  // Auto-clear expired session override
-  if (sessionOverride && sessionOverrideUntil) {
-    const until = new Date(sessionOverrideUntil);
+  // Auto-clear expired override
+  if (s.manual_override && s.override_until) {
+    const until = new Date(s.override_until);
     if (!isNaN(until.getTime()) && until <= new Date()) {
-      sessionOverride = null;
-      sessionOverrideUntil = null;
+      s.manual_override = null;
+      s.override_until = null;
+      s.override_date = null;
+      save(s);
     }
   }
 
-  // Merge session-only override into returned object
-  s.manual_override = sessionOverride;
-  s.override_until = sessionOverrideUntil;
+  // Auto-clear stale override (set on a previous day)
+  if (s.manual_override && s.override_date) {
+    const today = new Date().toISOString().slice(0, 10);
+    if (s.override_date !== today) {
+      s.manual_override = null;
+      s.override_until = null;
+      s.override_date = null;
+      save(s);
+    }
+  }
+
   return s;
 }
 
-/** Set manual override to a profile ID (session-only, lost on restart).
- *  `until` is an optional ISO date for within-session auto-expiry. */
+/** Set manual override to a profile ID (persisted, survives restart).
+ *  `until` is an optional ISO date for auto-expiry. */
 function setOverride(profileId, until) {
-  sessionOverride = profileId || null;
-  sessionOverrideUntil = until || null;
+  const s = load();
+  s.manual_override = profileId || null;
+  s.override_until = until || null;
+  s.override_date = profileId ? new Date().toISOString().slice(0, 10) : null;
   if (profileId) {
-    // Persist active_profile so the ESP32 schedule resolves correctly
-    const s = load();
     s.active_profile = profileId;
-    save(s);
   }
-  return getSettings();
+  save(s);
+  return s;
 }
 
-/** Clear manual override (session-only). */
+/** Clear manual override. */
 function clearOverride() {
-  sessionOverride = null;
-  sessionOverrideUntil = null;
-  return getSettings();
+  const s = load();
+  s.manual_override = null;
+  s.override_until = null;
+  s.override_date = null;
+  save(s);
+  return s;
 }
 
 /** Set the default profile. */

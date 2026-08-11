@@ -1157,6 +1157,7 @@ function bootstrap() {
     const today = profileScheduler.todayStr();
     if (today !== lastDay) {
       lastDay = today;
+      profileSettings.clearOverride();
       profileScheduler.resolveAndApply();
       log(`[server] Midnight rollover — new active profile applied`);
     }
