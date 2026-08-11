@@ -456,12 +456,23 @@ async function refreshFirmwareCache() {
     const [owner, repo] = FIRMWARE_REPO.split('/');
     if (!owner || !repo) { log('[firmware] Invalid FIRMWARE_REPO'); return firmwareCache; }
 
-    // listReleases returns newest first (including prereleases).
-    // getLatestRelease skips prereleases — would miss every branch build.
-    const { data: releases } = await octokit.rest.repos.listReleases({ owner, repo, per_page: 1 });
+    // Fetch all releases and pick the one with the highest integer version.
+    // Non-integer tags (e.g. "2026.0811.c9aa525") are ignored.
+    const { data: releases } = await octokit.rest.repos.listReleases({ owner, repo, per_page: 30 });
     if (!releases || releases.length === 0) { log('[firmware] No releases found'); return firmwareCache; }
-    const release = releases[0];
-    const tag = release.tag_name.replace(/^v/, '');
+
+    // Find the release with the highest clean-integer tag
+    let bestRelease = null, bestVer = -1;
+    for (const rel of releases) {
+      const v = rel.tag_name.replace(/^v/, '');
+      if (/^\d+$/.test(v)) {  // only pure-integer versions
+        const n = parseInt(v, 10);
+        if (n > bestVer) { bestVer = n; bestRelease = rel; }
+      }
+    }
+    if (!bestRelease) { log('[firmware] No integer-versioned release found'); return firmwareCache; }
+    const release = bestRelease;
+    const tag = String(bestVer);
 
     const asset = release.assets.find(a => a.name === FIRMWARE_ASSET_NAME);
     if (!asset) { log(`[firmware] Asset "${FIRMWARE_ASSET_NAME}" not found in release ${tag}`); return firmwareCache; }
