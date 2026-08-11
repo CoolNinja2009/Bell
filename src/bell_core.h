@@ -50,7 +50,9 @@ constexpr long    DAYLIGHT_SEC      = 0;
 // ============================================================================
 constexpr uint32_t TIME_STALL_THRESHOLD_S  = 120;
 constexpr uint32_t SCHEDULE_REFRESH_MS     = 3600000;  // hourly recompute
-
+// If the relay stays active longer than scheduled_pulse + this margin,
+// force it off. Protects against relay damage when the main loop stalls.
+constexpr uint32_t PULSE_WATCHDOG_MS     = 5000;
 // ============================================================================
 //  RTC CONFIGURATION  (DS3231 via RTClib)
 // ============================================================================

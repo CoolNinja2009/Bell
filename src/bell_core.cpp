@@ -353,26 +353,44 @@ static void trigger_channel_now(Channel &ch, uint32_t pulse_ms,
 }
 
 static bool tick_channel(Channel &ch, const time_t now) {
-    // ── Always process active pulse expiry — manual triggers
-    //     bypass schedule; relay MUST turn off after pulse_ms ──
+    // ── Active pulse ──────────────────────────────────────
     if (ch.phase == Phase::ACTIVE) {
         const uint32_t pulse_ms = ch.active_pulse_ms ? ch.active_pulse_ms
                                    : ch.cfg.schedule_pulse_ms[ch.next_fire_idx];
-        if (elapsed_since(ch.pulse_start) >= pulse_ms) {
+        const uint32_t elapsed = elapsed_since(ch.pulse_start);
+        const uint32_t max_pulse = pulse_ms + PULSE_WATCHDOG_MS;
+
+        if (elapsed >= pulse_ms) {
+            // Normal expiry — or watchdog forced expiry
             relay_write(ch.pin, false);
             ch.phase       = Phase::IDLE;
             ch.active_pulse_ms = 0;
+
             char logmsg[64];
-            snprintf(logmsg, sizeof(logmsg), "%s OFF", primary_channel_key(ch));
+            if (elapsed >= max_pulse) {
+                snprintf(logmsg, sizeof(logmsg), "%s OFF (watchdog %lums)",
+                         primary_channel_key(ch), static_cast<unsigned long>(elapsed));
+            } else {
+                snprintf(logmsg, sizeof(logmsg), "%s OFF", primary_channel_key(ch));
+            }
             bell_core_log(logmsg);
-            if (time_is_valid() && ch.next_fire > 0) {
-                recompute_next_fire(ch, now + 1);
+
+            // Catch-up: if the loop was stalled and we're past next_fire,
+            // fire the next slot immediately instead of waiting for the
+            // next tick to discover it.
+            if (time_is_valid() && ch.next_fire > 0 && now >= ch.next_fire) {
+                const size_t idx = ch.next_fire_idx;
+                const uint32_t next_pulse = (idx < ch.cfg.schedule_len)
+                    ? ch.cfg.schedule_pulse_ms[idx] : ch.cfg.pulse_ms;
+                trigger_channel_now(ch, next_pulse,
+                                    primary_channel_key(ch), "schedule");
+                recompute_next_fire(ch, now);
             }
         }
         return true;
     }
 
-    // ── Schedule-driven activation requires valid time & next_fire ──
+    // ── IDLE — schedule-driven activation ────────────────
     if (!time_is_valid() || ch.next_fire == 0) return false;
 
     if (!ch.cfg.enabled || is_skip_day(ch.cfg)) {
@@ -384,8 +402,15 @@ static bool tick_channel(Channel &ch, const time_t now) {
     }
 
     if (now >= ch.next_fire) {
-        trigger_channel_now(ch, ch.cfg.schedule_pulse_ms[ch.next_fire_idx],
+        const size_t idx = ch.next_fire_idx;
+        const uint32_t pulse = (idx < ch.cfg.schedule_len)
+            ? ch.cfg.schedule_pulse_ms[idx] : ch.cfg.pulse_ms;
+        trigger_channel_now(ch, pulse,
                             primary_channel_key(ch), "schedule");
+        // Recompute immediately — don't wait for pulse end.
+        // This ensures next_fire always points to the correct next slot
+        // even if the main loop stalls for seconds afterward.
+        recompute_next_fire(ch, now);
         return true;
     }
     return false;

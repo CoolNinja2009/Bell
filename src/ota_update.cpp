@@ -46,7 +46,7 @@
 constexpr uint32_t OTA_FIRST_CHECK_DELAY_MS = 60000;    // wait 60s after boot
 constexpr uint32_t OTA_RETRY_INTERVAL_MS    = 1800000;  // 30 min between retries
 constexpr uint32_t OTA_BELL_SAFE_WINDOW_S   = 600;      // pause OTA if bell within 10 min
-constexpr uint32_t OTA_CHUNK_TIMEOUT_MS     = 15000;    // HTTP timeout per chunk
+constexpr uint32_t OTA_CHUNK_TIMEOUT_MS     = 5000;     // HTTP timeout per chunk (was 15s)
 constexpr uint32_t OTA_CHUNK_SIZE           = 4096;     // bytes per loop tick
 constexpr uint32_t OTA_RESUME_RETRY_MS      = 5000;     // backoff after a failed chunk
 constexpr uint32_t OTA_DAILY_CHECK_INTERVAL_MS = 86400000;  // 24 h between periodic checks
@@ -200,11 +200,18 @@ static void tick_check_version() {
         return;
     }
 
+    // Don't attempt version check if server is not reachable
+    const char *base = network_server_base_url();
+    if (!base || base[0] == '\0') {
+        enter_state(OtaState::RETRY);
+        return;
+    }
+
     WiFiClient client;
     HTTPClient http;
-    http.setTimeout(8000);
+    http.setTimeout(5000);  // was 8000ms
 
-    String url = String(network_server_base_url()) + "/api/firmware/version";
+    String url = String(base) + "/api/firmware/version";
     if (!http.begin(client, url)) {
         http.end();
         enter_state(OtaState::RETRY);
