@@ -135,10 +135,17 @@ static void save_nvs_version() {
 }
 
 static int version_cmp(const char* a, const char* b) {
-    // Simple linear version: "1" < "2" < "3" ...
-    // Larger integer = newer firmware. Non-numeric prefixes are ignored.
-    long na = atol(a);
-    long nb = atol(b);
+    // Only compare clean integer versions (e.g. "1", "2", "3").
+    // Non-integer formats like "2026.0811.c9aa525" are treated as
+    // version 0 — they can never be "newer" than any real version.
+    auto clean_int = [](const char* s) -> long {
+        if (!s || !*s) return 0;
+        for (const char* p = s; *p; p++)
+            if (*p < '0' || *p > '9') return 0;
+        return atol(s);
+    };
+    long na = clean_int(a);
+    long nb = clean_int(b);
     if (na < nb) return -1;
     if (na > nb) return  1;
     return 0;
@@ -511,6 +518,10 @@ static void tick_retry() {
 
 void ota_init() {
     load_nvs();
+    // Always persist the compile-time version on boot.
+    // This overwrites any stale NVS data from a previous flash
+    // (e.g. old-format "2026.0811.c9aa525" → new "1").
+    save_nvs_version();
     Serial.printf("[OTA] Firmware version: %s\n", g_current_ver);
     if (g_last_sha256[0]) {
         Serial.printf("[OTA] Last applied SHA‑256: %.16s...\n", g_last_sha256);
