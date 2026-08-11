@@ -3,6 +3,7 @@
  */
 #include "storage.h"
 #include "bell_core.h"
+#include<EaCy.h>
 
 #include <LittleFS.h>
 
