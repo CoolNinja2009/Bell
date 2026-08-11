@@ -8,8 +8,13 @@
  * state. Its only job is to fetch validated data and hand it to
  * the Bell Management Core via bell_core_apply_schedule() and
  * bell_core_queue_command().
+ *
+ * ARCHITECTURE (dual-core FreeRTOS):
+ *   network_sync_init() spawns a task pinned to core 0 that runs
+ *   all HTTP I/O independently. The Bell Core (on core 1 / Arduino
+ *   loop) is never blocked by network operations — relay timing
+ *   remains accurate even when the server is unreachable.
  */
-#pragma once
 
 #include <Arduino.h>
 
@@ -35,14 +40,10 @@ constexpr uint32_t SNTP_SYNC_INTERVAL_MS = 900000;
 //  PUBLIC API
 // ============================================================================
 
-/** Initialise WiFi, NTP, beacon listener, and server discovery.
- *  Must be called AFTER bell_core_init(). */
+/** Initialise WiFi, NTP, beacon listener, and spawn the network I/O
+ *  task on core 0. Must be called AFTER bell_core_init().
+ *  The task runs independently — no tick function needed in loop(). */
 void network_sync_init();
-
-/** Main tick — must be called every loop() iteration.
- *  Polls for schedule changes, heartbeats, commands, and
- *  drains execution reports / log buffer. */
-void network_sync_tick();
 
 /** Current server base URL "http://<ip>:<port>", or nullptr if offline.
  *  Callers (OTA, diagnostics) can use this without knowing internals. */

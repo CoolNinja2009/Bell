@@ -13,6 +13,9 @@
  * ringing bells from NVS-stored schedules without interruption.
  */
 #include "network_sync.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
 #include "bell_core.h"
 #include "wifi_provision.h"
 #include "led_indicator.h"
@@ -55,6 +58,15 @@ static bool      s_was_connected       = false;
 static uint32_t  g_wifi_last_attempt   = 0;
 static uint32_t  g_last_poll           = 0;
 static uint32_t  g_last_command_poll   = 0;
+
+// ============================================================================
+//  FreeRTOS TASK  (core 0 — runs independently so HTTP blocks never starve bell_core)
+// ============================================================================
+static TaskHandle_t g_net_task = nullptr;
+static constexpr uint32_t NET_TASK_PERIOD_MS = 50;   // 20 Hz tick cadence
+
+// Forward declaration — used by network_sync_init before full definition
+static void network_sync_task_fn(void *param);
 static uint32_t  g_last_heartbeat      = 0;
 static uint32_t  g_last_hash_poll      = 0;
 static uint32_t  g_fallback_attempt_ms = 0;  // throttle fallback HTTP attempts
@@ -378,95 +390,119 @@ void network_sync_init() {
     g_fallback_attempt_ms = millis();  // give beacon 10s head start
     led_request_state(LedState::OFFLINE_MODE);  // server not yet discovered
 
-    Serial.println(F("Network Sync ready."));
+    // --- Spawn network I/O task on core 0 (keeps HTTP blocks off the bell core's core 1) ---
+    BaseType_t rc = xTaskCreatePinnedToCore(
+        network_sync_task_fn,      // entry point
+        "netSync",                 // debug name
+        10240,                     // stack (bytes) — needs room for HTTPClient + JSON docs
+        nullptr,                   // no parameter
+        1,                         // priority (same as Arduino loop)
+        &g_net_task,               // handle
+        0                          // core 0 — protocol core, away from Arduino loop on core 1
+    );
+    if (rc != pdPASS) {
+        Serial.println(F("FATAL: network task creation failed"));
+    }
+
+    Serial.println(F("Network Sync ready (task on core 0)."));
 }
 
-void network_sync_tick() {
-    const uint32_t now_ms = millis();
+// ── FreeRTOS task: runs on core 0, never blocks the Bell Core on core 1 ──
+static void network_sync_task_fn(void *param) {
+    (void)param;
+    TickType_t xLastWakeTime = xTaskGetTickCount();
 
-    // ── BOOT button watchdog ──────────────────────────
-    checkBootButtonReset();
+    for (;;) {
+        const uint32_t now_ms = millis();
 
-    // ── UDP beacon ─────────────────────────────────────
-    check_beacon();
+        // ── BOOT button watchdog ──────────────────────────
+        checkBootButtonReset();
 
-    // ── Beacon timeout → keep g_server_seen true so HTTP polling
-    //    continues against the fallback IP. check_beacon() will
-    //    update to the real server IP when the beacon returns.
-    if (g_server_seen && elapsed_since(g_last_beacon_ms) >= BEACON_TIMEOUT_MS) {
-        DBGLN(F("[BEACON] lost — switching to fallback IP"));
-        g_server_ip.fromString(FALLBACK_SERVER_IP);
-        g_server_port = SERVER_PORT;
-    }
+        // ── UDP beacon ─────────────────────────────────────
+        check_beacon();
 
-    // ── Server online/offline LED transitions ───────────
-    if (g_server_seen && !s_was_server_seen) {
-        led_release_state(LedState::OFFLINE_MODE);
-        s_was_server_seen = true;
-    } else if (!g_server_seen && s_was_server_seen) {
-        led_request_state(LedState::OFFLINE_MODE);
-        bell_core_discard_commands();  // safety: no stale run-now survives server loss
-        s_was_server_seen = false;
-    }
-    // ── WiFi watchdog ──────────────────────────────────
-    if (WiFi.status() != WL_CONNECTED) {
-        s_was_connected = false;
-        if (elapsed_since(g_wifi_last_attempt) >= WIFI_RETRY_MS) {
-            static bool s_first_wifi_failure = true;
-            if (s_first_wifi_failure) {
-                Serial.println(F("WiFi: not connected — will keep retrying every 30s"));
-                s_first_wifi_failure = false;
+        // ── Beacon timeout → keep g_server_seen true so HTTP polling
+        //    continues against the fallback IP. check_beacon() will
+        //    update to the real server IP when the beacon returns.
+        if (g_server_seen && elapsed_since(g_last_beacon_ms) >= BEACON_TIMEOUT_MS) {
+            DBGLN(F("[BEACON] lost — switching to fallback IP"));
+            g_server_ip.fromString(FALLBACK_SERVER_IP);
+            g_server_port = SERVER_PORT;
+        }
+
+        // ── Server online/offline LED transitions ───────────
+        if (g_server_seen && !s_was_server_seen) {
+            led_release_state(LedState::OFFLINE_MODE);
+            s_was_server_seen = true;
+        } else if (!g_server_seen && s_was_server_seen) {
+            led_request_state(LedState::OFFLINE_MODE);
+            bell_core_discard_commands();  // safety: no stale run-now survives server loss
+            s_was_server_seen = false;
+        }
+
+        // ── WiFi watchdog ──────────────────────────────────
+        if (WiFi.status() != WL_CONNECTED) {
+            s_was_connected = false;
+            if (elapsed_since(g_wifi_last_attempt) >= WIFI_RETRY_MS) {
+                static bool s_first_wifi_failure = true;
+                if (s_first_wifi_failure) {
+                    Serial.println(F("WiFi: not connected — will keep retrying every 30s"));
+                    s_first_wifi_failure = false;
+                }
+                WiFi.reconnect();
+                g_wifi_last_attempt = now_ms;
             }
-            WiFi.reconnect();
-            g_wifi_last_attempt = now_ms;
+        } else {
+            if (!s_was_connected) {
+                Serial.println(F("WiFi: connected"));
+                s_was_connected = true;
+            }
         }
-    } else {
-        if (!s_was_connected) {
-            Serial.println(F("WiFi: connected"));
-            s_was_connected = true;
+
+        // ── Schedule sync ──────────────────────────────────
+        // ── Initial fallback: no beacon after 10s → try HTTP against fallback IP ──
+        if (!g_server_seen && WiFi.status() == WL_CONNECTED
+            && elapsed_since(g_fallback_attempt_ms) >= 10000U) {
+            g_fallback_attempt_ms = now_ms;
+            WiFiClient fc;
+            HTTPClient hc;
+            hc.setTimeout(3000);
+            String url = server_base_url() + "/api/schedule/hash";
+            if (hc.begin(fc, url) && hc.GET() == 200) {
+                g_server_seen = true;
+                Serial.printf("NET: server reachable at fallback %s:%u\n",
+                              g_server_ip.toString().c_str(), g_server_port);
+            }
+            hc.end();
         }
-    }
 
-    // ── Schedule sync ──────────────────────────────────
-    // ── Initial fallback: no beacon after 10s → try HTTP against fallback IP ──
-    if (!g_server_seen && WiFi.status() == WL_CONNECTED
-        && elapsed_since(g_fallback_attempt_ms) >= 10000U) {
-        g_fallback_attempt_ms = now_ms;
-        WiFiClient fc;
-        HTTPClient hc;
-        hc.setTimeout(3000);
-        String url = server_base_url() + "/api/schedule/hash";
-        if (hc.begin(fc, url) && hc.GET() == 200) {
-            g_server_seen = true;
-            Serial.printf("NET: server reachable at fallback %s:%u\n",
-                          g_server_ip.toString().c_str(), g_server_port);
+        // ── Schedule sync (runs immediately if fallback just discovered server) ──
+        check_schedule_update();
+
+        // ── Everything below requires a known server ────────
+        if (g_server_seen) {
+            // ── Manual command poll ────────────────────────────
+            if (WiFi.status() == WL_CONNECTED
+                && elapsed_since(g_last_command_poll) >= COMMAND_POLL_MS) {
+                poll_commands();
+                g_last_command_poll = now_ms;
+            }
+
+            // ── Heartbeats ─────────────────────────────────────
+            if (WiFi.status() == WL_CONNECTED
+                && elapsed_since(g_last_heartbeat) >= 5000U) {
+                send_heartbeats();
+                g_last_heartbeat = now_ms;
+            }
+
+            // ── Drain execution reports → server ───────────────
+            drain_execution_reports();
+
+            // ── Drain log buffer → server ──────────────────────
+            drain_log_buffer();
         }
-        hc.end();
+
+        // ── Yield to other tasks for NET_TASK_PERIOD_MS ────────
+        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(NET_TASK_PERIOD_MS));
     }
-
-    // ── Schedule sync (runs immediately if fallback just discovered server) ──
-    check_schedule_update();
-
-    // ── Everything below requires a known server ────────
-    if (!g_server_seen) return;
-
-    // ── Manual command poll ────────────────────────────
-    if (WiFi.status() == WL_CONNECTED
-        && elapsed_since(g_last_command_poll) >= COMMAND_POLL_MS) {
-        poll_commands();
-        g_last_command_poll = now_ms;
-    }
-
-    // ── Heartbeats ─────────────────────────────────────
-    if (WiFi.status() == WL_CONNECTED
-        && elapsed_since(g_last_heartbeat) >= 5000U) {
-        send_heartbeats();
-        g_last_heartbeat = now_ms;
-    }
-
-    // ── Drain execution reports → server ───────────────
-    drain_execution_reports();
-
-    // ── Drain log buffer → server ──────────────────────
-    drain_log_buffer();
 }
