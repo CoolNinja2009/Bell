@@ -50,8 +50,8 @@ void setup() {
     {
         const esp_partition_t *p = esp_ota_get_running_partition();
         if (p) {
-            Serial.printf("BOOT: running from %s partition (0x%06X)  Built: %s %s\n",
-                          p->label, p->address, __DATE__, __TIME__);
+            Serial.printf("BOOT: running from %s partition (0x%06X)  Built: %s %s  Uploaded: %s\n",
+                          p->label, p->address, __DATE__, __TIME__, ota_uploaded_at());
         } else {
             Serial.println(F("BOOT: running from UNKNOWN partition"));
         }

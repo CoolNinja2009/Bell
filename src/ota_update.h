@@ -62,3 +62,7 @@ const char* ota_server_version();
 
 /** SHA‑256 of the last SUCCESSFULLY applied update (hex, 64 chars + null). */
 const char* ota_last_sha256();
+
+/** Formatted upload time "YYYY-MM-DD HH:MM:SS" of the current firmware,
+ *  or "n/a" if not yet recorded (first boot before NTP sync). */
+const char* ota_uploaded_at();

@@ -39,6 +39,8 @@
 #ifndef GITHUB_REPO
   #define GITHUB_REPO "CoolNinja2009/Bell"
 #endif
+// Compile-time identity used to detect a freshly flashed firmware.
+#define FIRMWARE_COMPILED_AT __DATE__ " " __TIME__
 
 // ── Timing ─────────────────────────────────────────────────────────
 // Check on every boot: after WiFi connects + 60s delay, poll server.
@@ -53,11 +55,11 @@ constexpr uint32_t OTA_TICK_WINDOW_MS       = 200;      // max time ota_tick() m
 constexpr uint32_t OTA_RESUME_RETRY_MS      = 5000;     // backoff after a failed chunk
 constexpr uint32_t OTA_DAILY_CHECK_INTERVAL_MS = 86400000;  // 24 h between periodic checks
 constexpr uint32_t OTA_BOOT_CONFIRM_DELAY_MS = 90000;   // 90 s — defer rollback cancel until this much stable uptime
-
-// ── NVS keys ───────────────────────────────────────────────────────
-static const char OTA_NVS_NS[]      = "ota";
-static const char OTA_KEY_VER[]     = "version";
-static const char OTA_KEY_SHA[]     = "sha256";
+static const char OTA_NVS_NS[]       = "ota";
+static const char OTA_KEY_VER[]      = "version";
+static const char OTA_KEY_SHA[]      = "sha256";
+static const char OTA_KEY_UPLOADED[] = "uploaded_at";
+static const char OTA_KEY_COMPILED[] = "compiled_at";
 // ── State machine ──────────────────────────────────────────────────
 enum class OtaState : uint8_t {
     IDLE,
@@ -76,8 +78,7 @@ static uint32_t      g_retry_until_ms     = 0;
 static bool          g_check_requested    = false;
 static bool          g_boot_check_done    = false;  // true once server confirms up-to-date
 static uint8_t       g_error_count        = 0;      // cap retries to prevent loops
-static uint32_t      g_next_daily_check_ms = 0;      // 0 = no daily check scheduled
-// ── Version tracking ───────────────────────────────────────────────
+static uint32_t      g_next_daily_check_ms = 0;     // 0 = no daily check scheduled
 static char          g_current_ver[32]    = FIRMWARE_VERSION;
 static char          g_server_ver[32]     = "";
 static char          g_server_sha256[65]  = "";
@@ -85,6 +86,10 @@ static char          g_last_sha256[65]    = "";
 static uint32_t      g_server_size        = 0;
 static uint32_t      g_bytes_written      = 0;
 static bool          g_version_known      = false;
+// Upload timestamp (unix epoch; 0 = not yet recorded) and a flag set
+// when the running firmware is freshly flashed (compile time changed).
+static uint32_t      g_uploaded_at        = 0;
+static bool          g_new_firmware       = false;
 
 static uint8_t       g_chunk_buf[OTA_CHUNK_SIZE];
 
@@ -108,13 +113,28 @@ static void load_nvs() {
             strncpy(g_last_sha256, s.c_str(), sizeof(g_last_sha256) - 1);
             g_last_sha256[sizeof(g_last_sha256) - 1] = '\0';
         }
+        // If this is a dev build (0.0.0-dev), use the NVS-persisted version
+        // from the last successful OTA so we don't re-download firmware we
+        // already have. Production builds use their compile-time version.
+        if (strcmp(FIRMWARE_VERSION, "0.0.0-dev") == 0) {
+            String v = prefs.getString(OTA_KEY_VER, "");
+            if (v.length() > 0 && v != "0.0.0-dev") {
+                strncpy(g_current_ver, v.c_str(), sizeof(g_current_ver) - 1);
+                g_current_ver[sizeof(g_current_ver) - 1] = '\0';
+            }
+        }
+        // Detect a freshly flashed firmware: compile timestamp differs from
+        // what we recorded last time. If so, mark for upload-time recording.
+        String compiled = prefs.getString(OTA_KEY_COMPILED, "");
+        if (compiled != FIRMWARE_COMPILED_AT) {
+            g_new_firmware = true;
+            g_uploaded_at  = 0;
+        } else {
+            g_uploaded_at = prefs.getUInt(OTA_KEY_UPLOADED, 0);
+        }
         prefs.end();
     }
-    // g_current_ver is ALWAYS the compile-time FIRMWARE_VERSION —
-    // never overwrite it from NVS. That was a bug that caused post-OTA
-    // firmware to report the OLD version string.
 }
-
 static void save_nvs_version() {
     Preferences prefs;
     if (prefs.begin(OTA_NVS_NS, false)) {
@@ -124,9 +144,33 @@ static void save_nvs_version() {
     }
 }
 
+// Record the upload timestamp once the system clock is valid (NTP/RTC).
+// Called every loop tick while g_new_firmware is set; writes NVS exactly once.
+static void record_upload_time() {
+    time_t now = time(nullptr);
+    if (now <= 1000000000UL) return;   // clock not valid yet — try next tick
+
+    g_uploaded_at = (uint32_t)now;
+    Preferences prefs;
+    if (prefs.begin(OTA_NVS_NS, false)) {
+        prefs.putUInt(OTA_KEY_UPLOADED, g_uploaded_at);
+        prefs.putString(OTA_KEY_COMPILED, FIRMWARE_COMPILED_AT);
+        prefs.end();
+    }
+    g_new_firmware = false;
+
+    struct tm t;
+    if (localtime_r(&now, &t)) {
+        Serial.printf("[OTA] Uploaded at: %04d-%02d-%02d %02d:%02d:%02d\n",
+                      t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+                      t.tm_hour, t.tm_min, t.tm_sec);
+    }
+}
+
 static int version_cmp(const char* a, const char* b) {
-    for (;;) {
-        // Parse next dotted numeric component from each side.
+    // Only compare YYYY.MMDD — the suffix (commit hash) is ignored.
+    // Two builds from the same day are treated as equal → no update.
+    for (int comp = 0; comp < 2; comp++) {
         unsigned long na = 0;
         while (*a >= '0' && *a <= '9') { na = na * 10 + (unsigned long)(*a - '0'); a++; }
         unsigned long nb = 0;
@@ -135,17 +179,10 @@ static int version_cmp(const char* a, const char* b) {
         if (na < nb) return -1;
         if (na > nb) return  1;
 
-        // Both exhausted at the same time → equal.
-        if (*a == '\0' && *b == '\0') return 0;
-
-        // Either side hit a non-numeric suffix (e.g. "-beta", ".git.abc").
-        // Suffixes are ignored — treat as equal.
-        if ((*a && *a != '.') || (*b && *b != '.')) return 0;
-
-        // Advance past the dot separator for the next component.
         if (*a == '.') a++;
         if (*b == '.') b++;
     }
+    return 0;
 }
 
 // ── State entry ────────────────────────────────────────────────────
@@ -535,6 +572,10 @@ void ota_confirm_boot_if_stable() {
     confirmed = true;
 }
 bool ota_tick() {
+    // Record the upload timestamp on the first boot of a new firmware,
+    // once the system clock is valid. No-op after that.
+    if (g_new_firmware) record_upload_time();
+
     switch (g_state) {
     case OtaState::IDLE: {
         uint32_t now = millis();
@@ -607,7 +648,18 @@ void ota_request_check() {
 bool ota_busy() {
     return g_state != OtaState::IDLE && g_state != OtaState::ERROR && g_state != OtaState::RETRY;
 }
-
 const char* ota_current_version() { return g_current_ver; }
 const char* ota_server_version()  { return g_version_known ? g_server_ver : ""; }
 const char* ota_last_sha256()     { return g_last_sha256; }
+
+const char* ota_uploaded_at() {
+    static char buf[24];
+    if (g_uploaded_at == 0) return "n/a";
+    time_t tsec = (time_t)g_uploaded_at;
+    struct tm t;
+    if (!localtime_r(&tsec, &t)) return "n/a";
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+             t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+             t.tm_hour, t.tm_min, t.tm_sec);
+    return buf;
+}
