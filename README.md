@@ -75,41 +75,22 @@ On first boot (or after resetting WiFi), the ESP32 creates a setup access point:
 
 Connect your phone/laptop to `Bell_Setup`, open `http://192.168.4.1`, scan for your network, and save. The ESP32 reboots and connects.
 
-**Server settings (optional):** Expand "Server settings" in the portal to set a static server IP/port. Three-tier resolution:
-
-```
-1. UDP BEACON (live, auto-discovered)
-        ↓ if beacon not heard for 20s
-2. PROVISIONED IP (saved via setup portal)
-        ↓ if not set
-3. HARDCODED FALLBACK (FALLBACK_SERVER_IP in main.cpp)
-```
+**Server discovery:** The ESP32 finds the server via UDP beacon (port 9999). No hardcoded IP, no DNS fallback — the server broadcasts its presence, the ESP32 picks it up. When the beacon stops for 20 seconds, the ESP32 immediately logs `!!! SERVER CONNECTION LOST — running from NVS !!!` and stops all HTTP operations. Bells continue from the NVS-stored schedule.
 
 ### Relay safety guarantees
 
 Relays fire **only** on confirmed schedule times or explicit "Run Now" commands:
 
-- **Command discard on server loss** — when the server goes offline, any pending manual commands queued from that server are discarded immediately. No relay fires from a server that's no longer reachable.
-- **No blind fallback polling** — when the ESP32 loses its server and falls back to the provisioned/hardcoded IP, it does **not** attempt HTTP hash polls or schedule fetches against an unknown endpoint. This prevents multi-second blocking timeouts that could delay relay pulse expiry.
+- **Command discard on server loss** — when the server goes offline, pending manual commands are discarded immediately. No relay fires from a server that's no longer reachable.
+- **Immediate NVS fallback** — when the beacon times out (20s), `g_server_seen` flips to `false` on the next 50ms tick. All HTTP operations stop instantly. No multi-second timeouts jamming the scheduler. The Bell Core runs from NVS on core 1, unblocked.
 - **Bell Core independence** — the relay/schedule subsystem never touches WiFi or HTTP. It runs from NVS-persisted schedules and an optional RTC. Bells ring on time even if the network module crashes or the server is down for days.
-
-**Resetting WiFi:** Hold the BOOT button (GPIO0) for 5 seconds at any time — erases SSID, password, and provisioned server IP. All other settings (schedules, RTC) are preserved. Non-blocking, runs concurrent with normal operation.
+- **Independent watchdog** (optional, `-D WATCHDOG_ENABLED`) — separate FreeRTOS task at priority 3. Normal mode: SAFETY OFF only for stuck relays. Takeover mode (bell_core stalled >10s): force-drives relays from NVS schedule.
 
 ## Deployment
-
-### One-time setup
-
-On a fresh PC, run the setup script once. It installs Node.js and Git, clones the repository, and runs the first bootstrap.
-
-| Platform | Script |
-|----------|--------|
-| Windows  | `setup.bat` |
-| Linux / Raspberry Pi | `setup.sh` |
 
 ### Every boot
 
 Add `start.bat` (Windows) or `start.sh` (Linux) to your system's startup. It runs `bootstrap.js` which:
-
 - Verifies Node.js, Git, PM2, and the repository
 - Checks GitHub for updates (only during startup)
 - Auto-updates the repository if a newer commit exists
@@ -226,8 +207,7 @@ constexpr long GMT_OFFSET_SEC = 19800;   // India IST = UTC+5:30
 constexpr long DAYLIGHT_SEC   = 0;       // set to 3600 for DST
 ```
 
-Also set the fallback server IP in `src/network_sync.h` if the server has a static address on your network.
-
+The firmware timezone is set in `src/bell_core.h` (POSIX seconds-east-of-UTC).
 
 
 ## OTA Firmware Updates
@@ -259,8 +239,8 @@ with SHA-256 verification and successful reboot to the new firmware.
 | New firmware crashes on boot | ESP‑IDF auto‑rolls back to previous working partition |
 | Factory fallback | Factory partition never touched by OTA — USB flash always works |
 | Never downgrades | Lexicographic version comparison — only updates when strictly newer |
-| Bells always ring | Download pauses when a bell is within 10 minutes |
-| Server unreachable | Retries every 30 minutes until a definitive answer |
+| Bells always ring | Download pauses when a bell is within 10 min; version checks deferred within 2 min; each tick blocks ≤200ms |
+| Non‑blocking OTA | HTTP timeouts capped at 2s (version) / 500ms (chunk); per‑tick window 200ms — bell_core_tick never starves |
 
 ### Triggering an update
 
@@ -276,32 +256,27 @@ picks it up within 30 minutes. ESP32 checks on every boot (after WiFi connects).
 ### Partition layout
 
 ```
-4 MB flash:
-  nvs (20 KB) | otadata (8 KB) | factory (1.5 MB) | ota_0 (1.5 MB) | ota_1 (960 KB)
+4 MB flash (partitions_ota.csv):
+  nvs (20 KB) | otadata (8 KB) | factory (1 MB) | ota_0 (1.3 MB) | ota_1 (1.3 MB) | coredump (64 KB) | littlefs (256 KB)
 ```
 
 - **factory** — golden image, USB-flashed only, never OTA'd
 - **ota_0 / ota_1** — alternate on each update. ESP-IDF auto-rolls back
   if the new partition fails to boot.
-
-### LED feedback during OTA
-
-| State | LED | What's happening |
-|---|---|---|
-| OTA_DOWNLOADING | Blue breathing | Downloading firmware in background |
-| OTA_VERIFYING | Blue blink | Computing SHA‑256 of downloaded firmware |
-| OTA_APPLYING | Blue solid | Committing — reboot imminent (~1 second) |
-| OTA_FAILED | Red blink (10 s) | Download/verify failed — will retry tomorrow |
+- **post_upload.py** — runs automatically after every `pio run -t upload`,
+  erases the `otadata` partition to force the bootloader to boot `factory`.
+  No more "am I running the new firmware?" confusion.
 
 ### First-time flash (USB)
 
-The very first time, flash via USB to get the OTA-capable firmware onto
-the device:
-
 ```bash
-pio run -t upload
-pio device monitor    # watch serial output
+pio run -t upload    # flashes factory + erases otadata → boots factory
+pio device monitor   # watch serial output
 ```
+
+You should see `BOOT: running from factory partition (0x010000)` — this
+confirms the ESP32 is running the firmware you just flashed, not a stale
+OTA slot. If you ever see `ota_0` or `ota_1` here, something's wrong.
 
 ### 3. First-time setup
 
@@ -484,12 +459,11 @@ API-key auth: send `X-API-Key` header on endpoints marked as API-key compatible 
 | File | What to change |
 |------|---------------|
 | `src/bell_core.h` | GPIO pins, relay active logic, timezone, RTC pins |
-| `src/network_sync.h` | Beacon timeout, poll intervals, fallback IP, NTP servers |
+| `src/network_sync.h` | Beacon timeout, poll intervals, NTP servers |
 | `src/led_indicator.h` | LED GPIO pins (R=25, G=33, B=32 by default) |
 | `src/wifi_provision.h` | AP SSID/password, connection timeout, BOOT button hold duration, reconnect interval |
-| `src/main.cpp` | Fallback server IP (`FALLBACK_SERVER_IP`) |
-| `platformio.ini` | Board type, upload port, library versions |
-## ESP32 firmware architecture
+| `src/main.cpp` | Initialisation order, watchdog hook |
+| `platformio.ini` | Board type, upload port, build flags, feature toggles |
 
 ```
 src/
@@ -512,9 +486,8 @@ src/
 - **Three-tier server resolution** — UDP beacon → provisioned IP → hardcoded fallback
 - **mDNS auto-discovery** — bootstrap configures avahi-daemon on Linux for `http://<hostname>.local` access
 - **RGB status LED** — 11 system states with color-coded breathing/blink patterns covering boot, sync, error, and OTA phases
-- **Relay safety** — pending commands discarded on server loss; no blind HTTP polling against fallback IP; Bell Core never touches WiFi
 - **20s server-loss detection** — UDP beacon timeout detects offline server within 4 missed beacons
-- **BOOT button factory reset** — hold GPIO0 for 5s to erase network credentials
+- **Relay safety** — pending commands discarded on server loss; immediate NVS fallback with zero HTTP blocking; Bell Core never touches WiFi
 - **Zero-config discovery** — UDP beacon on flat networks
 - **OTA firmware updates** — push to GitHub → ESP32 updates itself next boot; SHA‑256 verified, auto-rollback, resume support
 - **Profile-based scheduling** — multiple named schedules with calendar-based daily rotation

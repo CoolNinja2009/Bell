@@ -69,7 +69,6 @@ static constexpr uint32_t NET_TASK_PERIOD_MS = 50;   // 20 Hz tick cadence
 static void network_sync_task_fn(void *param);
 static uint32_t  g_last_heartbeat      = 0;
 static uint32_t  g_last_hash_poll      = 0;
-static uint32_t  g_fallback_attempt_ms = 0;  // throttle fallback HTTP attempts
 
 // ============================================================================
 //  INTERNAL HELPERS
@@ -80,24 +79,20 @@ static inline uint32_t elapsed_since(uint32_t t0) {
 }
 
 static String server_base_url() {
-    if (g_server_seen) {
-        return "http://" + g_server_ip.toString() + ":" + String(g_server_port);
-    }
-    return "http://" + String(FALLBACK_SERVER_IP) + ":" + String(SERVER_PORT);
+    if (!g_server_seen) return String();
+    return "http://" + g_server_ip.toString() + ":" + String(g_server_port);
 }
 
 const char* network_server_base_url() {
     static char url[64];
-    if (g_server_seen) {
-        snprintf(url, sizeof(url), "http://%s:%u",
-                 g_server_ip.toString().c_str(), g_server_port);
+    if (!g_server_seen) {
+        url[0] = '\0';
     } else {
         snprintf(url, sizeof(url), "http://%s:%u",
-                 FALLBACK_SERVER_IP, SERVER_PORT);
+                 g_server_ip.toString().c_str(), g_server_port);
     }
     return url;
 }
-
 // ============================================================================
 //  UDP BEACON
 // ============================================================================
@@ -371,9 +366,7 @@ void network_sync_init() {
     Serial.printf("WiFi: connecting to %s...\n", ssid);
     // --- UDP beacon ---
     g_udp.begin(BEACON_PORT);
-    g_server_ip.fromString(FALLBACK_SERVER_IP);
-    Serial.printf("Beacon: listening on UDP/%u  (fallback %s:%u)\n",
-                  BEACON_PORT, FALLBACK_SERVER_IP, SERVER_PORT);
+    Serial.printf("Beacon: listening on UDP/%u\n", BEACON_PORT);
 
 
     // --- NTP ---
@@ -387,7 +380,6 @@ void network_sync_init() {
     g_last_command_poll   = millis();
     g_last_heartbeat      = millis();
     g_last_hash_poll      = millis();
-    g_fallback_attempt_ms = millis();  // give beacon 10s head start
     led_request_state(LedState::OFFLINE_MODE);  // server not yet discovered
 
     // --- Spawn network I/O task on core 0 (keeps HTTP blocks off the bell core's core 1) ---
@@ -421,17 +413,17 @@ static void network_sync_task_fn(void *param) {
         // ── UDP beacon ─────────────────────────────────────
         check_beacon();
 
-        // ── Beacon timeout → keep g_server_seen true so HTTP polling
-        //    continues against the fallback IP. check_beacon() will
-        //    update to the real server IP when the beacon returns.
+        // ── Beacon timeout → server is gone. Stop ALL HTTP immediately.
+        //    Bell Core continues running from NVS on core 1, unblocked.
         if (g_server_seen && elapsed_since(g_last_beacon_ms) >= BEACON_TIMEOUT_MS) {
-            DBGLN(F("[BEACON] lost — switching to fallback IP"));
-            g_server_ip.fromString(FALLBACK_SERVER_IP);
-            g_server_port = SERVER_PORT;
+            Serial.println(F("!!! SERVER CONNECTION LOST — running from NVS !!!"));
+            g_server_seen = false;
         }
 
-        // ── Server online/offline LED transitions ───────────
+        // ── Server online/offline transitions ───────────
         if (g_server_seen && !s_was_server_seen) {
+            Serial.printf("NET: server reconnected at %s:%u\n",
+                          g_server_ip.toString().c_str(), g_server_port);
             led_release_state(LedState::OFFLINE_MODE);
             s_was_server_seen = true;
         } else if (!g_server_seen && s_was_server_seen) {
@@ -459,24 +451,7 @@ static void network_sync_task_fn(void *param) {
             }
         }
 
-        // ── Schedule sync ──────────────────────────────────
-        // ── Initial fallback: no beacon after 10s → try HTTP against fallback IP ──
-        if (!g_server_seen && WiFi.status() == WL_CONNECTED
-            && elapsed_since(g_fallback_attempt_ms) >= 10000U) {
-            g_fallback_attempt_ms = now_ms;
-            WiFiClient fc;
-            HTTPClient hc;
-            hc.setTimeout(3000);
-            String url = server_base_url() + "/api/schedule/hash";
-            if (hc.begin(fc, url) && hc.GET() == 200) {
-                g_server_seen = true;
-                Serial.printf("NET: server reachable at fallback %s:%u\n",
-                              g_server_ip.toString().c_str(), g_server_port);
-            }
-            hc.end();
-        }
-
-        // ── Schedule sync (runs immediately if fallback just discovered server) ──
+        // ── Schedule sync (beacon-only) ──────────────────
         check_schedule_update();
 
         // ── Everything below requires a known server ────────
