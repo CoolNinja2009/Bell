@@ -22,6 +22,8 @@
 #include "led_indicator.h"
 #include "ota_update.h"
 #include "storage.h"
+#include "watchdog.h"
+#include <esp_ota_ops.h>
 
 void setup() {
     // 1. LED first — shows BOOTING (solid cyan) during init
@@ -31,19 +33,35 @@ void setup() {
     // 2. Bell Core — relays off, NVS loaded, RTC seeded
     bell_core_init();
 
+
     // 3. Network — WiFi, NTP, server discovery
     network_sync_init();
+
+    // 3b. Watchdog — independent relay safety net (reads NVS, checks GPIO)
+    watchdog_init();
 
     // 4. OTA — version tracking + update engine (idle until triggered)
     ota_init();
 
     // 5. Storage — LittleFS mount (auto-formats on first boot)
     storage_init();
+
+    // ── Boot partition identity (catch stale-OTA boot issues) ──
+    {
+        const esp_partition_t *p = esp_ota_get_running_partition();
+        if (p) {
+            Serial.printf("BOOT: running from %s partition (0x%06X)  Built: %s %s\n",
+                          p->label, p->address, __DATE__, __TIME__);
+        } else {
+            Serial.println(F("BOOT: running from UNKNOWN partition"));
+        }
+    }
 }
 
 void loop() {
     // Bell Core ticks first — highest priority, never blocked by network I/O
     bell_core_tick();
+    watchdog_heartbeat();  // signal watchdog: bell_core is alive
 
     // Network sync runs on its own FreeRTOS task (core 0) — no tick needed here
 

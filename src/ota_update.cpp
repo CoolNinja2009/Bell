@@ -46,8 +46,10 @@
 constexpr uint32_t OTA_FIRST_CHECK_DELAY_MS = 60000;    // wait 60s after boot
 constexpr uint32_t OTA_RETRY_INTERVAL_MS    = 1800000;  // 30 min between retries
 constexpr uint32_t OTA_BELL_SAFE_WINDOW_S   = 600;      // pause OTA if bell within 10 min
-constexpr uint32_t OTA_CHUNK_TIMEOUT_MS     = 15000;    // HTTP timeout per chunk
+constexpr uint32_t OTA_BELL_CHECK_SAFE_S    = 120;      // defer version check if bell within 2 min
+constexpr uint32_t OTA_CHUNK_TIMEOUT_MS     = 500;      // HTTP timeout per chunk (was 15s — blocked core 1!)
 constexpr uint32_t OTA_CHUNK_SIZE           = 4096;     // bytes per loop tick
+constexpr uint32_t OTA_TICK_WINDOW_MS       = 200;      // max time ota_tick() may block per call
 constexpr uint32_t OTA_RESUME_RETRY_MS      = 5000;     // backoff after a failed chunk
 constexpr uint32_t OTA_DAILY_CHECK_INTERVAL_MS = 86400000;  // 24 h between periodic checks
 constexpr uint32_t OTA_BOOT_CONFIRM_DELAY_MS = 90000;   // 90 s — defer rollback cancel until this much stable uptime
@@ -100,11 +102,7 @@ static void tick_retry();
 static void load_nvs() {
     Preferences prefs;
     if (prefs.begin(OTA_NVS_NS, true)) {
-        String v = prefs.getString(OTA_KEY_VER, "");
-        if (v.length() > 0) {
-            strncpy(g_current_ver, v.c_str(), sizeof(g_current_ver) - 1);
-            g_current_ver[sizeof(g_current_ver) - 1] = '\0';
-        }
+        // Load SHA-256 of the last applied firmware (for diagnostics)
         String s = prefs.getString(OTA_KEY_SHA, "");
         if (s.length() > 0) {
             strncpy(g_last_sha256, s.c_str(), sizeof(g_last_sha256) - 1);
@@ -112,6 +110,9 @@ static void load_nvs() {
         }
         prefs.end();
     }
+    // g_current_ver is ALWAYS the compile-time FIRMWARE_VERSION —
+    // never overwrite it from NVS. That was a bug that caused post-OTA
+    // firmware to report the OLD version string.
 }
 
 static void save_nvs_version() {
@@ -192,9 +193,16 @@ static void enter_state(OtaState next) {
     }
 }
 
-// ── Tick functions ─────────────────────────────────────────────────
-
 static void tick_check_version() {
+    // ── Bell-safe: defer if a bell is imminent ─────────────
+    int32_t next_s = bell_core_next_fire_s();
+    if (next_s >= 0 && next_s < (int32_t)OTA_BELL_CHECK_SAFE_S) {
+        // A bell fires soon — don't risk blocking core 1 with HTTP
+        g_next_daily_check_ms = millis() + 300000;  // retry in 5 min
+        enter_state(OtaState::IDLE);
+        return;
+    }
+
     if (WiFi.status() != WL_CONNECTED) {
         enter_state(OtaState::RETRY);
         return;
@@ -202,7 +210,7 @@ static void tick_check_version() {
 
     WiFiClient client;
     HTTPClient http;
-    http.setTimeout(8000);
+    http.setTimeout(2000);  // was 8000 — fast fail if server unreachable
 
     String url = String(network_server_base_url()) + "/api/firmware/version";
     if (!http.begin(client, url)) {
@@ -347,7 +355,7 @@ static void tick_download() {
 
     uint32_t chunk_start = millis();
     size_t chunk_read = 0;
-    while (chunk_read < OTA_CHUNK_SIZE && (millis() - chunk_start) < OTA_CHUNK_TIMEOUT_MS) {
+    while (chunk_read < OTA_CHUNK_SIZE && (millis() - chunk_start) < OTA_TICK_WINDOW_MS) {
         int avail = stream->available();
         if (avail <= 0) { if (!stream->connected()) break; delay(10); continue; }
         size_t to_read = (size_t)avail < (OTA_CHUNK_SIZE - chunk_read) ? (size_t)avail : (OTA_CHUNK_SIZE - chunk_read);
@@ -557,6 +565,14 @@ bool ota_tick() {
         // Wait for WiFi to settle after boot (first 60 s only — irrelevant after that)
         if (now < OTA_FIRST_CHECK_DELAY_MS) return false;
         if (WiFi.status() != WL_CONNECTED) return false;
+        // ── Bell-safe: don't start HTTP if a bell fires soon ──
+        // (manual triggers via g_check_requested bypass this — they're explicit)
+        {
+            int32_t next_s = bell_core_next_fire_s();
+            if (next_s >= 0 && next_s < (int32_t)OTA_BELL_CHECK_SAFE_S) {
+                return false;  // defer — try again next tick
+            }
+        }
 
         Serial.println(F("[OTA] Checking for updates..."));
         enter_state(OtaState::CHECK_VERSION);
