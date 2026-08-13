@@ -1390,20 +1390,23 @@ $('#restore-file').onchange = async (e) => {
 };
 
 // ── Heartbeats (dynamic per-channel) ─────────────────────────────
+// A channel is "offline" if its last heartbeat is older than 10 s.
+const OFFLINE_THRESHOLD_S = 10;
+
 function renderHeartbeatSlots(keys) {
   const container = $('#hb-container');
-  container.innerHTML = keys.map(k => `<span class="status-pill" id="hb-${k}"><span class="dot off"></span> ${k.toUpperCase()} waiting</span>`).join('');
+  container.innerHTML = keys.map(k => `<span class="status-pill" id="hb-${k}"><span class="dot off"></span> ${k.toUpperCase()} offline</span>`).join('');
 }
 
 function updateHB(key, sec) {
   const el = document.getElementById('hb-' + key);
   if (!el) return;
   if (sec === undefined || sec === null) {
-    el.innerHTML = '<span class="dot off"></span> ' + key.toUpperCase() + ' waiting';
+    el.innerHTML = '<span class="dot off"></span> ' + key.toUpperCase() + ' offline';
     return;
   }
-  const alive = sec < 120;
-  el.innerHTML = '<span class="dot ' + (alive ? 'on' : 'off') + '"></span> ' + key.toUpperCase() + ' ' + sec + 's ago';
+  const alive = sec < OFFLINE_THRESHOLD_S;
+  el.innerHTML = '<span class="dot ' + (alive ? 'on' : 'off') + '"></span> ' + key.toUpperCase() + ' ' + (alive ? sec + 's ago' : 'offline');
 }
 
 // ── Status poll ────────────────────────────────────────────────────

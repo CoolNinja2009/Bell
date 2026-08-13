@@ -60,6 +60,11 @@ static const char OTA_KEY_VER[]      = "version";
 static const char OTA_KEY_SHA[]      = "sha256";
 static const char OTA_KEY_UPLOADED[] = "uploaded_at";
 static const char OTA_KEY_COMPILED[] = "compiled_at";
+// Flash marker for "uploaded at" — written to the coredump partition by
+// post_upload.py (USB) and tick_apply() (OTA). Magic "UPTS". Stored at a
+// 16 KB offset so it never collides with the coredump header at offset 0.
+static const uint32_t UPLOAD_TS_MAGIC       = 0x53545055;
+static const uint32_t UPLOAD_TS_PART_OFFSET = 0x4000;
 // ── State machine ──────────────────────────────────────────────────
 enum class OtaState : uint8_t {
     IDLE,
@@ -99,12 +104,41 @@ static void tick_check_version();
 static void tick_download();
 static void tick_verify();
 static void tick_apply();
-static void tick_error();
-static void tick_retry();
-
 // ── Helpers ────────────────────────────────────────────────────────
 
+static uint32_t read_flash_upload_ts() {
+    const esp_partition_t* p = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "coredump");
+    if (!p) return 0;
+    uint8_t buf[8] = {0};
+    if (esp_partition_read(p, UPLOAD_TS_PART_OFFSET, buf, 8) != ESP_OK) return 0;
+    uint32_t magic;
+    memcpy(&magic, buf, 4);
+    if (magic != UPLOAD_TS_MAGIC) return 0;
+    uint32_t ts;
+    memcpy(&ts, buf + 4, 4);
+    if (ts < 1000000000UL || ts > 0x7FFFFFFFUL) return 0;
+    return ts;
+}
+
+// Persist the "uploaded at" timestamp to the coredump partition.
+// Used by tick_apply() so OTA updates also refresh the upload time.
+static void write_flash_upload_ts(uint32_t ts) {
+    const esp_partition_t* p = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "coredump");
+    if (!p) return;
+    uint8_t buf[8];
+    uint32_t magic = UPLOAD_TS_MAGIC;
+    memcpy(buf, &magic, 4);
+    memcpy(buf + 4, &ts, 4);
+    esp_partition_erase_range(p, UPLOAD_TS_PART_OFFSET, 4096);
+    esp_partition_write(p, UPLOAD_TS_PART_OFFSET, buf, 8);
+}
 static void load_nvs() {
+    // Prefer the flash "uploaded at" marker — written on every USB flash by
+    // post_upload.py and on every OTA by tick_apply(). Most accurate.
+    uint32_t flash_ts = read_flash_upload_ts();
+
     Preferences prefs;
     if (prefs.begin(OTA_NVS_NS, true)) {
         // Load SHA-256 of the last applied firmware (for diagnostics)
@@ -123,14 +157,19 @@ static void load_nvs() {
                 g_current_ver[sizeof(g_current_ver) - 1] = '\0';
             }
         }
-        // Detect a freshly flashed firmware: compile timestamp differs from
-        // what we recorded last time. If so, mark for upload-time recording.
-        String compiled = prefs.getString(OTA_KEY_COMPILED, "");
-        if (compiled != FIRMWARE_COMPILED_AT) {
-            g_new_firmware = true;
-            g_uploaded_at  = 0;
+        if (flash_ts != 0) {
+            g_uploaded_at  = flash_ts;
+            g_new_firmware = false;
         } else {
-            g_uploaded_at = prefs.getUInt(OTA_KEY_UPLOADED, 0);
+            // Fallback: detect a freshly flashed firmware via compile
+            // timestamp, then record upload time once the clock is valid.
+            String compiled = prefs.getString(OTA_KEY_COMPILED, "");
+            if (compiled != FIRMWARE_COMPILED_AT) {
+                g_new_firmware = true;
+                g_uploaded_at  = 0;
+            } else {
+                g_uploaded_at = prefs.getUInt(OTA_KEY_UPLOADED, 0);
+            }
         }
         prefs.end();
     }
@@ -521,6 +560,11 @@ static void tick_apply() {
     strncpy(g_last_sha256, g_server_sha256, sizeof(g_last_sha256) - 1);
     g_last_sha256[sizeof(g_last_sha256) - 1] = '\0';
     save_nvs_version();
+
+    // Record the OTA apply time so "uploaded at" reflects it (clock is valid
+    // long after NTP syncs during download). Falls back to boot-time NTP.
+    time_t now = time(nullptr);
+    if (now > 1000000000UL) write_flash_upload_ts((uint32_t)now);
 
     Serial.printf("[OTA] Update committed — rebooting to %s\n", g_current_ver);
     Serial.flush();
