@@ -17,6 +17,7 @@
 #include <freertos/task.h>
 
 #include "bell_core.h"
+#include "bell_logger.h"
 #include "wifi_provision.h"
 #include "led_indicator.h"
 #include <WiFi.h>
@@ -32,9 +33,9 @@
 // #define DEBUG_SERIAL
 
 #ifdef DEBUG_SERIAL
-  #define DBG(...)    Serial.print(__VA_ARGS__)
-  #define DBGLN(...)  Serial.println(__VA_ARGS__)
-  #define DBGF(...)   Serial.printf(__VA_ARGS__)
+  #define DBG(...)    bell_serial.print(__VA_ARGS__)
+  #define DBGLN(...)  bell_serial.println(__VA_ARGS__)
+  #define DBGF(...)   bell_serial.printf(__VA_ARGS__)
 #else
   #define DBG(...)    ((void)0)
   #define DBGLN(...)  ((void)0)
@@ -198,10 +199,10 @@ static bool fetch_schedule() {
         // Hand off to Bell Core for atomic application (reuses server_hash)
         if (bell_core_apply_schedule(body.c_str(), server_hash.c_str())) {
             if (!g_server_config_loaded) {
-                Serial.println(F("NET: first server config loaded"));
+                bell_serial.println(F("NET: first server config loaded"));
                 g_server_config_loaded = true;
             } else {
-                Serial.println(F("NET: schedule updated from server"));
+                bell_serial.println(F("NET: schedule updated from server"));
             }
             return true;
         }
@@ -255,24 +256,30 @@ static void drain_execution_reports() {
 }
 
 static void drain_log_buffer() {
-    if (WiFi.status() != WL_CONNECTED) return;
-    char msg[128];
-    while (bell_core_pop_log(msg, sizeof(msg))) {
-        WiFiClient client;
-        HTTPClient http;
-        http.setTimeout(2000);
-        String url = server_base_url() + "/api/log";
-        if (http.begin(client, url)) {
-            http.addHeader("Content-Type", "application/json");
+    if (WiFi.status() != WL_CONNECTED || !g_server_seen) return;
+
+    char lines[8][BELL_SERIAL_LOG_LINE_BYTES];
+    const uint8_t count = bell_serial_peek_logs(lines, 8);
+    if (count == 0) return;
+
+    WiFiClient client;
+    HTTPClient http;
+    http.setTimeout(1200);
+    String url = server_base_url() + "/api/log";
+    if (http.begin(client, url)) {
+        http.addHeader("Content-Type", "application/json");
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-            JsonDocument doc;
+        JsonDocument doc;
 #pragma GCC diagnostic pop
-            doc["msg"] = msg;
-            String body;
-            serializeJson(doc, body);
-            http.POST(body);
-            http.end();
+        JsonArray entries = doc["lines"].to<JsonArray>();
+        for (uint8_t i = 0; i < count; ++i) entries.add(lines[i]);
+        String body;
+        serializeJson(doc, body);
+        const int code = http.POST(body);
+        http.end();
+        if (code >= 200 && code < 300) {
+            bell_serial_discard_logs(count);
         }
     }
 }
@@ -334,7 +341,7 @@ static void check_schedule_update() {
     if (g_server_seen && elapsed_since(g_last_poll) >= FULL_POLL_MS) {
         if (fetch_schedule()) {
             if (!g_server_config_loaded) {
-                Serial.println(F("NET: first server config"));
+                bell_serial.println(F("NET: first server config"));
                 g_server_config_loaded = true;
             }
         } else {
@@ -365,10 +372,10 @@ void network_sync_init() {
     WiFi.setAutoReconnect(true);
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, pass);
-    Serial.printf("WiFi: connecting to %s...\n", ssid);
+    bell_serial.printf("WiFi: connecting to %s...\n", ssid);
     // --- UDP beacon ---
     g_udp.begin(BEACON_PORT);
-    Serial.printf("Beacon: listening on UDP/%u\n", BEACON_PORT);
+    bell_serial.printf("Beacon: listening on UDP/%u\n", BEACON_PORT);
 
 
     // --- NTP ---
@@ -395,10 +402,10 @@ void network_sync_init() {
         0                          // core 0 — protocol core, away from Arduino loop on core 1
     );
     if (rc != pdPASS) {
-        Serial.println(F("FATAL: network task creation failed"));
+        bell_serial.println(F("FATAL: network task creation failed"));
     }
 
-    Serial.println(F("Network Sync ready (task on core 0)."));
+    bell_serial.println(F("Network Sync ready (task on core 0)."));
 }
 
 // ── FreeRTOS task: runs on core 0, never blocks the Bell Core on core 1 ──
@@ -418,13 +425,13 @@ static void network_sync_task_fn(void *param) {
         // ── Beacon timeout → server is gone. Stop ALL HTTP immediately.
         //    Bell Core continues running from NVS on core 1, unblocked.
         if (g_server_seen && elapsed_since(g_last_beacon_ms) >= BEACON_TIMEOUT_MS) {
-            Serial.println(F("!!! SERVER CONNECTION LOST — running from NVS !!!"));
+            bell_serial.println(F("!!! SERVER CONNECTION LOST — running from NVS !!!"));
             g_server_seen = false;
         }
 
         // ── Server online/offline transitions ───────────
         if (g_server_seen && !s_was_server_seen) {
-            Serial.printf("NET: server reconnected at %s:%u\n",
+            bell_serial.printf("NET: server reconnected at %s:%u\n",
                           g_server_ip.toString().c_str(), g_server_port);
             led_release_state(LedState::OFFLINE_MODE);
             s_was_server_seen = true;
@@ -440,7 +447,7 @@ static void network_sync_task_fn(void *param) {
             if (elapsed_since(g_wifi_last_attempt) >= WIFI_RETRY_MS) {
                 static bool s_first_wifi_failure = true;
                 if (s_first_wifi_failure) {
-                    Serial.println(F("WiFi: not connected — will keep retrying every 30s"));
+                    bell_serial.println(F("WiFi: not connected — will keep retrying every 30s"));
                     s_first_wifi_failure = false;
                 }
                 WiFi.reconnect();
@@ -448,7 +455,7 @@ static void network_sync_task_fn(void *param) {
             }
         } else {
             if (!s_was_connected) {
-                Serial.println(F("WiFi: connected"));
+                bell_serial.println(F("WiFi: connected"));
                 s_was_connected = true;
             }
         }

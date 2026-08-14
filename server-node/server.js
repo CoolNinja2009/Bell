@@ -289,14 +289,15 @@ function cleanStaleHeartbeats() {
   }
 }
 
-const MAX_LOG_ENTRIES = 100;
+const MAX_LOG_ENTRIES = 300;
 const logBuf = [];
+let logSequence = 0;
 function pushLog(msg) {
   const t = new Date();
   const hh = String(t.getHours()).padStart(2, '0');
   const mm = String(t.getMinutes()).padStart(2, '0');
   const ss = String(t.getSeconds()).padStart(2, '0');
-  logBuf.push({ t: `${hh}:${mm}:${ss}`, msg });
+  logBuf.push({ id: ++logSequence, t: `${hh}:${mm}:${ss}`, msg });
   while (logBuf.length > MAX_LOG_ENTRIES) logBuf.shift();
 }
 
@@ -514,8 +515,21 @@ app.post(
 app.post(
   '/api/log',
   asyncRoute(async (req, res) => {
-    const msg = ((req.body && req.body.msg) || '').toString().trim();
-    if (msg) pushLog(msg);
+    const body = req.body || {};
+    if (body.lines !== undefined) {
+      if (!Array.isArray(body.lines) || body.lines.length > 8
+        || body.lines.some((line) => typeof line !== 'string' || line.length > 191)) {
+        throw validationError('Invalid device log batch');
+      }
+      for (const line of body.lines) {
+        const msg = line.trim();
+        if (msg) pushLog(msg);
+      }
+    } else {
+      const msg = (body.msg || '').toString().trim();
+      if (msg.length > 191) throw validationError('Device log message too long');
+      if (msg) pushLog(msg);
+    }
     res.json({ ok: true });
   })
 );
@@ -723,6 +737,13 @@ async function resolveActiveFirmware() {
   return latest ? { ...latest, source: 'latest' } : null;
 }
 
+function firmwareSelectionMatches(state, active) {
+  if (!active || state.source !== active.source) return false;
+  if (state.source === 'release') return active.version === state.release_tag;
+  if (state.source === 'custom') return !!state.custom && active.sha256 === state.custom.sha256;
+  return state.source === 'latest';
+}
+
 app.get(
   '/api/firmware/control',
   asyncRoute(async (req, res) => {
@@ -759,12 +780,14 @@ app.get(
       state,
       active: active && {
         version: active.version,
+        sha256: active.sha256,
         size: active.size,
         compiled_at: active.compiled_at || null,
         ota_protocol: active.ota_protocol,
         min_ota_protocol: active.min_ota_protocol,
         source: active.source,
       },
+      selection_in_sync: firmwareSelectionMatches(state, active),
       releases,
     });
   })
@@ -792,7 +815,9 @@ app.post(
       || typeof status.firmware_version !== 'string' || status.firmware_version.length > 31
       || (status.compiled_at !== null && typeof status.compiled_at !== 'string')
       || (status.ota_protocol !== undefined && (!Number.isSafeInteger(status.ota_protocol)
-        || status.ota_protocol < 1 || status.ota_protocol > 99))) {
+        || status.ota_protocol < 1 || status.ota_protocol > 99))
+      || (status.ota_status !== undefined && (typeof status.ota_status !== 'string' || status.ota_status.length > 48))
+      || (status.ota_detail !== undefined && (typeof status.ota_detail !== 'string' || status.ota_detail.length > 160))) {
       throw validationError('Invalid firmware device status');
     }
     const state = firmwareState.acknowledgeDevice(status);
@@ -810,12 +835,17 @@ app.put(
       return res.json(state);
     }
     if (source !== 'release' || typeof req.body.tag !== 'string') throw validationError('Source must be latest or a release tag');
-    const releases = await listFirmwareReleases();
-    if (!releases.some((release) => release.tag === req.body.tag && release.asset)) {
-      throw validationError(`Release '${req.body.tag}' has no ${FIRMWARE_ASSET_NAME} asset`);
-    }
-    const state = firmwareState.update({ source: 'release', release_tag: req.body.tag, force: null }, true);
-    history.appendHistory({ ch: '*', trigger: 'edit', status: 'firmware_source', note: `release ${req.body.tag}` });
+    if (req.body.force !== undefined && typeof req.body.force !== 'boolean') throw validationError('force must be boolean');
+    const release = await cacheReleaseAsset(req.body.tag);
+    const force = req.body.force === true;
+    const current = firmwareState.load();
+    const forceRequest = force ? {
+      id: (current.force && current.force.id ? current.force.id : 0) + 1,
+      sha256: release.sha256,
+      requested_at: new Date().toISOString(),
+    } : null;
+    const state = firmwareState.update({ source: 'release', release_tag: req.body.tag, force: forceRequest }, true);
+    history.appendHistory({ ch: '*', trigger: 'edit', status: force ? 'firmware_release_forced' : 'firmware_source', note: `release ${req.body.tag}${force ? ' FORCE BYPASS' : ''}` });
     res.json(state);
   })
 );

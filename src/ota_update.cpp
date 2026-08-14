@@ -23,6 +23,7 @@
 #include "bell_core.h"
 #include "led_indicator.h"
 #include "network_sync.h"
+#include "bell_logger.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <Update.h>
@@ -116,6 +117,9 @@ static bool          g_auto_update_enabled = true;
 static uint32_t      g_last_control_poll  = 0;
 static uint32_t      g_last_control_request = 0;
 static uint32_t      g_last_control_id    = 0;
+static char          g_pending_ota_status[49] = "";
+static char          g_pending_ota_detail[161] = "";
+static uint32_t      g_next_ota_status_retry_ms = 0;
 // Upload timestamp (unix epoch; 0 = not yet recorded) and a flag set
 // when the running firmware is freshly flashed (compile time changed).
 static uint32_t      g_uploaded_at        = 0;
@@ -130,6 +134,8 @@ static void tick_download();
 static void tick_verify();
 static void tick_apply();
 static void poll_control();
+static void report_ota_status(const char* status, const char* detail = nullptr);
+static void flush_ota_status();
 // ── Helpers ────────────────────────────────────────────────────────
 
 static uint32_t read_flash_upload_ts() {
@@ -218,7 +224,7 @@ static void record_upload_time() {
 
     struct tm t;
     if (localtime_r(&now, &t)) {
-        Serial.printf("[OTA] Uploaded at: %04d-%02d-%02d %02d:%02d:%02d\n",
+        bell_serial.printf("[OTA] Uploaded at: %04d-%02d-%02d %02d:%02d:%02d\n",
                       t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
                       t.tm_hour, t.tm_min, t.tm_sec);
     }
@@ -294,10 +300,11 @@ static void enter_state(OtaState next) {
         led_request_state(LedState::OTA_FAILED);
         g_error_until_ms = millis() + 10000;
         g_error_count++;  // cap retries — give up after 3 failures
+        report_ota_status("failed", "device rejected or could not verify firmware");
         break;
     case OtaState::RETRY:
         g_retry_until_ms = millis() + OTA_RETRY_INTERVAL_MS;
-        Serial.printf("[OTA] Server unreachable — retrying in %u min\n",
+        bell_serial.printf("[OTA] Server unreachable — retrying in %u min\n",
                       OTA_RETRY_INTERVAL_MS / 60000);
         break;
     }
@@ -335,7 +342,7 @@ static void tick_check_version() {
         http.end();
         // 4xx client errors are definitive — no retry
         if (code >= 400 && code < 500 && code != 429) {
-            Serial.printf("[OTA] Server returned %d — will retry tomorrow\n", code);
+            bell_serial.printf("[OTA] Server returned %d — will retry tomorrow\n", code);
             g_next_daily_check_ms = millis() + OTA_DAILY_CHECK_INTERVAL_MS;
             enter_state(OtaState::IDLE);
         } else {
@@ -366,51 +373,57 @@ static void tick_check_version() {
 
     const uint32_t minimumProtocol = doc["min_ota_protocol"] | 1U;
     if (minimumProtocol > OTA_PROTOCOL_VERSION && !g_force_update) {
-        Serial.printf("[OTA] Firmware requires OTA protocol %u; device supports %u - skipped\n",
+        bell_serial.printf("[OTA] Firmware requires OTA protocol %u; device supports %u - skipped\n",
                       minimumProtocol, OTA_PROTOCOL_VERSION);
         g_boot_check_done = true;
         g_next_daily_check_ms = millis() + OTA_DAILY_CHECK_INTERVAL_MS;
+        report_ota_status("skipped_protocol", "selected firmware needs a newer OTA protocol");
         enter_state(OtaState::IDLE);
         return;
     }
 
     if (!valid_build_stamp(g_server_build) && !g_force_update) {
-        Serial.println(F("[OTA] Server firmware has no trusted compilation timestamp - skipped"));
+        bell_serial.println(F("[OTA] Server firmware has no trusted compilation timestamp - skipped"));
         g_boot_check_done = true;
         g_next_daily_check_ms = millis() + OTA_DAILY_CHECK_INTERVAL_MS;
+        report_ota_status("skipped_no_timestamp", "release has no trusted BELL_BUILD timestamp");
         enter_state(OtaState::IDLE);
         return;
     }
 
     const bool already_applied = g_last_sha256[0] && strcasecmp(g_server_sha256, g_last_sha256) == 0;
-    if (already_applied || (!g_force_update && build_stamp_cmp(g_server_build, FIRMWARE_BUILD_STAMP) <= 0)) {
-        Serial.printf("[OTA] Up to date (compiled current=%s, server=%s)\n",
+    if ((!g_force_update && already_applied)
+        || (!g_force_update && build_stamp_cmp(g_server_build, FIRMWARE_BUILD_STAMP) <= 0)) {
+        bell_serial.printf("[OTA] Up to date (compiled current=%s, server=%s)\n",
                       FIRMWARE_BUILD_STAMP, g_server_build);
         g_boot_check_done = true;
         g_error_count = 0;
         g_next_daily_check_ms = millis() + OTA_DAILY_CHECK_INTERVAL_MS;
+        report_ota_status("up_to_date", "selected firmware is not newer than this build");
         enter_state(OtaState::IDLE);
         return;
     }
 
     if (g_force_update) {
-        Serial.printf("[OTA] WARNING: forced firmware install #%u requested by dashboard\n", g_server_force_id);
+        bell_serial.printf("[OTA] WARNING: forced firmware install #%u requested by dashboard\n", g_server_force_id);
     } else {
-        Serial.printf("[OTA] New firmware compiled %s is newer than %s (%u bytes)\n",
+        bell_serial.printf("[OTA] New firmware compiled %s is newer than %s (%u bytes)\n",
                       g_server_build, FIRMWARE_BUILD_STAMP, g_server_size);
     }
     const esp_partition_t* next_ota = esp_ota_get_next_update_partition(nullptr);
     const uint32_t max_ota_size = next_ota ? next_ota->size : 0;
     if (g_server_size == 0 || g_server_size > max_ota_size) {
-        Serial.println(F("[OTA] Invalid firmware size - aborting"));
+        bell_serial.println(F("[OTA] Invalid firmware size - aborting"));
         enter_state(OtaState::ERROR);
         return;
     }
     if (!valid_sha256(g_server_sha256)) {
-        Serial.println(F("[OTA] Invalid SHA-256 provided by server - aborting"));
+        bell_serial.println(F("[OTA] Invalid SHA-256 provided by server - aborting"));
         enter_state(OtaState::ERROR);
         return;
     }
+    report_ota_status(g_force_update ? "forced_download_started" : "download_started",
+                      g_force_update ? "dashboard force request accepted" : "newer compiled firmware accepted");
     enter_state(OtaState::DOWNLOAD);
 }
 
@@ -430,11 +443,11 @@ static void tick_download() {
     if (g_bytes_written == 0) {
         Update.abort();
         if (!Update.begin(g_server_size, U_FLASH)) {
-            Serial.printf("[OTA] Update.begin() failed: %s\n", Update.errorString());
+            bell_serial.printf("[OTA] Update.begin() failed: %s\n", Update.errorString());
             enter_state(OtaState::ERROR);
             return;
         }
-        Serial.printf("[OTA] Downloading %u bytes...\n", g_server_size);
+        bell_serial.printf("[OTA] Downloading %u bytes...\n", g_server_size);
     }
 
     String url = String(network_server_base_url()) + "/api/firmware/download?v=" + g_server_ver
@@ -455,7 +468,7 @@ static void tick_download() {
 
     int code = http.GET();
     if (code == 409) {
-        Serial.println(F("[OTA] Firmware artifact changed; restarting with fresh metadata"));
+        bell_serial.println(F("[OTA] Firmware artifact changed; restarting with fresh metadata"));
         http.end();
         Update.abort();
         g_bytes_written = 0;
@@ -469,7 +482,7 @@ static void tick_download() {
     }
     if (g_bytes_written > 0 && code != 206) {
         // Never append a full-file response to a partial OTA image.
-        Serial.println(F("[OTA] Server ignored resume range; restarting download"));
+        bell_serial.println(F("[OTA] Server ignored resume range; restarting download"));
         http.end();
         Update.abort();
         g_bytes_written = 0;
@@ -480,7 +493,7 @@ static void tick_download() {
     if (g_bytes_written > 0) {
         const String expectedRange = String("bytes ") + g_bytes_written + "-";
         if (!http.header("Content-Range").startsWith(expectedRange)) {
-            Serial.println(F("[OTA] Invalid resume range; restarting download"));
+            bell_serial.println(F("[OTA] Invalid resume range; restarting download"));
             http.end();
             Update.abort();
             g_bytes_written = 0;
@@ -510,7 +523,7 @@ static void tick_download() {
     if (chunk_read > 0) {
         size_t written = Update.write(g_chunk_buf, chunk_read);
         if (written != chunk_read) {
-            Serial.printf("[OTA] Write error at %u: %s\n", g_bytes_written, Update.errorString());
+            bell_serial.printf("[OTA] Write error at %u: %s\n", g_bytes_written, Update.errorString());
             http.end();
             Update.abort();
             enter_state(OtaState::ERROR);
@@ -518,14 +531,14 @@ static void tick_download() {
         }
         g_bytes_written += written;
         if (g_bytes_written > g_server_size) {
-            Serial.println(F("[OTA] Download exceeded declared size; discarding"));
+            bell_serial.println(F("[OTA] Download exceeded declared size; discarding"));
             http.end();
             Update.abort();
             enter_state(OtaState::ERROR);
             return;
         }
         if (g_bytes_written % 65536 == 0 || g_bytes_written >= g_server_size) {
-            Serial.printf("[OTA] Progress: %u / %u bytes\n", g_bytes_written, g_server_size);
+            bell_serial.printf("[OTA] Progress: %u / %u bytes\n", g_bytes_written, g_server_size);
         }
     }
 
@@ -541,14 +554,14 @@ static void tick_download() {
         return;
     }
     if (done) {
-        Serial.printf("[OTA] Download complete: %u bytes\n", g_bytes_written);
+        bell_serial.printf("[OTA] Download complete: %u bytes\n", g_bytes_written);
         enter_state(OtaState::VERIFY);
     }
 }
 
 static void tick_verify() {
     if (!Update.end()) {
-        Serial.printf("[OTA] Update.end() failed: %s\n", Update.errorString());
+        bell_serial.printf("[OTA] Update.end() failed: %s\n", Update.errorString());
         enter_state(OtaState::ERROR);
         return;
     }
@@ -556,7 +569,7 @@ static void tick_verify() {
     // Compute SHA‑256 of the written partition
     const esp_partition_t* update_part = esp_ota_get_next_update_partition(nullptr);
     if (!update_part) {
-        Serial.println(F("[OTA] No update partition found"));
+        bell_serial.println(F("[OTA] No update partition found"));
         enter_state(OtaState::ERROR);
         return;
     }
@@ -586,7 +599,7 @@ static void tick_verify() {
             size_t chunk = read_size - offset;
             if (chunk > sizeof(read_buf)) chunk = sizeof(read_buf);
             if (esp_partition_read(update_part, offset, read_buf, chunk) != ESP_OK) {
-                Serial.println(F("[OTA] Flash read error during verify"));
+                bell_serial.println(F("[OTA] Flash read error during verify"));
                 mbedtls_sha256_free(&ctx);
                 enter_state(OtaState::ERROR);
                 return;
@@ -606,16 +619,17 @@ static void tick_verify() {
     }
     computed_hex[64] = '\0';
 
-    Serial.printf("[OTA] SHA‑256 computed:  %s\n", computed_hex);
-    Serial.printf("[OTA] SHA‑256 expected: %s\n", g_server_sha256);
+    bell_serial.printf("[OTA] SHA‑256 computed:  %s\n", computed_hex);
+    bell_serial.printf("[OTA] SHA‑256 expected: %s\n", g_server_sha256);
 
     if (strcasecmp(computed_hex, g_server_sha256) != 0) {
-        Serial.println(F("[OTA] SHA‑256 MISMATCH — firmware corrupt, discarding"));
+        bell_serial.println(F("[OTA] SHA‑256 MISMATCH — firmware corrupt, discarding"));
         enter_state(OtaState::ERROR);
         return;
     }
 
-    Serial.println(F("[OTA] SHA‑256 verified — firmware is valid"));
+    bell_serial.println(F("[OTA] SHA‑256 verified — firmware is valid"));
+    report_ota_status("verified", "SHA-256 verified; committing update");
     enter_state(OtaState::APPLY);
 }
 
@@ -623,7 +637,7 @@ static void tick_apply() {
     // Commit the OTA partition — this tells the bootloader to
     // boot from the new partition on next reset.
     if (esp_ota_set_boot_partition(esp_ota_get_next_update_partition(nullptr)) != ESP_OK) {
-        Serial.println(F("[OTA] Failed to set boot partition"));
+        bell_serial.println(F("[OTA] Failed to set boot partition"));
         enter_state(OtaState::ERROR);
         return;
     }
@@ -641,8 +655,9 @@ static void tick_apply() {
     time_t now = time(nullptr);
     if (now > 1000000000UL) write_flash_upload_ts((uint32_t)now);
 
-    Serial.printf("[OTA] Update committed — rebooting to %s\n", g_current_ver);
-    Serial.flush();
+    bell_serial.printf("[OTA] Update committed — rebooting to %s\n", g_current_ver);
+    report_ota_status("installing", "boot partition set; device is restarting");
+    bell_serial.flush();
     delay(500);
     ESP.restart();
 }
@@ -660,24 +675,58 @@ static void tick_error() {
     }
 }
 
-static void acknowledge_control(uint32_t control_id, uint32_t request_id) {
+static void report_ota_status(const char* status, const char* detail) {
+    if (!status) return;
+    strncpy(g_pending_ota_status, status, sizeof(g_pending_ota_status) - 1);
+    g_pending_ota_status[sizeof(g_pending_ota_status) - 1] = '\0';
+    if (detail) {
+        strncpy(g_pending_ota_detail, detail, sizeof(g_pending_ota_detail) - 1);
+        g_pending_ota_detail[sizeof(g_pending_ota_detail) - 1] = '\0';
+    } else {
+        g_pending_ota_detail[0] = '\0';
+    }
+    g_next_ota_status_retry_ms = 0;
+    flush_ota_status();
+}
+
+static void flush_ota_status() {
+    if (!g_pending_ota_status[0] || WiFi.status() != WL_CONNECTED
+        || !network_server_base_url()[0] || g_last_control_id == 0
+        || (int32_t)(millis() - g_next_ota_status_retry_ms) < 0) return;
     WiFiClient client;
     HTTPClient http;
     http.setTimeout(500);
     const String url = String(network_server_base_url()) + "/api/firmware/device-status";
-    if (!http.begin(client, url)) return;
+    if (!http.begin(client, url)) {
+        g_next_ota_status_retry_ms = millis() + 5000;
+        return;
+    }
     http.addHeader("Content-Type", "application/json");
     JsonDocument doc;
-    doc["control_id"] = control_id;
-    doc["request_id"] = request_id;
+    doc["control_id"] = g_last_control_id;
+    doc["request_id"] = g_last_control_request;
     doc["auto_update"] = g_auto_update_enabled;
     doc["firmware_version"] = g_current_ver;
     doc["compiled_at"] = FIRMWARE_BUILD_STAMP;
     doc["ota_protocol"] = OTA_PROTOCOL_VERSION;
+    doc["ota_status"] = g_pending_ota_status;
+    if (g_pending_ota_detail[0]) doc["ota_detail"] = g_pending_ota_detail;
     String body;
     serializeJson(doc, body);
-    http.POST(body);
+    const int code = http.POST(body);
     http.end();
+    if (code >= 200 && code < 300) {
+        g_pending_ota_status[0] = '\0';
+        g_pending_ota_detail[0] = '\0';
+    } else {
+        g_next_ota_status_retry_ms = millis() + 5000;
+    }
+}
+
+static void acknowledge_control(uint32_t control_id, uint32_t request_id) {
+    g_last_control_id = control_id;
+    g_last_control_request = request_id;
+    report_ota_status("acknowledged", "dashboard control received");
 }
 
 static void poll_control() {
@@ -708,24 +757,24 @@ static void poll_control() {
         g_next_daily_check_ms = 0;
     }
     if (auto_update_enabled != g_auto_update_enabled) {
-        Serial.printf("[OTA] Daily updates %s by dashboard\n", auto_update_enabled ? "enabled" : "disabled");
+        bell_serial.printf("[OTA] Daily updates %s by dashboard\n", auto_update_enabled ? "enabled" : "disabled");
     }
     g_auto_update_enabled = auto_update_enabled;
     if (control_id != 0 && control_id != g_last_control_id) {
         g_last_control_id = control_id;
         acknowledge_control(control_id, request_id);
-        Serial.printf("[OTA] Dashboard control #%u acknowledged\n", control_id);
+        bell_serial.printf("[OTA] Dashboard control #%u acknowledged\n", control_id);
     }
     if (request_id != 0 && request_id != g_last_control_request) {
         g_last_control_request = request_id;
         ota_request_check();
-        Serial.printf("[OTA] Dashboard requested update check #%u\n", request_id);
+        bell_serial.printf("[OTA] Dashboard requested update check #%u\n", request_id);
     }
 }
 
 static void tick_retry() {
     if (millis() >= g_retry_until_ms) {
-        Serial.println(F("[OTA] Retry timer expired — checking again"));
+        bell_serial.println(F("[OTA] Retry timer expired — checking again"));
         enter_state(OtaState::CHECK_VERSION);
     }
 }
@@ -734,13 +783,13 @@ static void tick_retry() {
 
 void ota_init() {
     load_nvs();
-    Serial.printf("[OTA] Firmware version: %s\n", g_current_ver);
-    Serial.printf("[OTA] Compiled at: %s\n", FIRMWARE_BUILD_MARKER + 11);
-    Serial.printf("[OTA] Protocol: %s (minimum device protocol: %s)\n",
+    bell_serial.printf("[OTA] Firmware version: %s\n", g_current_ver);
+    bell_serial.printf("[OTA] Compiled at: %s\n", FIRMWARE_BUILD_MARKER + 11);
+    bell_serial.printf("[OTA] Protocol: %s (minimum device protocol: %s)\n",
                   FIRMWARE_OTA_PROTOCOL_MARKER + 18,
                   FIRMWARE_OTA_MIN_PROTOCOL_MARKER + 22);
     if (g_last_sha256[0]) {
-        Serial.printf("[OTA] Last applied SHA‑256: %.16s...\n", g_last_sha256);
+        bell_serial.printf("[OTA] Last applied SHA‑256: %.16s...\n", g_last_sha256);
     }
 }
 
@@ -754,13 +803,16 @@ void ota_confirm_boot_if_stable() {
     if (millis() < OTA_BOOT_CONFIRM_DELAY_MS) return;
 
     esp_ota_mark_app_valid_cancel_rollback();
-    Serial.println("[OTA] Boot confirmed stable — rollback protection cancelled");
+    bell_serial.println("[OTA] Boot confirmed stable — rollback protection cancelled");
+    report_ota_status("boot_confirmed", "new firmware booted and rollback protection cleared");
     confirmed = true;
 }
 bool ota_tick() {
     // Record the upload timestamp on the first boot of a new firmware,
     // once the system clock is valid. No-op after that.
     if (g_new_firmware) record_upload_time();
+
+    flush_ota_status();
 
     if (!ota_busy()) poll_control();
 
@@ -805,7 +857,7 @@ bool ota_tick() {
             }
         }
 
-        Serial.println(F("[OTA] Checking for updates..."));
+        bell_serial.println(F("[OTA] Checking for updates..."));
         enter_state(OtaState::CHECK_VERSION);
         return true;
     }

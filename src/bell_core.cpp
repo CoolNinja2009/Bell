@@ -19,15 +19,16 @@
 #include <sys/time.h>
 #include <esp_sntp.h>
 #include "led_indicator.h"
+#include "bell_logger.h"
 // ============================================================================
 //  SERIAL DEBUG MACROS
 // ============================================================================
 // #define DEBUG_SERIAL   // uncomment to enable verbose serial output
 
 #ifdef DEBUG_SERIAL
-  #define DBG(...)    Serial.print(__VA_ARGS__)
-  #define DBGLN(...)  Serial.println(__VA_ARGS__)
-  #define DBGF(...)   Serial.printf(__VA_ARGS__)
+  #define DBG(...)    bell_serial.print(__VA_ARGS__)
+  #define DBGLN(...)  bell_serial.println(__VA_ARGS__)
+  #define DBGF(...)   bell_serial.printf(__VA_ARGS__)
 #else
   #define DBG(...)    ((void)0)
   #define DBGLN(...)  ((void)0)
@@ -188,10 +189,10 @@ static void rtc_print_i2c_diagnostics() {
     const int sdaLevel = digitalRead(RTC_SDA_PIN);
     const int sclLevel = digitalRead(RTC_SCL_PIN);
     const bool rtcAck = rtc_i2c_probe(RTC_I2C_ADDRESS);
-    Serial.printf("RTC: I2C SDA=%d SCL=%d address 0x%02X %s\n",
+    bell_serial.printf("RTC: I2C SDA=%d SCL=%d address 0x%02X %s\n",
                   sdaLevel, sclLevel, RTC_I2C_ADDRESS, rtcAck ? "ACK" : "NACK");
     if (!rtcAck) {
-        Serial.println(F("RTC: check 3.3V/GND and that SDA/SCL reach GPIO21/GPIO22"));
+        bell_serial.println(F("RTC: check 3.3V/GND and that SDA/SCL reach GPIO21/GPIO22"));
     }
 }
 
@@ -216,7 +217,7 @@ static bool rtc_seed_system_clock() {
 
     static bool s_first_seed = true;
     if (s_first_seed) {
-        Serial.printf("RTC: clock seeded — %04d-%02d-%02d %02d:%02d:%02d\n",
+        bell_serial.printf("RTC: clock seeded — %04d-%02d-%02d %02d:%02d:%02d\n",
                       now.year(), now.month(), now.day(),
                       now.hour(), now.minute(), now.second());
         s_first_seed = false;
@@ -237,7 +238,7 @@ static void rtc_sync_from_system() {
     DateTime verify = g_rtc.now();
     static bool s_first_sync = true;
     if (s_first_sync) {
-        Serial.printf("RTC: synced & verified — %04d-%02d-%02d %02d:%02d:%02d\n",
+        bell_serial.printf("RTC: synced & verified — %04d-%02d-%02d %02d:%02d:%02d\n",
                       verify.year(), verify.month(), verify.day(),
                       verify.hour(), verify.minute(), verify.second());
         s_first_sync = false;
@@ -293,7 +294,7 @@ static const char *primary_channel_key(const Channel &ch) {
 static bool nvs_load_config() {
     Preferences prefs;
     if (!prefs.begin(NVS_NS, true)) {
-        Serial.println(F("NVS: failed to open stored config"));
+        bell_serial.println(F("NVS: failed to open stored config"));
         return false;
     }
     String hash = prefs.getString("hash", "");
@@ -390,13 +391,13 @@ static void trigger_channel_now(Channel &ch, uint32_t pulse_ms,
         char logmsg[128];
         snprintf(logmsg, sizeof(logmsg), "%s ON (%lums, %s)", ch_key,
                  static_cast<unsigned long>(pulse_ms), trigger);
-        // Serial output
+        // bell_serial output
         time_t n = time(nullptr);
         struct tm t;
         if (localtime_r(&n, &t))
-            Serial.printf("[%02d:%02d:%02d] %s\n", t.tm_hour, t.tm_min, t.tm_sec, logmsg);
+            bell_serial.printf("[%02d:%02d:%02d] %s\n", t.tm_hour, t.tm_min, t.tm_sec, logmsg);
         else
-            Serial.println(logmsg);
+            bell_serial.println(logmsg);
         log_to_buffer_locked(logmsg);
     }
 
@@ -431,9 +432,9 @@ static bool tick_channel(Channel &ch, const time_t now) {
                 time_t n = time(nullptr);
                 struct tm t;
                 if (localtime_r(&n, &t))
-                    Serial.printf("[%02d:%02d:%02d] %s\n", t.tm_hour, t.tm_min, t.tm_sec, logmsg);
+                    bell_serial.printf("[%02d:%02d:%02d] %s\n", t.tm_hour, t.tm_min, t.tm_sec, logmsg);
                 else
-                    Serial.println(logmsg);
+                    bell_serial.println(logmsg);
                 log_to_buffer_locked(logmsg);
             }
             if (time_is_valid() && ch.next_fire > 0) {
@@ -647,7 +648,7 @@ static bool apply_raw_schedule(const char *raw_json, const char *hash_8chars) {
         prefs.end();
     }
     g_nvs_has_config = persisted;
-    if (!persisted) Serial.println(F("NVS: failed to persist schedule update"));
+    if (!persisted) bell_serial.println(F("NVS: failed to persist schedule update"));
 
     DBGF("[CORE] schedule applied — hash=%s  ch1_ok=%d  ch2_ok=%d\n",
          g_cfg_hash, ch1_ok, ch2_ok);
@@ -671,10 +672,10 @@ void bell_core_init() {
     g_ch1.cfg = g_fallback_ch1;
     g_ch2.cfg = g_fallback_ch2;
 
-    // --- 3. Serial ---
-    Serial.begin(115200);
+    // --- 3. bell_serial ---
+    bell_serial.begin(115200);
     delay(100);
-    Serial.println(F("\n=== BELL CORE BOOT ==="));
+    bell_serial.println(F("\n=== BELL CORE BOOT ==="));
 
     // --- 4. Load NVS schedule (if available) ---
     if (nvs_load_config()) {
@@ -698,14 +699,14 @@ void bell_core_init() {
                 g_ch1.schedule_key[MAX_CH_KEY - 1] = '\0';
                 strncpy(g_ch2.schedule_key, stored_ch2.schedule_key, MAX_CH_KEY - 1);
                 g_ch2.schedule_key[MAX_CH_KEY - 1] = '\0';
-                Serial.println(F("NVS: booted from stored config"));
+                bell_serial.println(F("NVS: booted from stored config"));
             } else {
                 g_nvs_has_config = false;
-                Serial.println(F("NVS: incomplete stored config ignored; using fallback"));
+                bell_serial.println(F("NVS: incomplete stored config ignored; using fallback"));
             }
         } else {
             g_nvs_has_config = false;
-            Serial.println(F("NVS: invalid stored config ignored; using fallback"));
+            bell_serial.println(F("NVS: invalid stored config ignored; using fallback"));
         }
     }
 
@@ -716,22 +717,22 @@ void bell_core_init() {
     rtc_print_i2c_diagnostics();
     if (rtc_i2c_probe(RTC_I2C_ADDRESS) && g_rtc.begin()) {
         g_rtc_present = true;
-        Serial.println(F("RTC: module detected"));
+        bell_serial.println(F("RTC: module detected"));
         if (g_rtc.lostPower()) {
-            Serial.println(F("RTC: lost power — setting to compile time"));
+            bell_serial.println(F("RTC: lost power — setting to compile time"));
             g_rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
         }
         rtc_seed_system_clock();
     } else {
-        Serial.println(F("RTC: DS3231 not detected"));
+        bell_serial.println(F("RTC: DS3231 not detected"));
     }
     g_last_rtc_sync = millis();
 
-    Serial.println(F("Bell Core ready."));
+    bell_serial.println(F("Bell Core ready."));
 
     // --- 6. Cross-task mutex ---
     g_mutex = xSemaphoreCreateMutex();
-    if (!g_mutex) Serial.println(F("FATAL: mutex creation failed"));
+    if (!g_mutex) bell_serial.println(F("FATAL: mutex creation failed"));
 }
 
 void bell_core_tick() {
@@ -744,7 +745,7 @@ void bell_core_tick() {
             if (g_time_stall_since == 0) {
                 g_time_stall_since = now_ms;
             } else if (elapsed_since(g_time_stall_since) >= TIME_STALL_THRESHOLD_S * 1000U) {
-                Serial.println(F("CRITICAL: system clock stalled — restarting SNTP"));
+                bell_serial.println(F("CRITICAL: system clock stalled — restarting SNTP"));
                 sntp_restart();
                 g_time_stall_since = now_ms;
             }
@@ -792,7 +793,7 @@ void bell_core_tick() {
             rtc_sync_from_system();
             g_last_rtc_sync = now_ms;
         }
-        Serial.println(F("NTP: first sync confirmed"));
+        bell_serial.println(F("NTP: first sync confirmed"));
     }
 
     // ── Initial schedule seeding ────────────────────────────────
@@ -931,13 +932,13 @@ static void log_to_buffer_locked(const char *msg) {
 }
 
 void bell_core_log(const char *msg) {
-    // Serial output (always) — no lock needed
+    // bell_serial output (always) — no lock needed
     time_t now = time(nullptr);
     struct tm t;
     if (localtime_r(&now, &t)) {
-        Serial.printf("[%02d:%02d:%02d] %s\n", t.tm_hour, t.tm_min, t.tm_sec, msg);
+        bell_serial.printf("[%02d:%02d:%02d] %s\n", t.tm_hour, t.tm_min, t.tm_sec, msg);
     } else {
-        Serial.println(msg);
+        bell_serial.println(msg);
     }
 
     // Ring buffer for network module — protect with mutex
