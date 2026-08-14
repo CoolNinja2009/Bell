@@ -299,7 +299,8 @@ static bool nvs_load_config() {
 //  BELL STATE MACHINE
 // ============================================================================
 
-static void recompute_next_fire(Channel &ch, const time_t after_epoch) {
+static void recompute_next_fire(Channel &ch, const time_t after_epoch,
+                                bool allow_apply_grace = false) {
     struct tm t;
     if (!localtime_r(&after_epoch, &t)) {
         ch.next_fire = 0;
@@ -318,11 +319,21 @@ static void recompute_next_fire(Channel &ch, const time_t after_epoch) {
         return;
     }
 
+    const time_t midnight = midnight_of(after_epoch);
+    if (midnight == 0) { ch.next_fire = 0; ch.next_fire_idx = 0; return; }
+
     size_t i = 0;
     while (i < n && sched[i] <= now_sm) { ++i; }
 
-    const time_t midnight = midnight_of(after_epoch);
-    if (midnight == 0) { ch.next_fire = 0; ch.next_fire_idx = 0; return; }
+    // Schedules are minute-precision. A network or NTP update at 08:55:01
+    // must not silently skip the 08:55 bell, but an already-fired slot must
+    // never be armed again.
+    if (allow_apply_grace && i > 0 && now_sm - sched[i - 1] <= SCHEDULE_APPLY_GRACE_S
+        && !(ch.last_fire_day == midnight && ch.last_fire_idx == i - 1)) {
+        ch.next_fire = midnight + static_cast<time_t>(sched[i - 1]);
+        ch.next_fire_idx = i - 1;
+        return;
+    }
 
     if (i < n) {
         ch.next_fire     = midnight + static_cast<time_t>(sched[i]);
@@ -339,6 +350,8 @@ static void channel_init(Channel &ch) {
     ch.pulse_start = 0;
     ch.active_pulse_ms = 0;
     ch.next_fire   = 0;
+    ch.last_fire_day = 0;
+    ch.last_fire_idx = static_cast<size_t>(-1);
 }
 
 static void trigger_channel_now(Channel &ch, uint32_t pulse_ms,
@@ -426,6 +439,8 @@ static bool tick_channel(Channel &ch, const time_t now) {
     }
 
     if (now >= ch.next_fire) {
+        ch.last_fire_day = midnight_of(now);
+        ch.last_fire_idx = ch.next_fire_idx;
         trigger_channel_now(ch, ch.cfg.schedule_pulse_ms[ch.next_fire_idx],
                             primary_channel_key(ch), "schedule");
         return true;
@@ -530,11 +545,15 @@ static bool parse_channel_cfg_from_keys(JsonObject root, Channel &ch) {
 
 static bool apply_raw_schedule(const char *raw_json, const char *hash_8chars) {
     if (!raw_json || !hash_8chars || strlen(hash_8chars) != 8) return false;
+    const String raw_config(raw_json);
+    char hash_copy[9];
+    strncpy(hash_copy, hash_8chars, 8);
+    hash_copy[8] = '\0';
 
     // Parse into a temporary document — never touch live configs until validated
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    StaticJsonDocument<2048> doc;
+    JsonDocument doc;
 #pragma GCC diagnostic pop
     const DeserializationError err = deserializeJson(doc, raw_json);
     if (err) {
@@ -554,8 +573,8 @@ static bool apply_raw_schedule(const char *raw_json, const char *hash_8chars) {
     const bool ch1_ok = parse_channel_cfg_from_keys(root, tmp_ch1);
     const bool ch2_ok = parse_channel_cfg_from_keys(root, tmp_ch2);
 
-    if (!ch1_ok && !ch2_ok) {
-        DBGLN(F("[CORE] apply_schedule: no matching channel keys found"));
+    if (!ch1_ok || !ch2_ok) {
+        DBGLN(F("[CORE] apply_schedule: both ch1 and ch2 are required"));
         return false;
     }
 
@@ -591,23 +610,27 @@ static bool apply_raw_schedule(const char *raw_json, const char *hash_8chars) {
     }
 
     // Update hash and persist
-    strncpy(g_cfg_hash, hash_8chars, 8);
+    strncpy(g_cfg_hash, hash_copy, 8);
     g_cfg_hash[8] = '\0';
-    g_raw_config = raw_json;
-
-    // Persist to NVS
-    {
-        Preferences prefs;
-        prefs.begin(NVS_NS, false);
-        prefs.putString("hash", g_cfg_hash);
-        prefs.putString("cfg",  g_raw_config);
-        prefs.end();
-        g_nvs_has_config = true;
-    }
+    g_raw_config = raw_config;
 
     // Defer next_fire recompute to bell_core_tick — avoids cross-task race
     s_schedule_dirty = true;
     bell_core_unlock();
+
+    // Flash I/O can block. Keep it outside the scheduler mutex so a due
+    // bell is never delayed by an NVS write from the network task.
+    bool persisted = false;
+    Preferences prefs;
+    if (prefs.begin(NVS_NS, false)) {
+        // The watchdog treats hash as the commit marker, so write the body
+        // first and publish the new hash only after it is complete.
+        persisted = prefs.putString("cfg", raw_config) > 0
+                 && prefs.putString("hash", hash_copy) > 0;
+        prefs.end();
+    }
+    g_nvs_has_config = persisted;
+    if (!persisted) Serial.println(F("NVS: failed to persist schedule update"));
 
     DBGF("[CORE] schedule applied — hash=%s  ch1_ok=%d  ch2_ok=%d\n",
          g_cfg_hash, ch1_ok, ch2_ok);
@@ -640,7 +663,7 @@ void bell_core_init() {
     if (nvs_load_config()) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-        StaticJsonDocument<2048> doc;
+        JsonDocument doc;
 #pragma GCC diagnostic pop
         const DeserializationError err = deserializeJson(doc, g_raw_config);
         if (!err) {
@@ -716,8 +739,8 @@ void bell_core_tick() {
     if (s_schedule_dirty) {
         const time_t now2 = time(nullptr);
         if (time_is_valid()) {
-            recompute_next_fire(g_ch1, now2);
-            recompute_next_fire(g_ch2, now2);
+            recompute_next_fire(g_ch1, now2, true);
+            recompute_next_fire(g_ch2, now2, true);
             s_schedules_seeded = true;
             g_last_schedule_refresh = now_ms;
         }
@@ -727,8 +750,8 @@ void bell_core_tick() {
     // ── NTP first-sync correction ───────────────────────────────
     if (!s_ntp_confirmed && sntp_sync_done()) {
         s_ntp_confirmed = true;
-        recompute_next_fire(g_ch1, now);
-        recompute_next_fire(g_ch2, now);
+        recompute_next_fire(g_ch1, now, true);
+        recompute_next_fire(g_ch2, now, true);
         g_last_schedule_refresh = now_ms;
         if (g_rtc_present) {
             rtc_sync_from_system();
@@ -740,15 +763,15 @@ void bell_core_tick() {
     // ── Initial schedule seeding ────────────────────────────────
     if (time_is_valid()) {
         if (!s_schedules_seeded) {
-            recompute_next_fire(g_ch1, now);
-            recompute_next_fire(g_ch2, now);
+            recompute_next_fire(g_ch1, now, true);
+            recompute_next_fire(g_ch2, now, true);
             s_schedules_seeded = true;
         }
         // Safety net: if next_fire is 0, retry
         if (g_ch1.next_fire == 0 && g_ch1.cfg.schedule_len > 0)
-            recompute_next_fire(g_ch1, now);
+            recompute_next_fire(g_ch1, now, true);
         if (g_ch2.next_fire == 0 && g_ch2.cfg.schedule_len > 0)
-            recompute_next_fire(g_ch2, now);
+            recompute_next_fire(g_ch2, now, true);
     }
 
     // ── Process pending commands ────────────────────────────────
@@ -834,11 +857,12 @@ const char *bell_core_channel_key(uint8_t ch_index) {
     return nullptr;
 }
 
-const char *bell_core_schedule_hash() {
+void bell_core_copy_schedule_hash(char *out, size_t out_size) {
+    if (!out || out_size == 0) return;
     bell_core_lock();
-    const char *h = g_cfg_hash;
+    strncpy(out, g_cfg_hash, out_size - 1);
+    out[out_size - 1] = '\0';
     bell_core_unlock();
-    return h;
 }
 
 bool bell_core_pop_execution_report(char *ch_key_out, size_t ch_key_max,

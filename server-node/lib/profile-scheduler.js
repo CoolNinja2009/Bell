@@ -1,7 +1,7 @@
 'use strict';
 /**
- * lib/profile-scheduler.js — Daily profile resolution
- * ─────────────────────────────────────────────────────────────────────
+ * lib/profile-scheduler.js â€” Daily profile resolution
+ * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  * Determines which profile should be active today.
  *
  * Priority:
@@ -17,17 +17,28 @@ const profiles = require('./profiles');
 const calendar = require('./calendar');
 const settings = require('./settings');
 
-const DOW_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const SCHEDULE_TIME_ZONE = process.env.SCHEDULE_TIME_ZONE || 'Asia/Kolkata';
+
+function nowParts() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: SCHEDULE_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'long',
+  }).formatToParts(new Date());
+  return Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+}
 
 /** Get today's date as YYYY-MM-DD in local timezone. */
 function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const p = nowParts();
+  return `${p.year}-${p.month}-${p.day}`;
 }
 
 /** Get current day of week as lowercase English name. */
 function todayDow() {
-  return DOW_NAMES[new Date().getDay()];
+  return nowParts().weekday.toLowerCase();
 }
 
 /**
@@ -36,9 +47,10 @@ function todayDow() {
  */
 function resolveActiveProfileId() {
   const s = settings.getSettings();
+  const exists = (id) => !!(id && profiles.getProfile(id));
 
   // 1. Manual override
-  if (s.manual_override) {
+  if (exists(s.manual_override)) {
     return { profileId: s.manual_override, reason: 'manual_override' };
   }
 
@@ -46,18 +58,18 @@ function resolveActiveProfileId() {
 
   // 2. Date-specific assignment
   const today = todayStr();
-  if (cal.dates[today]) {
+  if (exists(cal.dates[today])) {
     return { profileId: cal.dates[today], reason: `calendar_date:${today}` };
   }
 
   // 3. Day-of-week assignment
   const dow = todayDow();
-  if (cal.dow[dow]) {
+  if (exists(cal.dow[dow])) {
     return { profileId: cal.dow[dow], reason: `calendar_dow:${dow}` };
   }
 
   // 4. Default profile
-  if (s.default_profile) {
+  if (exists(s.default_profile)) {
     return { profileId: s.default_profile, reason: 'default' };
   }
 
@@ -76,13 +88,16 @@ function resolveActiveProfileId() {
  */
 function resolveAndApply() {
   const { profileId, reason } = resolveActiveProfileId();
+  const previousProfileId = settings.getSettings().active_profile;
 
   if (profileId) {
     settings.setActiveProfile(profileId);
   }
 
   const info = { profileId, reason, appliedAt: new Date().toISOString() };
-  console.log(`[profile-scheduler] Active profile: ${profileId || '(none)'} (${reason})`);
+  if (previousProfileId !== profileId) {
+    console.log(`[profile-scheduler] Active profile: ${profileId || '(none)'} (${reason})`);
+  }
   return info;
 }
 
@@ -91,6 +106,8 @@ function resolveAndApply() {
  * profile. Returns the exact { ch1: {...}, ch2: {...} } format or null.
  */
 function getActiveSchedule() {
+  resolveAndApply();
+
   const s = settings.getSettings();
   const profileId = s.active_profile;
 
@@ -106,23 +123,23 @@ function getActiveSchedule() {
  * Get info about the currently active profile for display purposes.
  */
 function getActiveInfo() {
+  const resolved = resolveAndApply();
   const s = settings.getSettings();
   const profileId = s.active_profile;
 
   if (!profileId) return { profileId: null, name: null, reason: 'none' };
 
   // Re-derive the reason (we don't persist it)
-  const { reason } = resolveActiveProfileId();
   const p = profiles.getProfile(profileId);
 
   return {
     profileId,
     name: p ? p.name : '(deleted)',
-    reason,
+    reason: resolved.reason,
     override: !!s.manual_override,
     overrideUntil: s.override_until || null,
     channelCount: p && p.channels ? Object.keys(p.channels).length : 0,
   };
 }
 
-module.exports = { resolveAndApply, getActiveSchedule, getActiveInfo, todayStr, todayDow };
+module.exports = { resolveAndApply, getActiveSchedule, getActiveInfo, todayStr, todayDow, SCHEDULE_TIME_ZONE };

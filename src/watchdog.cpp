@@ -33,6 +33,7 @@ static constexpr uint8_t  CHANNEL_COUNT = 2;
 static constexpr uint32_t POLL_MS             = 250;    // 4 Hz — fast enough for any pulse
 static constexpr uint32_t STALL_TIMEOUT_MS    = 10000;  // bell_core heartbeat timeout
 static constexpr uint32_t MAX_PULSE_MARGIN_MS = 2000;   // safety margin beyond pulse_ms
+static constexpr uint32_t MAX_UNSCHEDULED_ON_MS = 60000; // matches the server manual-trigger limit
 static constexpr uint32_t NVS_RELOAD_MS       = 300000; // re-read NVS every 5 min
 static constexpr size_t   MAX_SCHEDULE        = 24;
 static constexpr size_t   MAX_SKIP_DATES      = 32;
@@ -56,11 +57,12 @@ struct WdChannel {
     size_t   skip_count;
     uint32_t forced_on_ms;                    // millis() when watchdog turned relay ON
     uint32_t active_pulse_ms;                 // pulse duration watchdog applied
+    uint32_t observed_on_ms;                  // first observed ON while the core is healthy
 };
 
 static WdChannel g_ch[CHANNEL_COUNT] = {
-    { CH1_PIN, {}, {}, 0, {}, 0, 0, 0 },
-    { CH2_PIN, {}, {}, 0, {}, 0, 0, 0 },
+    { CH1_PIN, {}, {}, 0, {}, 0, 0, 0, 0 },
+    { CH2_PIN, {}, {}, 0, {}, 0, 0, 0, 0 },
 };
 
 // ============================================================================
@@ -149,7 +151,7 @@ static bool watchdog_load_nvs() {
     // Parse JSON
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    StaticJsonDocument<2048> doc;
+    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, cfg);
 #pragma GCC diagnostic pop
     if (err) {
@@ -288,11 +290,23 @@ static void watchdog_check_channel(WdChannel &ch, uint32_t now_ms, bool taken_ov
     uint32_t sec_of_day = t.tm_hour * 3600U + t.tm_min * 60U + t.tm_sec;
 
     bool is_on = relay_read(ch.gpio);
+    if (!is_on) ch.observed_on_ms = 0;
 
     // ── SAFETY OFF (always active, even in normal mode) ──
     // If a relay is ON but no schedule slot covers this moment, or the
     // pulse has exceeded its max margin, force it OFF.
     if (is_on) {
+        if (ch.observed_on_ms == 0) ch.observed_on_ms = now_ms;
+        if (!taken_over) {
+            // A healthy core may be running a legitimate manual pulse, which
+            // is intentionally absent from the timetable.
+            if (elapsed_since(ch.observed_on_ms) > MAX_UNSCHEDULED_ON_MS + MAX_PULSE_MARGIN_MS) {
+                relay_write(ch.gpio, false);
+                Serial.printf("[WATCHDOG] GPIO%u SAFETY OFF (unscheduled pulse exceeded limit)\n", ch.gpio);
+                ch.observed_on_ms = 0;
+            }
+            return;
+        }
         bool skip = is_skip_day(ch);
         bool should_on = !skip && channel_should_be_on(ch, sec_of_day);
 
@@ -308,6 +322,7 @@ static void watchdog_check_channel(WdChannel &ch, uint32_t now_ms, bool taken_ov
             }
             ch.forced_on_ms = 0;
             ch.active_pulse_ms = 0;
+            ch.observed_on_ms = 0;
         } else if (ch.forced_on_ms != 0) {
             // Relay ON, schedule says ON, but check max pulse duration
             uint32_t limit = ch.active_pulse_ms + MAX_PULSE_MARGIN_MS;
@@ -370,7 +385,7 @@ static void watchdog_task_fn(void *param) {
         uint32_t now_ms = millis();
 
         // ── Reload NVS if hash changed or periodic refresh ──
-        if (elapsed_since(g_nvs_reload_at) >= NVS_RELOAD_MS) {
+        if (static_cast<int32_t>(now_ms - g_nvs_reload_at) >= 0) {
             watchdog_load_nvs();
             g_nvs_reload_at = now_ms;
         }
