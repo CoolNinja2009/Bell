@@ -589,20 +589,26 @@ async function refreshFirmwareCache() {
       fs.writeFileSync(shaPath, sha256);
     }
 
-    const sha256 = fs.existsSync(shaPath) ? fs.readFileSync(shaPath, 'utf8').trim() : '';
-    const stat = fs.statSync(binPath);
+    const artifact = firmwareMetadata.inspectFirmware(binPath, MAX_FIRMWARE_SIZE);
+    const recordedSha = fs.existsSync(shaPath) ? fs.readFileSync(shaPath, 'utf8').trim() : '';
+    if (recordedSha && recordedSha !== artifact.sha256) {
+      fs.rmSync(binPath, { force: true });
+      fs.rmSync(shaPath, { force: true });
+      throw new Error(`Cached firmware digest mismatch for ${tag}; cache entry discarded`);
+    }
+    fs.writeFileSync(shaPath, artifact.sha256);
 
     firmwareCache = {
       version: tag,
-      sha256,
-      size: stat.size,
+      sha256: artifact.sha256,
+      size: artifact.size,
       path: binPath,
-      compiled_at: firmwareMetadata.readBuildStamp(binPath),
-      ota_protocol: firmwareMetadata.readOtaProtocol(binPath),
-      min_ota_protocol: firmwareMetadata.readMinimumOtaProtocol(binPath),
+      compiled_at: artifact.compiled_at,
+      ota_protocol: artifact.ota_protocol,
+      min_ota_protocol: artifact.min_ota_protocol,
       fetchedAt: Date.now(),
     };
-    log(`[firmware] Cached v${tag} (${(stat.size / 1024).toFixed(1)} KB, compiled=${firmwareCache.compiled_at || 'unverified'}, sha256=${sha256.substring(0, 16)}...)`);
+    log(`[firmware] Cached v${tag} (${(artifact.size / 1024).toFixed(1)} KB, compiled=${firmwareCache.compiled_at || 'unverified'}, sha256=${artifact.sha256.substring(0, 16)}...)`);
     return firmwareCache;
   } catch (err) {
     logError('[firmware] refreshFirmwareCache', err);
@@ -654,15 +660,20 @@ async function cacheReleaseAsset(tag) {
     fs.writeFileSync(binPath, binary);
     fs.writeFileSync(shaPath, crypto.createHash('sha256').update(binary).digest('hex'));
   }
-  const stat = fs.statSync(binPath);
+  const artifact = firmwareMetadata.inspectFirmware(binPath, MAX_FIRMWARE_SIZE);
+  const recordedSha = fs.existsSync(shaPath) ? fs.readFileSync(shaPath, 'utf8').trim() : '';
+  if (recordedSha && recordedSha !== artifact.sha256) {
+    throw new Error(`Cached firmware digest mismatch for release ${tag}`);
+  }
+  fs.writeFileSync(shaPath, artifact.sha256);
   return {
     version: tag,
-    sha256: fs.readFileSync(shaPath, 'utf8').trim(),
-    size: stat.size,
+    sha256: artifact.sha256,
+    size: artifact.size,
     path: binPath,
-    compiled_at: firmwareMetadata.readBuildStamp(binPath),
-    ota_protocol: firmwareMetadata.readOtaProtocol(binPath),
-    min_ota_protocol: firmwareMetadata.readMinimumOtaProtocol(binPath),
+    compiled_at: artifact.compiled_at,
+    ota_protocol: artifact.ota_protocol,
+    min_ota_protocol: artifact.min_ota_protocol,
     source: 'release',
   };
 }
@@ -673,17 +684,20 @@ async function resolveActiveFirmware() {
     const fileName = path.basename(state.custom.file || '');
     const filePath = path.join(CUSTOM_FIRMWARE_DIR, fileName);
     if (fileName && fs.existsSync(filePath)) {
-      const stat = fs.statSync(filePath);
+      const artifact = firmwareMetadata.inspectFirmware(filePath, MAX_FIRMWARE_SIZE);
+      if (artifact.sha256 !== state.custom.sha256) {
+        throw new Error('Selected custom firmware digest no longer matches its upload record');
+      }
       return {
         version: state.custom.version,
-        sha256: state.custom.sha256,
-        size: stat.size,
+        sha256: artifact.sha256,
+        size: artifact.size,
         path: filePath,
-        compiled_at: state.custom.compiled_at || firmwareMetadata.readBuildStamp(filePath),
+        compiled_at: state.custom.compiled_at || artifact.compiled_at,
         ota_protocol: Number.isSafeInteger(state.custom.ota_protocol)
-          ? state.custom.ota_protocol : firmwareMetadata.readOtaProtocol(filePath),
+          ? state.custom.ota_protocol : artifact.ota_protocol,
         min_ota_protocol: Number.isSafeInteger(state.custom.min_ota_protocol)
-          ? state.custom.min_ota_protocol : firmwareMetadata.readMinimumOtaProtocol(filePath),
+          ? state.custom.min_ota_protocol : artifact.min_ota_protocol,
         source: 'custom',
       };
     }
@@ -866,6 +880,7 @@ app.get(
       version: info.version,
       size: info.size,
       sha256: info.sha256,
+      artifact_sha256: info.sha256,
       compiled_at: info.compiled_at || null,
       ota_protocol: info.ota_protocol || firmwareMetadata.LEGACY_OTA_PROTOCOL,
       min_ota_protocol: minimumProtocol,
@@ -886,6 +901,14 @@ app.get(
       return res.status(503).json({ error: 'firmware not available' });
     }
 
+    const requestedSha = typeof req.query.sha === 'string' ? req.query.sha.toLowerCase() : '';
+    if (requestedSha && !/^[a-f0-9]{64}$/.test(requestedSha)) {
+      return res.status(400).json({ error: 'invalid firmware artifact SHA-256' });
+    }
+    if (requestedSha && requestedSha !== info.sha256.toLowerCase()) {
+      return res.status(409).json({ error: 'firmware artifact changed; request fresh metadata' });
+    }
+
     const stat = fs.statSync(info.path);
     const totalSize = stat.size;
     if (totalSize === 0) {
@@ -898,12 +921,18 @@ app.get(
     let end = totalSize - 1;
 
     if (range) {
-      const parts = range.replace(/bytes=/, '').split('-');
-      start = parseInt(parts[0], 10);
-      if (parts[1]) end = parseInt(parts[1], 10);
-      if (isNaN(start) || start < 0) start = 0;
-      if (isNaN(end) || end >= totalSize) end = totalSize - 1;
-      if (start > end) start = 0; // invalid range — serve full file
+      const match = /^bytes=(\d+)-(\d*)$/.exec(range);
+      if (!match) {
+        res.set('Content-Range', `bytes */${totalSize}`);
+        return res.status(416).end();
+      }
+      start = Number(match[1]);
+      end = match[2] ? Number(match[2]) : totalSize - 1;
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= totalSize || start > end) {
+        res.set('Content-Range', `bytes */${totalSize}`);
+        return res.status(416).end();
+      }
+      if (end >= totalSize) end = totalSize - 1;
     }
 
     const chunkSize = (end - start) + 1;
@@ -913,8 +942,8 @@ app.get(
       'Content-Type': 'application/octet-stream',
       'Content-Length': chunkSize,
       'Accept-Ranges': 'bytes',
-      'Cache-Control': 'public, max-age=3600',
-      'ETag': `"${info.version}"`,
+      'Cache-Control': 'no-store',
+      'ETag': `"${info.sha256}"`,
     };
     if (status === 206) {
       headers['Content-Range'] = `bytes ${start}-${end}/${totalSize}`;
