@@ -1,7 +1,7 @@
 'use strict';
 /**
- * lib/settings.js — Active profile, default profile, and manual override
- * ─────────────────────────────────────────────────────────────────────
+ * lib/settings.js â€” Active profile, default profile, and manual override
+ * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  * Stores in settings.json:
  *   - active_profile: the currently active profile ID (resolved daily)
  *   - default_profile: fallback when no calendar assignment matches
@@ -32,7 +32,13 @@ function load() {
   if (!fs.existsSync(SETTINGS_FILE)) return defaults();
   try {
     const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
-    return { ...defaults(), ...data };
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return defaults();
+    return {
+      active_profile: typeof data.active_profile === 'string' ? data.active_profile : null,
+      default_profile: typeof data.default_profile === 'string' ? data.default_profile : null,
+      manual_override: typeof data.manual_override === 'string' ? data.manual_override : null,
+      override_until: typeof data.override_until === 'string' ? data.override_until : null,
+    };
   } catch {
     return defaults();
   }
@@ -90,9 +96,41 @@ function setDefaultProfile(profileId) {
 /** Record the currently active profile (set by the scheduler). */
 function setActiveProfile(profileId) {
   const s = load();
-  s.active_profile = profileId || null;
-  save(s);
+  const next = profileId || null;
+  if (s.active_profile !== next) {
+    s.active_profile = next;
+    save(s);
+  }
   return s;
+}
+
+/** Clear settings fields that reference a deleted profile. */
+function clearProfileReferences(profileId) {
+  const s = load();
+  let changed = false;
+  for (const key of ['active_profile', 'default_profile', 'manual_override']) {
+    if (s[key] === profileId) {
+      s[key] = null;
+      changed = true;
+    }
+  }
+  if (changed) {
+    if (!s.manual_override) s.override_until = null;
+    save(s);
+  }
+  return s;
+}
+
+/** Replace settings after caller validation, discarding unknown legacy fields. */
+function replaceAll(data) {
+  const next = {
+    active_profile: data.active_profile || null,
+    default_profile: data.default_profile || null,
+    manual_override: data.manual_override || null,
+    override_until: data.override_until || null,
+  };
+  save(next);
+  return next;
 }
 
 module.exports = {
@@ -102,4 +140,6 @@ module.exports = {
   clearOverride,
   setDefaultProfile,
   setActiveProfile,
+  clearProfileReferences,
+  replaceAll,
 };

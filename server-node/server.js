@@ -70,6 +70,10 @@ const BELL_SVG_PATH = path.join(__dirname, 'bell.svg');
 
 const CHANNEL_KEY_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,19}$/; // must start with a letter
 const MAX_CHANNELS = 24;
+const DEVICE_CHANNEL_KEYS = new Set(['ch1', 'ch2']);
+const MAX_SCHEDULE_SLOTS = 24;
+const MAX_SKIP_DATES = 32;
+const MAX_PULSE_MS = 60000;
 
 // ── OTA Firmware ───────────────────────────────────────────────────
 // The server caches the latest firmware binary from GitHub Releases.
@@ -106,6 +110,7 @@ function loadSchedule() {
 }
 
 function saveSchedule(data) {
+  profileScheduler.resolveAndApply();
   const s = profileSettings.getSettings();
   if (!s.active_profile) {
     // No active profile yet — auto-create a default one
@@ -120,7 +125,7 @@ function saveSchedule(data) {
 function isValidDateStr(d) {
   if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
   const dt = new Date(d + 'T00:00:00Z');
-  return !Number.isNaN(dt.getTime());
+  return !Number.isNaN(dt.getTime()) && dt.toISOString().slice(0, 10) === d;
 }
 
 /** Throws a 400-tagged Error if the schedule is malformed. */
@@ -136,8 +141,9 @@ function validationError(msg) {
 function validateSchedule(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw validationError('Body must be a JSON object');
   const keys = Object.keys(data);
-  if (keys.length === 0) throw validationError('At least one channel is required');
-  if (keys.length > MAX_CHANNELS) throw validationError(`Too many channels (max ${MAX_CHANNELS})`);
+  if (keys.length !== DEVICE_CHANNEL_KEYS.size || !keys.every((key) => DEVICE_CHANNEL_KEYS.has(key))) {
+    throw validationError('Schedule must contain exactly the device channels: ch1 and ch2');
+  }
 
   for (const ch of keys) {
     if (!CHANNEL_KEY_RE.test(ch)) {
@@ -146,34 +152,40 @@ function validateSchedule(data) {
     const c = data[ch];
     if (!c || typeof c !== 'object') throw validationError(`${ch} must be an object`);
     if (typeof c.enabled !== 'boolean') throw validationError(`${ch}.enabled must be bool`);
-    if (typeof c.pulse_ms !== 'number' || c.pulse_ms < 100) {
-      throw validationError(`${ch}.pulse_ms must be >= 100`);
+    if (!Number.isInteger(c.pulse_ms) || c.pulse_ms < 100 || c.pulse_ms > MAX_PULSE_MS) {
+      throw validationError(`${ch}.pulse_ms must be an integer from 100 to ${MAX_PULSE_MS}`);
     }
     if (c.label !== undefined && (typeof c.label !== 'string' || c.label.length > 40)) {
       throw validationError(`${ch}.label must be a string up to 40 chars`);
     }
     if (!Array.isArray(c.schedule)) throw validationError(`${ch}.schedule must be a list`);
+    if (c.schedule.length > MAX_SCHEDULE_SLOTS) throw validationError(`${ch}.schedule supports at most ${MAX_SCHEDULE_SLOTS} times`);
+    const seenTimes = new Set();
     for (const entry of c.schedule) {
       let timeStr;
       if (typeof entry === 'string') {
         timeStr = entry;
       } else if (entry && typeof entry === 'object' && typeof entry.time === 'string') {
         timeStr = entry.time;
-        if (entry.pulse_ms !== undefined && (typeof entry.pulse_ms !== 'number' || entry.pulse_ms < 100)) {
-          throw validationError(`${ch} schedule entry pulse_ms must be >= 100`);
+        if (entry.pulse_ms !== undefined && (!Number.isInteger(entry.pulse_ms) || entry.pulse_ms < 100 || entry.pulse_ms > MAX_PULSE_MS)) {
+          throw validationError(`${ch} schedule entry pulse_ms must be an integer from 100 to ${MAX_PULSE_MS}`);
         }
       } else {
         throw validationError(`${ch} schedule entry invalid — use "HH:MM" or {"time":"HH:MM","pulse_ms":N}`);
       }
+      if (!/^\d{2}:\d{2}$/.test(timeStr)) throw validationError(`${ch} schedule time '${timeStr}' invalid`);
       const parts = timeStr.split(':');
       if (parts.length !== 2) throw validationError(`${ch} schedule time '${timeStr}' invalid — use HH:MM`);
       const hh = Number(parts[0]);
       const mm = Number(parts[1]);
+      if (seenTimes.has(timeStr)) throw validationError(`${ch} schedule contains duplicate time '${timeStr}'`);
+      seenTimes.add(timeStr);
       if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
         throw validationError(`${ch} schedule time '${timeStr}' invalid — use HH:MM`);
       }
     }
     if (!Array.isArray(c.skip_dates)) throw validationError(`${ch}.skip_dates must be a list`);
+    if (c.skip_dates.length > MAX_SKIP_DATES) throw validationError(`${ch}.skip_dates supports at most ${MAX_SKIP_DATES} dates`);
     for (const d of c.skip_dates) {
       if (!isValidDateStr(d)) throw validationError(`${ch} skip_date '${d}' invalid — use YYYY-MM-DD`);
     }
@@ -183,6 +195,48 @@ function validateSchedule(data) {
 function scheduleHash() {
   const sorted = JSON.stringify(sortObjectDeep(loadSchedule()));
   return crypto.createHash('md5').update(sorted).digest('hex').slice(0, 8);
+}
+
+function validateProfileBundle(bundle) {
+  if (!bundle || !bundle.profiles || typeof bundle.profiles !== 'object' || Array.isArray(bundle.profiles)) {
+    throw validationError('Invalid profile import bundle');
+  }
+  for (const profile of Object.values(bundle.profiles)) {
+    if (!profile || !profile.channels) throw validationError('Each imported profile must contain channels');
+    validateSchedule(profile.channels);
+  }
+}
+
+function validateCalendarSnapshot(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)
+    || !data.dates || typeof data.dates !== 'object' || Array.isArray(data.dates)
+    || !data.dow || typeof data.dow !== 'object' || Array.isArray(data.dow)) {
+    throw validationError('Calendar must contain date and day-of-week assignment objects');
+  }
+  for (const [date, profileId] of Object.entries(data.dates)) {
+    if (!calendar.isValidDate(date) || typeof profileId !== 'string' || !profiles.getProfile(profileId)) {
+      throw validationError(`Invalid calendar date assignment '${date}'`);
+    }
+  }
+  for (const [dow, profileId] of Object.entries(data.dow)) {
+    if (!calendar.VALID_DOWS.includes(dow) || typeof profileId !== 'string' || !profiles.getProfile(profileId)) {
+      throw validationError(`Invalid calendar day assignment '${dow}'`);
+    }
+  }
+}
+
+function validateSettingsSnapshot(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw validationError('Settings must be an object');
+  for (const key of ['active_profile', 'default_profile', 'manual_override']) {
+    if (data[key] !== undefined && data[key] !== null && (typeof data[key] !== 'string' || !profiles.getProfile(data[key]))) {
+      throw validationError(`Invalid settings profile '${key}'`);
+    }
+  }
+  if (data.override_until !== undefined && data.override_until !== null
+    && (typeof data.override_until !== 'string' || Number.isNaN(Date.parse(data.override_until)))) {
+    throw validationError('Invalid override_until timestamp');
+  }
+  if (data.override_until && !data.manual_override) throw validationError('override_until requires manual_override');
 }
 
 function sortObjectDeep(obj) {
@@ -590,6 +644,7 @@ app.post(
   asyncRoute(async (req, res) => {
     validateSchedule(req.body); // throws -> caught by asyncRoute -> error middleware -> 500 w/ message
     saveSchedule(req.body);
+    profileScheduler.resolveAndApply();
     history.appendHistory({ ch: '*', trigger: 'edit', status: 'schedule_saved', note: `${Object.keys(req.body).length} channel(s)` });
     res.json({ ok: true });
   })
@@ -633,10 +688,12 @@ app.post(
     if (!CHANNEL_KEY_RE.test(key)) {
       throw validationError('Channel key must start with a letter and use only letters/numbers/_/-, max 20 chars');
     }
+    if (!DEVICE_CHANNEL_KEYS.has(key)) throw validationError('This device has fixed ch1 and ch2 relay channels');
     const sch = loadSchedule();
     if (sch[key]) throw validationError(`Channel '${key}' already exists`);
     if (Object.keys(sch).length >= MAX_CHANNELS) throw validationError(`Too many channels (max ${MAX_CHANNELS})`);
     sch[key] = { enabled: false, pulse_ms: 2000, schedule: [], skip_dates: [], label: label || key.toUpperCase() };
+    validateSchedule(sch);
     saveSchedule(sch);
     history.appendHistory({ ch: key, trigger: 'edit', status: 'channel_created' });
     pushLog(`channel '${key}' created`);
@@ -649,16 +706,10 @@ app.delete(
   loginRequired,
   asyncRoute(async (req, res) => {
     const key = req.params.key;
+    if (!DEVICE_CHANNEL_KEYS.has(key)) throw validationError('This device has fixed ch1 and ch2 relay channels');
     const sch = loadSchedule();
     if (!sch[key]) throw validationError(`Channel '${key}' not found`);
-    if (Object.keys(sch).length <= 1) throw validationError('At least one channel must remain');
-    delete sch[key];
-    saveSchedule(sch);
-    heartbeats.delete(key);
-    pendingCommands.delete(key);
-    history.appendHistory({ ch: key, trigger: 'edit', status: 'channel_deleted' });
-    pushLog(`channel '${key}' deleted`);
-    res.json({ ok: true });
+    throw validationError('Device relay channels ch1 and ch2 cannot be removed');
   })
 );
 
@@ -672,8 +723,11 @@ app.post(
     const key = req.params.key;
     const sch = loadSchedule();
     if (!sch[key]) throw validationError(`Channel '${key}' not found`);
-    const pulseMs = Number(req.body && req.body.pulse_ms) || sch[key].pulse_ms || 2000;
-    if (pulseMs < 100) throw validationError('pulse_ms must be >= 100');
+    const requestedPulse = req.body && req.body.pulse_ms;
+    const pulseMs = requestedPulse === undefined ? (sch[key].pulse_ms || 2000) : Number(requestedPulse);
+    if (!Number.isInteger(pulseMs) || pulseMs < 100 || pulseMs > MAX_PULSE_MS) {
+      throw validationError(`pulse_ms must be an integer from 100 to ${MAX_PULSE_MS}`);
+    }
     pendingCommands.set(key, { pulse_ms: pulseMs, issued_at: Date.now() });
     history.appendHistory({ ch: key, trigger: 'manual', status: 'queued', pulse_ms: pulseMs, note: req.apiKey ? `via API key '${req.apiKey.name}'` : 'via dashboard' });
     pushLog(`${key} manual trigger queued (${pulseMs}ms)`);
@@ -752,16 +806,16 @@ app.post(
       history.replaceAll(body.history);
     }
     if (body.profiles) {
+      validateProfileBundle(body.profiles);
       profiles.importProfiles(body.profiles);
     }
     if (body.calendar) {
-      const fs = require('fs');
-      const path = require('path');
-      fs.writeFileSync(calendar.CALENDAR_FILE, JSON.stringify(body.calendar, null, 2));
+      validateCalendarSnapshot(body.calendar);
+      calendar.replaceAll(body.calendar);
     }
     if (body.settings) {
-      const fs = require('fs');
-      fs.writeFileSync(profileSettings.SETTINGS_FILE, JSON.stringify(body.settings, null, 2));
+      validateSettingsSnapshot(body.settings);
+      profileSettings.replaceAll(body.settings);
     }
     // Re-resolve profile after restore
     profileScheduler.resolveAndApply();
@@ -806,6 +860,7 @@ app.post(
   asyncRoute(async (req, res) => {
     const name = (req.body && req.body.name) || 'New Profile';
     const channels = (req.body && req.body.channels) || undefined;
+    if (channels !== undefined) validateSchedule(channels);
     const created = profiles.createProfile(name, channels);
     history.appendHistory({ ch: '*', trigger: 'edit', status: 'profile_created', note: created.name });
     pushLog(`profile '${created.name}' created`);
@@ -825,6 +880,7 @@ app.put(
       validateSchedule(req.body.channels);
       profiles.saveChannels(id, req.body.channels);
     }
+    profileScheduler.resolveAndApply();
     const p = profiles.getProfile(id);
     if (!p) throw Object.assign(new Error('Profile not found'), { status: 404 });
     history.appendHistory({ ch: '*', trigger: 'edit', status: 'profile_updated', note: p.name });
@@ -840,6 +896,9 @@ app.delete(
     const p = profiles.getProfile(req.params.id);
     if (!p) throw Object.assign(new Error('Profile not found'), { status: 404 });
     profiles.deleteProfile(req.params.id);
+    calendar.removeProfileAssignments(req.params.id);
+    profileSettings.clearProfileReferences(req.params.id);
+    profileScheduler.resolveAndApply();
     history.appendHistory({ ch: '*', trigger: 'edit', status: 'profile_deleted', note: p.name });
     pushLog(`profile '${p.name}' deleted`);
     res.json({ ok: true });
@@ -873,7 +932,9 @@ app.post(
   '/api/profiles/import',
   loginRequired,
   asyncRoute(async (req, res) => {
+    validateProfileBundle(req.body);
     const count = profiles.importProfiles(req.body);
+    profileScheduler.resolveAndApply();
     history.appendHistory({ ch: '*', trigger: 'edit', status: 'profiles_imported', note: `${count} profile(s)` });
     pushLog(`${count} profile(s) imported`);
     res.json({ ok: true, imported: count });
@@ -897,7 +958,9 @@ app.post(
   asyncRoute(async (req, res) => {
     const { date, profileId } = req.body || {};
     if (!date) throw validationError('date is required (YYYY-MM-DD)');
+    if (profileId && !profiles.getProfile(profileId)) throw validationError('Profile not found');
     calendar.assignDate(date, profileId || null);
+    profileScheduler.resolveAndApply();
     history.appendHistory({ ch: '*', trigger: 'edit', status: 'calendar_updated', note: `date ${date}` });
     pushLog(`calendar: ${date} -> ${profileId || '(removed)'}`);
     res.json(calendar.getAll());
@@ -910,7 +973,9 @@ app.post(
   asyncRoute(async (req, res) => {
     const { dow, profileId } = req.body || {};
     if (!dow) throw validationError('dow is required');
+    if (profileId && !profiles.getProfile(profileId)) throw validationError('Profile not found');
     calendar.assignDow(dow, profileId || null);
+    profileScheduler.resolveAndApply();
     history.appendHistory({ ch: '*', trigger: 'edit', status: 'calendar_updated', note: `dow ${dow}` });
     pushLog(`calendar: ${dow} -> ${profileId || '(removed)'}`);
     res.json(calendar.getAll());
@@ -922,6 +987,7 @@ app.delete(
   loginRequired,
   asyncRoute(async (req, res) => {
     calendar.removeAssignment(req.params.type, req.params.key);
+    profileScheduler.resolveAndApply();
     pushLog(`calendar: removed ${req.params.type} ${req.params.key}`);
     res.json(calendar.getAll());
   })
@@ -943,8 +1009,10 @@ app.put(
   loginRequired,
   asyncRoute(async (req, res) => {
     if (req.body && req.body.default_profile !== undefined) {
+      if (req.body.default_profile && !profiles.getProfile(req.body.default_profile)) throw validationError('Profile not found');
       profileSettings.setDefaultProfile(req.body.default_profile);
     }
+    profileScheduler.resolveAndApply();
     res.json(profileSettings.getSettings());
   })
 );
@@ -955,6 +1023,7 @@ app.post(
   asyncRoute(async (req, res) => {
     const { profileId, until } = req.body || {};
     if (!profileId) throw validationError('profileId is required');
+    if (!profiles.getProfile(profileId)) throw validationError('Profile not found');
     profileSettings.setOverride(profileId, until || null);
     profileScheduler.resolveAndApply();
     const info = profileScheduler.getActiveInfo();

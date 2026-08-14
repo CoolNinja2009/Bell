@@ -155,7 +155,8 @@ static bool fetch_schedule() {
         if (body.length() < 2 || body[0] != '{') continue;
 
         // Get hash for dedup check — also used for Bell Core if schedule changed
-        const char *current_hash = bell_core_schedule_hash();
+        char current_hash[9] = {0};
+        bell_core_copy_schedule_hash(current_hash, sizeof(current_hash));
         String server_hash = "________";
         bool hash_unchanged = false;
         {
@@ -166,7 +167,7 @@ static bool fetch_schedule() {
             if (hh.begin(hc, hurl) && hh.GET() == 200) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-                StaticJsonDocument<64> hdoc;
+                JsonDocument hdoc;
 #pragma GCC diagnostic pop
                 if (!deserializeJson(hdoc, hh.getStream())) {
                     const char *h = hdoc["h"] | "";
@@ -185,7 +186,7 @@ static bool fetch_schedule() {
         // Validate JSON structure before handing to Bell Core
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-        StaticJsonDocument<2048> doc;
+        JsonDocument doc;
 #pragma GCC diagnostic pop
         const DeserializationError err = deserializeJson(doc, body);
         if (err) {
@@ -240,7 +241,7 @@ static void drain_execution_reports() {
             http.addHeader("Content-Type", "application/json");
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-            StaticJsonDocument<128> doc;
+            JsonDocument doc;
 #pragma GCC diagnostic pop
             doc["ch"] = ch_key;
             doc["pulse_ms"] = pulse_ms;
@@ -265,7 +266,7 @@ static void drain_log_buffer() {
             http.addHeader("Content-Type", "application/json");
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-            StaticJsonDocument<256> doc;
+            JsonDocument doc;
 #pragma GCC diagnostic pop
             doc["msg"] = msg;
             String body;
@@ -290,7 +291,7 @@ static void poll_commands() {
         if (code != 200) { http.end(); continue; }
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-        StaticJsonDocument<128> doc;
+        JsonDocument doc;
 #pragma GCC diagnostic pop
         const DeserializationError err = deserializeJson(doc, http.getStream());
         http.end();
@@ -312,11 +313,12 @@ static void check_schedule_update() {
         if (http.begin(client, url) && http.GET() == 200) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-            StaticJsonDocument<64> doc;
+            JsonDocument doc;
 #pragma GCC diagnostic pop
             if (!deserializeJson(doc, http.getStream())) {
                 const char *h = doc["h"] | "";
-                const char *current = bell_core_schedule_hash();
+                char current[9] = {0};
+                bell_core_copy_schedule_hash(current, sizeof(current));
                 if (strlen(h) == 8 && (strlen(current) != 8 || strcmp(h, current) != 0)) {
                     DBGLN(F("NET: hash changed — fetching schedule"));
                     if (fetch_schedule()) {

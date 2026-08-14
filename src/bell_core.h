@@ -50,6 +50,7 @@ constexpr long    DAYLIGHT_SEC      = 0;
 // ============================================================================
 constexpr uint32_t TIME_STALL_THRESHOLD_S  = 120;
 constexpr uint32_t SCHEDULE_REFRESH_MS     = 3600000;  // hourly recompute
+constexpr uint32_t SCHEDULE_APPLY_GRACE_S  = 5;        // do not lose a bell while applying a fresh schedule
 
 // ============================================================================
 //  RTC CONFIGURATION  (DS3231 via RTClib)
@@ -83,6 +84,8 @@ struct Channel {
     uint32_t      active_pulse_ms = 0;
     time_t        next_fire       = 0;
     size_t        next_fire_idx   = 0;   // index into cfg.schedule / cfg.schedule_pulse_ms
+    time_t        last_fire_day   = 0;
+    size_t        last_fire_idx   = static_cast<size_t>(-1);
 
     Channel(uint8_t p, const char *const *keys, size_t key_count)
         : pin(p), server_keys(keys), server_key_count(key_count) {}
@@ -130,8 +133,8 @@ void bell_core_discard_commands();
  *  Returns nullptr if index out of range. */
 const char *bell_core_channel_key(uint8_t ch_index);
 
-/** Get the currently loaded schedule hash (8 chars + null). */
-const char *bell_core_schedule_hash();
+/** Copy the currently loaded schedule hash (8 chars + null). */
+void bell_core_copy_schedule_hash(char *out, size_t out_size);
 
 /** True once the scheduler has valid time and has computed next_fire.
  *  Used by main.cpp to release the BOOTING LED state. */

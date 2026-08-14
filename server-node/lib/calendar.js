@@ -13,6 +13,20 @@ const CALENDAR_FILE = path.join(__dirname, '..', 'calendar.json');
 
 const VALID_DOWS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
+function emptyCalendar() {
+  return { dates: {}, dow: {} };
+}
+
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isValidDate(date) {
+  if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const parsed = new Date(`${date}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date;
+}
+
 function writeFileAtomic(filePath, contents) {
   const tmp = filePath + '.tmp';
   fs.writeFileSync(tmp, contents);
@@ -20,11 +34,16 @@ function writeFileAtomic(filePath, contents) {
 }
 
 function load() {
-  if (!fs.existsSync(CALENDAR_FILE)) return { dates: {}, dow: {} };
+  if (!fs.existsSync(CALENDAR_FILE)) return emptyCalendar();
   try {
-    return JSON.parse(fs.readFileSync(CALENDAR_FILE, 'utf8'));
+    const data = JSON.parse(fs.readFileSync(CALENDAR_FILE, 'utf8'));
+    if (!isPlainObject(data)) return emptyCalendar();
+    return {
+      dates: isPlainObject(data.dates) ? data.dates : {},
+      dow: isPlainObject(data.dow) ? data.dow : {},
+    };
   } catch {
-    return { dates: {}, dow: {} };
+    return emptyCalendar();
   }
 }
 
@@ -39,7 +58,7 @@ function getAll() {
 
 /** Assign a profile to a specific date (YYYY-MM-DD). Set profileId to null to remove. */
 function assignDate(date, profileId) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw Object.assign(new Error('Invalid date format (YYYY-MM-DD)'), { status: 400 });
+  if (!isValidDate(date)) throw Object.assign(new Error('Invalid date format (YYYY-MM-DD)'), { status: 400 });
   const data = load();
   if (profileId === null || profileId === undefined || profileId === '') {
     delete data.dates[date];
@@ -77,4 +96,30 @@ function removeAssignment(type, key) {
   return data;
 }
 
-module.exports = { CALENDAR_FILE, getAll, assignDate, assignDow, removeAssignment, VALID_DOWS };
+/** Remove every date/day assignment pointing to a deleted profile. */
+function removeProfileAssignments(profileId) {
+  const data = load();
+  let changed = false;
+  for (const [date, id] of Object.entries(data.dates)) {
+    if (id === profileId) {
+      delete data.dates[date];
+      changed = true;
+    }
+  }
+  for (const [dow, id] of Object.entries(data.dow)) {
+    if (id === profileId) {
+      delete data.dow[dow];
+      changed = true;
+    }
+  }
+  if (changed) save(data);
+  return data;
+}
+
+/** Replace all assignments after caller validation. */
+function replaceAll(data) {
+  save({ dates: { ...data.dates }, dow: { ...data.dow } });
+  return getAll();
+}
+
+module.exports = { CALENDAR_FILE, getAll, assignDate, assignDow, removeAssignment, removeProfileAssignments, replaceAll, VALID_DOWS, isValidDate };
