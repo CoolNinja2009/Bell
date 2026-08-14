@@ -72,15 +72,37 @@ jobs:
           BIN=".pio/build/esp32dev/firmware.bin"
           cp "$BIN" firmware.bin
           SHA=$(sha256sum firmware.bin | awk '{print $1}')
+          printf '%s  firmware.bin\n' "$SHA" > firmware.bin.sha256
+          cat > firmware-manifest.json <<EOF
+          {
+            "schema_version": 1,
+            "version": "${{ steps.version.outputs.version }}",
+            "compiled_at": "${{ steps.version.outputs.compiled_at }}",
+            "sha256": "$SHA",
+            "size": $(stat -c%s firmware.bin),
+            "ota_protocol": 2,
+            "min_ota_protocol": 1,
+            "target": "esp32dev"
+          }
+          EOF
           echo "sha256=$SHA" >> $GITHUB_OUTPUT
           echo "SHA-256: $SHA"
+
+      - name: Verify embedded OTA metadata
+        run: |
+          grep -a -F "BELL_BUILD:${{ steps.version.outputs.compiled_at }}" firmware.bin
+          grep -a -F "BELL_OTA_PROTOCOL:2" firmware.bin
+          grep -a -F "BELL_OTA_MIN_PROTOCOL:1" firmware.bin
 
       - name: Create / Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: "v${{ steps.version.outputs.version }}"
           tag_name: "v${{ steps.version.outputs.version }}"
-          files: firmware.bin
+          files: |
+            firmware.bin
+            firmware.bin.sha256
+            firmware-manifest.json
           body: |
             ## Firmware v${{ steps.version.outputs.version }}
 

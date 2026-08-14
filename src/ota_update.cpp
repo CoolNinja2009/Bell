@@ -437,7 +437,8 @@ static void tick_download() {
         Serial.printf("[OTA] Downloading %u bytes...\n", g_server_size);
     }
 
-    String url = String(network_server_base_url()) + "/api/firmware/download?v=" + g_server_ver;
+    String url = String(network_server_base_url()) + "/api/firmware/download?v=" + g_server_ver
+               + "&sha=" + g_server_sha256;
     WiFiClient client;
     HTTPClient http;
     http.setTimeout(OTA_CHUNK_TIMEOUT_MS);
@@ -446,11 +447,21 @@ static void tick_download() {
         http.end();
         return;
     }
+    const char* responseHeaders[] = { "Content-Range" };
+    http.collectHeaders(responseHeaders, 1);
     if (g_bytes_written > 0) {
         http.addHeader("Range", String("bytes=") + g_bytes_written + "-");
     }
 
     int code = http.GET();
+    if (code == 409) {
+        Serial.println(F("[OTA] Firmware artifact changed; restarting with fresh metadata"));
+        http.end();
+        Update.abort();
+        g_bytes_written = 0;
+        enter_state(OtaState::CHECK_VERSION);
+        return;
+    }
     if (code != 200 && code != 206) {
         http.end();
         g_dl_retry_at_ms = millis() + OTA_RESUME_RETRY_MS;
@@ -464,6 +475,18 @@ static void tick_download() {
         g_bytes_written = 0;
         g_dl_retry_at_ms = millis() + OTA_RESUME_RETRY_MS;
         return;
+    }
+
+    if (g_bytes_written > 0) {
+        const String expectedRange = String("bytes ") + g_bytes_written + "-";
+        if (!http.header("Content-Range").startsWith(expectedRange)) {
+            Serial.println(F("[OTA] Invalid resume range; restarting download"));
+            http.end();
+            Update.abort();
+            g_bytes_written = 0;
+            g_dl_retry_at_ms = millis() + OTA_RESUME_RETRY_MS;
+            return;
+        }
     }
 
     WiFiClient* stream = http.getStreamPtr();
@@ -494,6 +517,13 @@ static void tick_download() {
             return;
         }
         g_bytes_written += written;
+        if (g_bytes_written > g_server_size) {
+            Serial.println(F("[OTA] Download exceeded declared size; discarding"));
+            http.end();
+            Update.abort();
+            enter_state(OtaState::ERROR);
+            return;
+        }
         if (g_bytes_written % 65536 == 0 || g_bytes_written >= g_server_size) {
             Serial.printf("[OTA] Progress: %u / %u bytes\n", g_bytes_written, g_server_size);
         }
