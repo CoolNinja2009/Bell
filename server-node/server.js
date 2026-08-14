@@ -86,8 +86,10 @@ const FIRMWARE_ASSET_NAME  = process.env.FIRMWARE_ASSET_NAME  || 'firmware.bin';
 const FIRMWARE_CACHE_DIR   = path.join(__dirname, '.firmware_cache');
 const CUSTOM_FIRMWARE_DIR  = path.join(FIRMWARE_CACHE_DIR, 'custom');
 const FIRMWARE_TTL_MS      = 30 * 60 * 1000; // re-check GitHub every 30 min
+const GITHUB_RELEASE_TTL_MS = 10 * 60 * 1000;
 const MAX_FIRMWARE_SIZE    = 0x150000; // must fit an ESP32 OTA slot
 let   firmwareCache        = null; // { version, sha256, size, path, fetchedAt }
+let   firmwareReleaseListCache = null;
 
 // ---------------------------------------------------------------------------
 // Logging
@@ -97,6 +99,14 @@ function log(...args) {
 }
 function logError(context, err) {
   console.error(`[${new Date().toISOString()}] [ERROR] ${context}:`, err && err.stack ? err.stack : err);
+}
+
+async function githubClient() {
+  const { Octokit } = await import('@octokit/rest');
+  return new Octokit({
+    auth: process.env.GITHUB_TOKEN || undefined,
+    userAgent: 'relay-controller-ota/1.0',
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -554,8 +564,7 @@ async function refreshFirmwareCache() {
     return firmwareCache;
   }
   try {
-    const { Octokit } = await import('@octokit/rest');
-    const octokit = new Octokit({ userAgent: 'relay-controller-ota/1.0' });
+    const octokit = await githubClient();
     const [owner, repo] = FIRMWARE_REPO.split('/');
     if (!owner || !repo) { log('[firmware] Invalid FIRMWARE_REPO'); return firmwareCache; }
 
@@ -617,12 +626,15 @@ async function refreshFirmwareCache() {
 }
 
 async function listFirmwareReleases() {
-  const { Octokit } = await import('@octokit/rest');
+  if (firmwareReleaseListCache
+    && Date.now() - firmwareReleaseListCache.fetchedAt < GITHUB_RELEASE_TTL_MS) {
+    return firmwareReleaseListCache.releases;
+  }
   const [owner, repo] = FIRMWARE_REPO.split('/');
   if (!owner || !repo) throw new Error('Invalid FIRMWARE_REPO');
-  const octokit = new Octokit({ userAgent: 'relay-controller-ota/1.0' });
+  const octokit = await githubClient();
   const { data } = await octokit.rest.repos.listReleases({ owner, repo, per_page: 20 });
-  return data.map((release) => ({
+  const releases = data.map((release) => ({
     tag: release.tag_name.replace(/^v/, ''),
     api_tag: release.tag_name,
     title: release.name || release.tag_name,
@@ -634,19 +646,22 @@ async function listFirmwareReleases() {
       ? { name: FIRMWARE_ASSET_NAME, size: release.assets.find((asset) => asset.name === FIRMWARE_ASSET_NAME).size }
       : null,
   }));
+  firmwareReleaseListCache = { releases, fetchedAt: Date.now() };
+  return releases;
 }
 
 async function cacheReleaseAsset(tag) {
-  const releases = await listFirmwareReleases();
-  const release = releases.find((item) => item.tag === tag && item.asset);
-  if (!release) throw validationError(`Release '${tag}' has no ${FIRMWARE_ASSET_NAME} asset`);
-
-  const binPath = path.join(FIRMWARE_CACHE_DIR, `${release.tag}_${FIRMWARE_ASSET_NAME}`);
+  if (typeof tag !== 'string' || !/^[a-zA-Z0-9._-]{1,80}$/.test(tag)) {
+    throw validationError('Invalid firmware release tag');
+  }
+  const binPath = path.join(FIRMWARE_CACHE_DIR, `${tag}_${FIRMWARE_ASSET_NAME}`);
   const shaPath = `${binPath}.sha256`;
   if (!fs.existsSync(binPath)) {
-    const { Octokit } = await import('@octokit/rest');
+    const releases = await listFirmwareReleases();
+    const release = releases.find((item) => item.tag === tag && item.asset);
+    if (!release) throw validationError(`Release '${tag}' has no ${FIRMWARE_ASSET_NAME} asset`);
     const [owner, repo] = FIRMWARE_REPO.split('/');
-    const octokit = new Octokit({ userAgent: 'relay-controller-ota/1.0' });
+    const octokit = await githubClient();
     const { data } = await octokit.rest.repos.getReleaseByTag({ owner, repo, tag: release.api_tag });
     const asset = data.assets.find((item) => item.name === FIRMWARE_ASSET_NAME);
     if (!asset) throw validationError(`Release '${tag}' has no ${FIRMWARE_ASSET_NAME} asset`);
@@ -725,7 +740,12 @@ app.get(
   loginRequired,
   asyncRoute(async (req, res) => {
     const state = firmwareState.load();
-    const releases = await listFirmwareReleases();
+    let releases = [];
+    try {
+      releases = await listFirmwareReleases();
+    } catch (err) {
+      logError('[firmware] list releases for dashboard', err);
+    }
     let active = null;
     try {
       active = await resolveActiveFirmware();
