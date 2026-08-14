@@ -54,12 +54,15 @@ jobs:
           else
             VER="$(date +%Y.%m%d).${GITHUB_SHA::7}"
           fi
+          COMPILED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "version=$VER" >> $GITHUB_OUTPUT
-          echo "Building firmware v$VER"
+          echo "compiled_at=$COMPILED_AT" >> $GITHUB_OUTPUT
+          echo "Building firmware v$VER compiled at $COMPILED_AT"
 
       - name: Build firmware
         env:
           PLATFORMIO_BUILD_FLAGS: -D FIRMWARE_VERSION='"${{ steps.version.outputs.version }}"'
+          FIRMWARE_BUILD_STAMP: ${{ steps.version.outputs.compiled_at }}
         run: |
           pio run
 
@@ -83,7 +86,8 @@ jobs:
 
             | Property | Value |
             |----------|-------|
-            | Version  | `${{ steps.version.outputs.version }}` |
+             | Version  | `${{ steps.version.outputs.version }}` |
+             | Compiled | `${{ steps.version.outputs.compiled_at }}` |
             | SHA-256  | `${{ steps.sha.outputs.sha256 }}` |
             | Target   | ESP32 DevKit (`esp32dev`) |
 

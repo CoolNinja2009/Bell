@@ -14,20 +14,14 @@
             "10:30",
             "11:10",
             "11:50",
-            {
-              "time": "12:30",
-              "pulse_ms": 2500
-            },
+            { "time": "12:30", "pulse_ms": 2500 },
             "13:10",
             "13:50",
             "14:30",
             "14:40",
             "15:20",
             "15:58",
-            {
-              "time": "16:00",
-              "pulse_ms": 2500
-            }
+            { "time": "16:00", "pulse_ms": 2500 }
           ],
           "skip_dates": [],
           "label": "Bell Middle School"
@@ -43,17 +37,11 @@
             "11:00",
             "11:10",
             "11:50",
-            {
-              "time": "12:30",
-              "pulse_ms": 2500
-            },
+            { "time": "12:30", "pulse_ms": 2500 },
             "13:10",
             "13:50",
             "14:30",
-            {
-              "time": "15:10",
-              "pulse_ms": 2500
-            }
+            { "time": "15:10", "pulse_ms": 2500 }
           ],
           "skip_dates": [],
           "label": "Bell High School"
@@ -68,30 +56,14 @@
         "ch1": {
           "enabled": true,
           "pulse_ms": 1700,
-          "schedule": [
-            "08:55",
-            "09:00",
-            "09:40",
-            "10:20",
-            "10:30",
-            "11:10",
-            "11:50"
-          ],
+          "schedule": ["08:55", "09:00", "09:40", "10:20", "10:30", "11:10", "11:50"],
           "skip_dates": [],
           "label": "Bell Middle School"
         },
         "ch2": {
           "enabled": true,
           "pulse_ms": 1700,
-          "schedule": [
-            "08:55",
-            "09:00",
-            "09:40",
-            "10:20",
-            "11:00",
-            "11:10",
-            "11:50"
-          ],
+          "schedule": ["08:55", "09:00", "09:40", "10:20", "11:00", "11:10", "11:50"],
           "skip_dates": [],
           "label": "Bell High School"
         }
@@ -121,9 +93,5 @@
       "updated": "2026-08-06T19:30:00.000Z"
     }
   },
-  "order": [
-    "regular-working-day",
-    "saturday",
-    "sunday"
-  ]
+  "order": ["regular-working-day", "saturday", "sunday"]
 }

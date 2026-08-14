@@ -57,6 +57,7 @@ constexpr uint32_t SCHEDULE_APPLY_GRACE_S  = 5;        // do not lose a bell whi
 // ============================================================================
 constexpr int8_t   RTC_SDA_PIN    = 21;
 constexpr int8_t   RTC_SCL_PIN    = 22;
+constexpr uint8_t  RTC_I2C_ADDRESS = 0x68;
 constexpr uint32_t RTC_RESYNC_MS  = 3600000;
 
 // ============================================================================

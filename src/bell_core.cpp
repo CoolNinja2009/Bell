@@ -15,6 +15,7 @@
 #include <freertos/semphr.h>
 
 #include <RTClib.h>
+#include <Wire.h>
 #include <sys/time.h>
 #include <esp_sntp.h>
 #include "led_indicator.h"
@@ -175,6 +176,25 @@ static void log_to_buffer_locked(const char *msg);
 // ============================================================================
 static RTC_DS3231 g_rtc;
 
+static bool rtc_i2c_probe(uint8_t address) {
+    Wire.beginTransmission(address);
+    return Wire.endTransmission() == 0;
+}
+
+static void rtc_print_i2c_diagnostics() {
+    pinMode(RTC_SDA_PIN, INPUT_PULLUP);
+    pinMode(RTC_SCL_PIN, INPUT_PULLUP);
+    delay(2);
+    const int sdaLevel = digitalRead(RTC_SDA_PIN);
+    const int sclLevel = digitalRead(RTC_SCL_PIN);
+    const bool rtcAck = rtc_i2c_probe(RTC_I2C_ADDRESS);
+    Serial.printf("RTC: I2C SDA=%d SCL=%d address 0x%02X %s\n",
+                  sdaLevel, sclLevel, RTC_I2C_ADDRESS, rtcAck ? "ACK" : "NACK");
+    if (!rtcAck) {
+        Serial.println(F("RTC: check 3.3V/GND and that SDA/SCL reach GPIO21/GPIO22"));
+    }
+}
+
 static bool rtc_seed_system_clock() {
     if (!g_rtc_present) return false;
     DateTime now = g_rtc.now();
@@ -270,23 +290,19 @@ static const char *primary_channel_key(const Channel &ch) {
 //  NVS HELPERS  (schedule persistence — no JSON dependency)
 // ============================================================================
 
-static void nvs_save_config() {
-    Preferences prefs;
-    prefs.begin(NVS_NS, false);
-    prefs.putString("hash", g_cfg_hash);
-    prefs.putString("cfg",  g_raw_config);
-    prefs.end();
-    g_nvs_has_config = true;
-    DBGLN(F("[NVS] config saved"));
-}
-
 static bool nvs_load_config() {
     Preferences prefs;
-    prefs.begin(NVS_NS, true);
+    if (!prefs.begin(NVS_NS, true)) {
+        Serial.println(F("NVS: failed to open stored config"));
+        return false;
+    }
     String hash = prefs.getString("hash", "");
     g_raw_config = prefs.getString("cfg", "");
     prefs.end();
-    if (hash.length() == 0 || g_raw_config.length() == 0) return false;
+    if (hash.length() != 8 || g_raw_config.length() == 0) return false;
+    for (size_t i = 0; i < 8; ++i) {
+        if (!isxdigit(static_cast<unsigned char>(hash[i]))) return false;
+    }
     strncpy(g_cfg_hash, hash.c_str(), 8);
     g_cfg_hash[8] = '\0';
     g_nvs_has_config = true;
@@ -623,8 +639,9 @@ static bool apply_raw_schedule(const char *raw_json, const char *hash_8chars) {
     bool persisted = false;
     Preferences prefs;
     if (prefs.begin(NVS_NS, false)) {
-        // The watchdog treats hash as the commit marker, so write the body
-        // first and publish the new hash only after it is complete.
+        // Invalidate the commit marker before replacing the body. A power
+        // loss then selects the known fallback rather than a mixed schedule.
+        prefs.remove("hash");
         persisted = prefs.putString("cfg", raw_config) > 0
                  && prefs.putString("hash", hash_copy) > 0;
         prefs.end();
@@ -666,20 +683,38 @@ void bell_core_init() {
         JsonDocument doc;
 #pragma GCC diagnostic pop
         const DeserializationError err = deserializeJson(doc, g_raw_config);
-        if (!err) {
+        if (!err && doc.is<JsonObject>()) {
             JsonObject root = doc.as<JsonObject>();
-            const bool ch1_loaded = parse_channel_cfg_from_keys(root, g_ch1);
-            const bool ch2_loaded = parse_channel_cfg_from_keys(root, g_ch2);
-            if (ch1_loaded || ch2_loaded) {
+            Channel stored_ch1{ g_ch1.pin, g_ch1.server_keys, g_ch1.server_key_count };
+            Channel stored_ch2{ g_ch2.pin, g_ch2.server_keys, g_ch2.server_key_count };
+            stored_ch1.cfg = g_ch1.cfg;
+            stored_ch2.cfg = g_ch2.cfg;
+            const bool ch1_loaded = parse_channel_cfg_from_keys(root, stored_ch1);
+            const bool ch2_loaded = parse_channel_cfg_from_keys(root, stored_ch2);
+            if (ch1_loaded && ch2_loaded) {
+                g_ch1.cfg = stored_ch1.cfg;
+                g_ch2.cfg = stored_ch2.cfg;
+                strncpy(g_ch1.schedule_key, stored_ch1.schedule_key, MAX_CH_KEY - 1);
+                g_ch1.schedule_key[MAX_CH_KEY - 1] = '\0';
+                strncpy(g_ch2.schedule_key, stored_ch2.schedule_key, MAX_CH_KEY - 1);
+                g_ch2.schedule_key[MAX_CH_KEY - 1] = '\0';
                 Serial.println(F("NVS: booted from stored config"));
+            } else {
+                g_nvs_has_config = false;
+                Serial.println(F("NVS: incomplete stored config ignored; using fallback"));
             }
+        } else {
+            g_nvs_has_config = false;
+            Serial.println(F("NVS: invalid stored config ignored; using fallback"));
         }
     }
 
     // --- 5. RTC detection ---
     Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
     Wire.setTimeOut(50);
-    if (g_rtc.begin()) {
+    Wire.setClock(100000);
+    rtc_print_i2c_diagnostics();
+    if (rtc_i2c_probe(RTC_I2C_ADDRESS) && g_rtc.begin()) {
         g_rtc_present = true;
         Serial.println(F("RTC: module detected"));
         if (g_rtc.lostPower()) {
@@ -688,7 +723,7 @@ void bell_core_init() {
         }
         rtc_seed_system_clock();
     } else {
-        Serial.println(F("RTC: none detected"));
+        Serial.println(F("RTC: DS3231 not detected"));
     }
     g_last_rtc_sync = millis();
 

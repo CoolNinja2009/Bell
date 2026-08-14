@@ -650,6 +650,19 @@
   .panel.collapsed .panel-header .arrow { transform: rotate(-90deg); }
   .panel.collapsed .panel-body { display: none; }
   .panel-body { padding: 18px 24px 22px; }
+  .firmware-top { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:16px; align-items:start; }
+  .firmware-title { font-size:0.92rem; font-weight:700; }
+  .firmware-meta { color:var(--dim); font-size:0.76rem; margin-top:4px; word-break:break-word; }
+  .firmware-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  .firmware-switch { display:flex; align-items:center; gap:9px; font-size:0.8rem; color:var(--text); cursor:pointer; }
+  .firmware-switch input { accent-color:var(--accent); width:16px; height:16px; }
+  .firmware-upload { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:16px; padding-top:16px; border-top:1px solid var(--border); }
+  .firmware-upload input { max-width:100%; font-size:0.76rem; }
+  .firmware-releases { margin-top:16px; border-top:1px solid var(--border); padding-top:12px; }
+  .firmware-release { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:center; padding:10px 0; border-bottom:1px solid var(--border); }
+  .firmware-release:last-child { border-bottom:none; }
+  .firmware-release-name { font-size:0.82rem; font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .firmware-release-meta { color:var(--dim); font-size:0.7rem; margin-top:2px; }
 
   /* ── Device log ─────────────────────────── */
   .log-body { max-height: 240px; overflow-y: auto; font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", "Consolas", monospace; font-size: 0.76rem; line-height: 1.8; margin: 0 -24px; padding: 0 24px; }
@@ -774,6 +787,8 @@
     .ch-body { padding: 0 16px 18px; }
     .btn-row { flex-direction: column; padding: 0 16px 16px; }
     .btn-row .btn { width: 100%; }
+    .firmware-top { grid-template-columns:1fr; }
+    .firmware-actions { justify-content:flex-start; }
 
     /* Profile bar stacks vertically */
     .profile-bar { flex-direction: column; align-items: stretch; }
@@ -858,6 +873,32 @@
 </div>
 
 <div class="grid" id="channels"></div>
+
+<div class="panel" id="firmware-panel">
+  <div class="panel-header" data-toggle="firmware-panel">
+    <span>Firmware Manager <span id="firmware-source-badge" style="color:var(--dim);font-size:0.72rem"></span></span>
+    <span class="arrow">&#9660;</span>
+  </div>
+  <div class="panel-body">
+    <div class="firmware-top">
+      <div>
+        <div class="firmware-title" id="firmware-active">Loading firmware source...</div>
+        <div class="firmware-meta" id="firmware-meta"></div>
+      </div>
+      <div class="firmware-actions">
+        <label class="firmware-switch"><input type="checkbox" id="firmware-auto"> Daily updates</label>
+        <button class="btn btn-ghost btn-sm" id="btn-firmware-check">Check device now</button>
+        <button class="btn btn-ghost btn-sm" id="btn-firmware-latest">Use GitHub latest</button>
+      </div>
+    </div>
+    <div class="firmware-upload">
+      <input type="file" id="firmware-upload-file" accept=".bin,application/octet-stream">
+      <button class="btn btn-add btn-sm" id="btn-firmware-upload">Deploy local firmware</button>
+      <span class="firmware-meta" id="firmware-upload-limit"></span>
+    </div>
+    <div class="firmware-releases" id="firmware-releases"></div>
+  </div>
+</div>
 
 <!-- ── History & analytics ─────────────────────────────────────── -->
 <div class="panel" id="hist-panel">
@@ -1010,7 +1051,7 @@ function renderChannel(key, ch) {
       <div style="margin-top:6px;">
         <a href="#" class="bulk-toggle" data-action="toggle-bulk" style="font-size:0.78rem;color:var(--accent);opacity:0.7;text-decoration:none;">+ Bulk add</a>
       </div>
-      <div class="bulk-section" style="display:none;margin-top:8px;padding:10px 12px;background:var(--panel2);border-radius:6px;border:1px solid var(--border);">
+       <div class="bulk-section" style="display:none;margin-top:8px;padding:10px 12px;background:var(--panel2);border-radius:6px;border:1px solid var(--border);">
         <div style="display:flex;gap:2px;margin-bottom:8px;">
           <button class="bulk-tab active" data-tab="paste" style="flex:1;padding:5px 0;background:none;border:none;border-bottom:2px solid var(--accent);color:var(--accent);font-size:0.75rem;cursor:pointer;">Paste</button>
           <button class="bulk-tab" data-tab="range" style="flex:1;padding:5px 0;background:none;border:none;border-bottom:2px solid transparent;color:var(--dim);font-size:0.75rem;cursor:pointer;">Range</button>
@@ -1028,10 +1069,14 @@ function renderChannel(key, ch) {
             <input type="number" data-input="range_step" placeholder="min" min="1" max="1440" style="width:55px;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:0.8rem;">
             <input type="number" data-input="range_pulse" placeholder="ms" min="100" step="100" style="width:60px;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:0.8rem;" title="Optional pulse (ms)">
           </div>
-          <button class="btn btn-add" data-action="range-gen" style="margin-top:6px;width:100%;">Generate</button>
-        </div>
-      </div>
-      ` : ''}
+         <button class="btn btn-add" data-action="range-gen" style="margin-top:6px;width:100%;">Generate</button>
+         </div>
+       </div>
+       <div style="margin-top:8px;">
+         <input type="file" data-input="timetable-file" accept=".txt,text/plain" class="hidden">
+         <button class="btn btn-ghost btn-sm" data-action="import-timetable">Import Timetable TXT</button>
+       </div>
+       ` : ''}
     </div>
     <div class="field">
       <label>Skip Dates (YYYY-MM-DD)</label>
@@ -1281,6 +1326,50 @@ function renderChannel(key, ch) {
       return added;
     };
 
+    const parseTimetableText = (text) => {
+      const entries = [];
+      const seen = new Set();
+      // Windows editors can prefix UTF-8 text files with a byte-order mark.
+      const source = text.replace(/^\uFEFF/, '');
+      for (const [index, rawLine] of source.split(/\r?\n/).entries()) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) continue;
+        const match = /^(\d{1,2}:\d{2})\s+(\d+)(?:\s+.*)?$/.exec(line);
+        if (!match) return { error: `Line ${index + 1}: expected HH:MM pulse_ms name` };
+        const [hours, minutes] = match[1].split(':').map(Number);
+        const pulseMs = Number(match[2]);
+        if (hours > 23 || minutes > 59) return { error: `Line ${index + 1}: invalid time` };
+        if (pulseMs < 100 || pulseMs > 60000) return { error: `Line ${index + 1}: pulse must be 100-60000ms` };
+        const time = String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0');
+        if (seen.has(time)) return { error: `Line ${index + 1}: duplicate ${time}` };
+        seen.add(time);
+        entries.push({ time, pulse_ms: pulseMs });
+      }
+      if (!entries.length) return { error: 'No timetable entries found' };
+      if (entries.length > 24) return { error: 'A channel supports at most 24 entries' };
+      entries.sort((a, b) => a.time.localeCompare(b.time));
+      return { entries };
+    };
+
+    const timetableFile = div.querySelector('[data-input="timetable-file"]');
+    div.querySelector('[data-action="import-timetable"]').onclick = () => timetableFile.click();
+    timetableFile.onchange = async () => {
+      const file = timetableFile.files && timetableFile.files[0];
+      if (!file) return;
+      try {
+        const parsed = parseTimetableText(await file.text());
+        if (parsed.error) throw new Error(parsed.error);
+        if (ch.schedule.length && !confirm(`Replace ${ch.schedule.length} existing schedule entries?`)) return;
+        ch.schedule = parsed.entries;
+        renderAll(schedule);
+        toast(`Imported ${parsed.entries.length} timetable entries. Save the channel to apply.`);
+      } catch (err) {
+        toast('Timetable import failed: ' + err.message, true);
+      } finally {
+        timetableFile.value = '';
+      }
+    };
+
     div.querySelector('[data-action="bulk-add"]').onclick = () => {
       const ta = div.querySelector('[data-input="bulk_paste"]');
       const raw = ta.value.trim();
@@ -1391,6 +1480,151 @@ $('#restore-file').onchange = async (e) => {
 
 // ── Heartbeats (dynamic per-channel) ─────────────────────────────
 // A channel is "offline" if its last heartbeat is older than 10 s.
+// Firmware manager
+function fmtBytes(bytes) {
+  if (!Number.isFinite(bytes)) return '';
+  return bytes >= 1024 * 1024 ? (bytes / (1024 * 1024)).toFixed(2) + ' MB' : Math.round(bytes / 1024) + ' KB';
+}
+
+function fmtBuildStamp(stamp) {
+  return stamp ? new Date(stamp).toLocaleString() + ' (UTC build stamp)' : 'Compilation time unavailable';
+}
+
+async function waitForFirmwareAck(controlId) {
+  if (!Number.isInteger(controlId)) return;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    const data = await api('GET', '/api/firmware?_=' + Date.now());
+    const device = data.state && data.state.last_device;
+    if (device && device.control_id >= controlId) {
+      loadFirmwareManager();
+      toast('ESP32 acknowledged the dashboard change');
+      return;
+    }
+  }
+  loadFirmwareManager();
+  toast('Saved. The ESP32 has not acknowledged yet; check its connection.', true);
+}
+
+async function loadFirmwareManager() {
+  try {
+    const data = await api('GET', '/api/firmware?_=' + Date.now());
+    const state = data.state;
+    const active = state.source === 'custom'
+      ? (state.custom ? `Local build ${state.custom.version}` : 'Local build unavailable')
+      : state.source === 'release' ? `Pinned GitHub release ${state.release_tag}` : 'Latest GitHub release';
+    $('#firmware-active').textContent = active;
+    $('#firmware-source-badge').textContent = `(${state.source})`;
+    $('#firmware-auto').checked = !!state.auto_update;
+    $('#firmware-meta').textContent = `Repository: ${data.repo} · asset: ${data.asset_name}` + (state.custom ? ` · custom: ${fmtBytes(state.custom.size)}` : '');
+    $('#firmware-upload-limit').textContent = `ESP32 OTA limit: ${fmtBytes(data.max_size)}`;
+    const device = state.last_device;
+    const activeStamp = data.active && data.active.compiled_at;
+    const deviceText = device
+      ? `ESP32 acknowledged ${new Date(device.seen_at).toLocaleTimeString()} (${device.auto_update ? 'daily on' : 'daily off'})`
+      : 'Waiting for ESP32 acknowledgement';
+    $('#firmware-meta').textContent = `Source: ${state.source} | ${fmtBuildStamp(activeStamp)} | ${deviceText}`
+      + (state.force ? ' | WARNING: forced install armed for this exact file' : '');
+    const releases = data.releases || [];
+    $('#firmware-releases').innerHTML = releases.length ? releases.map((release) => {
+      const selected = state.source === 'release' && state.release_tag === release.tag;
+      const meta = [release.published_at ? new Date(release.published_at).toLocaleDateString() : '', release.prerelease ? 'pre-release' : '', release.asset ? fmtBytes(release.asset.size) : 'no firmware.bin'].filter(Boolean).join(' · ');
+      const action = release.asset ? `<button class="btn ${selected ? 'btn-ghost' : 'btn-save'} btn-sm" data-firmware-release="${escapeHtml(release.tag)}" ${selected ? 'disabled' : ''}>${selected ? 'Selected' : 'Use release'}</button>` : '';
+      return `<div class="firmware-release"><div><div class="firmware-release-name" title="${escapeHtml(release.title)}">${escapeHtml(release.title)} <span style="color:var(--accent);font-family:monospace">${escapeHtml(release.tag)}</span></div><div class="firmware-release-meta">${escapeHtml(meta)}</div></div>${action}</div>`;
+    }).join('') : '<div class="empty-hint">No GitHub releases available.</div>';
+    $$('[data-firmware-release]').forEach((button) => {
+      button.onclick = async () => {
+        try {
+          const nextState = await api('PUT', '/api/firmware/source', { source: 'release', tag: button.dataset.firmwareRelease });
+          toast('Release selected. Waiting for ESP32 acknowledgement...');
+          waitForFirmwareAck(nextState.control_id);
+          loadFirmwareManager();
+        } catch (e) { toast('Release selection failed: ' + e.message, true); }
+      };
+    });
+  } catch (e) {
+    $('#firmware-active').textContent = 'Firmware manager unavailable';
+    $('#firmware-meta').textContent = e.message;
+  }
+}
+
+$('#firmware-auto').onchange = async (e) => {
+  try {
+    const state = await api('PUT', '/api/firmware/settings', { auto_update: e.target.checked });
+    toast((e.target.checked ? 'Daily updates enabled' : 'Daily updates disabled') + '. Waiting for ESP32 acknowledgement...');
+    waitForFirmwareAck(state.control_id);
+  } catch (err) { e.target.checked = !e.target.checked; toast('Could not update setting: ' + err.message, true); }
+};
+
+$('#btn-firmware-check').onclick = async () => {
+  try {
+    const result = await api('POST', '/api/firmware/check', {});
+    toast('Update check sent. Waiting for ESP32 acknowledgement...');
+    waitForFirmwareAck(result.control_id);
+  } catch (e) { toast('Could not queue check: ' + e.message, true); }
+};
+
+$('#btn-firmware-latest').onclick = async () => {
+  try {
+    const state = await api('PUT', '/api/firmware/source', { source: 'latest' });
+    toast('GitHub latest selected. Waiting for ESP32 acknowledgement...');
+    waitForFirmwareAck(state.control_id);
+    loadFirmwareManager();
+  } catch (e) { toast('Could not select latest: ' + e.message, true); }
+};
+
+let deployClickCount = 0;
+let firstDeployClickAt = 0;
+let deployClickTimer = null;
+
+async function deployLocalFirmware(force) {
+  const input = $('#firmware-upload-file');
+  const file = input.files && input.files[0];
+  if (!file) { toast('Choose a firmware .bin file first', true); return; }
+  try {
+    const response = await fetch('/api/firmware/custom', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Firmware-Force': force ? 'true' : 'false',
+      },
+      body: file,
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || `${response.status} upload failed`);
+    }
+    const result = await response.json();
+    input.value = '';
+    toast(force
+      ? 'WARNING: forced firmware deployment sent. SHA-256 verification remains active.'
+      : 'Local firmware deployed. Waiting for ESP32 acknowledgement...');
+    waitForFirmwareAck(result.state && result.state.control_id);
+    loadFirmwareManager();
+  } catch (e) { toast('Upload failed: ' + e.message, true); }
+}
+
+$('#btn-firmware-upload').onclick = () => {
+  const now = Date.now();
+  if (!deployClickCount || now - firstDeployClickAt > 1500) {
+    clearTimeout(deployClickTimer);
+    deployClickCount = 1;
+    firstDeployClickAt = now;
+    deployClickTimer = setTimeout(() => {
+      deployClickCount = 0;
+      deployLocalFirmware(false);
+    }, 1500);
+    return;
+  }
+
+  deployClickCount += 1;
+  if (deployClickCount === 3) {
+    clearTimeout(deployClickTimer);
+    deployClickCount = 0;
+    deployLocalFirmware(true);
+  }
+};
+
 const OFFLINE_THRESHOLD_S = 10;
 
 function renderHeartbeatSlots(keys) {
@@ -1656,11 +1890,13 @@ $('#btn-clear-override-sched').onclick = async () => {
   pollLog();
   loadHistory();
   refreshProfileBar();
+  loadFirmwareManager();
   setInterval(pollStatus, 5000);
   setInterval(pollLog, 8000);
   setInterval(loadHistory, 20000);
   setInterval(refreshProfileBar, 15000);
   setInterval(loadProfileOptions, 60000);
+  setInterval(loadFirmwareManager, 60000);
 })();
 
 // ── Theme toggle ───────────────────────────────────────────────────
