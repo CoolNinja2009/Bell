@@ -27,6 +27,7 @@
 #include <HTTPClient.h>
 #include <Update.h>
 #include <Preferences.h>
+#include <ArduinoJson.h>
 #include <mbedtls/sha256.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
@@ -39,8 +40,22 @@
 #ifndef GITHUB_REPO
   #define GITHUB_REPO "CoolNinja2009/Bell"
 #endif
-// Compile-time identity used to detect a freshly flashed firmware.
-#define FIRMWARE_COMPILED_AT __DATE__ " " __TIME__
+#ifndef FIRMWARE_BUILD_STAMP
+  #define FIRMWARE_BUILD_STAMP "1970-01-01T00:00:00Z"
+#endif
+#ifndef OTA_PROTOCOL_VERSION
+  #define OTA_PROTOCOL_VERSION 2
+#endif
+#ifndef OTA_MIN_PROTOCOL
+  #define OTA_MIN_PROTOCOL 1
+#endif
+#define OTA_STRINGIFY_INNER(value) #value
+#define OTA_STRINGIFY(value) OTA_STRINGIFY_INNER(value)
+// Deliberately embedded in the image so the server can verify its build time.
+static const char FIRMWARE_BUILD_MARKER[] = "BELL_BUILD:" FIRMWARE_BUILD_STAMP;
+static const char FIRMWARE_OTA_PROTOCOL_MARKER[] __attribute__((used)) = "BELL_OTA_PROTOCOL:" OTA_STRINGIFY(OTA_PROTOCOL_VERSION);
+static const char FIRMWARE_OTA_MIN_PROTOCOL_MARKER[] __attribute__((used)) = "BELL_OTA_MIN_PROTOCOL:" OTA_STRINGIFY(OTA_MIN_PROTOCOL);
+#define FIRMWARE_COMPILED_AT FIRMWARE_BUILD_STAMP
 
 // ── Timing ─────────────────────────────────────────────────────────
 // Check on every boot: after WiFi connects + 60s delay, poll server.
@@ -54,10 +69,12 @@ constexpr uint32_t OTA_CHUNK_SIZE           = 4096;     // bytes per loop tick
 constexpr uint32_t OTA_TICK_WINDOW_MS       = 200;      // max time ota_tick() may block per call
 constexpr uint32_t OTA_RESUME_RETRY_MS      = 5000;     // backoff after a failed chunk
 constexpr uint32_t OTA_DAILY_CHECK_INTERVAL_MS = 86400000;  // 24 h between periodic checks
+constexpr uint32_t OTA_CONTROL_POLL_MS      = 5000;       // fast dashboard acknowledgement without persistent sockets
 constexpr uint32_t OTA_BOOT_CONFIRM_DELAY_MS = 90000;   // 90 s — defer rollback cancel until this much stable uptime
 static const char OTA_NVS_NS[]       = "ota";
 static const char OTA_KEY_VER[]      = "version";
 static const char OTA_KEY_SHA[]      = "sha256";
+static const char OTA_KEY_FORCE_ID[] = "force_id";
 static const char OTA_KEY_UPLOADED[] = "uploaded_at";
 static const char OTA_KEY_COMPILED[] = "compiled_at";
 // Flash marker for "uploaded at" — written to the coredump partition by
@@ -86,11 +103,19 @@ static uint8_t       g_error_count        = 0;      // cap retries to prevent lo
 static uint32_t      g_next_daily_check_ms = 0;     // 0 = no daily check scheduled
 static char          g_current_ver[32]    = FIRMWARE_VERSION;
 static char          g_server_ver[32]     = "";
+static char          g_server_build[21]   = "";
 static char          g_server_sha256[65]  = "";
 static char          g_last_sha256[65]    = "";
+static uint32_t      g_server_force_id    = 0;
+static uint32_t      g_last_force_id      = 0;
+static bool          g_force_update       = false;
 static uint32_t      g_server_size        = 0;
 static uint32_t      g_bytes_written      = 0;
 static bool          g_version_known      = false;
+static bool          g_auto_update_enabled = true;
+static uint32_t      g_last_control_poll  = 0;
+static uint32_t      g_last_control_request = 0;
+static uint32_t      g_last_control_id    = 0;
 // Upload timestamp (unix epoch; 0 = not yet recorded) and a flag set
 // when the running firmware is freshly flashed (compile time changed).
 static uint32_t      g_uploaded_at        = 0;
@@ -104,6 +129,7 @@ static void tick_check_version();
 static void tick_download();
 static void tick_verify();
 static void tick_apply();
+static void poll_control();
 // ── Helpers ────────────────────────────────────────────────────────
 
 static uint32_t read_flash_upload_ts() {
@@ -147,16 +173,7 @@ static void load_nvs() {
             strncpy(g_last_sha256, s.c_str(), sizeof(g_last_sha256) - 1);
             g_last_sha256[sizeof(g_last_sha256) - 1] = '\0';
         }
-        // If this is a dev build (0.0.0-dev), use the NVS-persisted version
-        // from the last successful OTA so we don't re-download firmware we
-        // already have. Production builds use their compile-time version.
-        if (strcmp(FIRMWARE_VERSION, "0.0.0-dev") == 0) {
-            String v = prefs.getString(OTA_KEY_VER, "");
-            if (v.length() > 0 && v != "0.0.0-dev") {
-                strncpy(g_current_ver, v.c_str(), sizeof(g_current_ver) - 1);
-                g_current_ver[sizeof(g_current_ver) - 1] = '\0';
-            }
-        }
+        g_last_force_id = prefs.getUInt(OTA_KEY_FORCE_ID, 0);
         if (flash_ts != 0) {
             g_uploaded_at  = flash_ts;
             g_new_firmware = false;
@@ -179,6 +196,7 @@ static void save_nvs_version() {
     if (prefs.begin(OTA_NVS_NS, false)) {
         prefs.putString(OTA_KEY_VER, g_current_ver);
         prefs.putString(OTA_KEY_SHA, g_last_sha256);
+        prefs.putUInt(OTA_KEY_FORCE_ID, g_last_force_id);
         prefs.end();
     }
 }
@@ -206,22 +224,35 @@ static void record_upload_time() {
     }
 }
 
-static int version_cmp(const char* a, const char* b) {
-    // Only compare YYYY.MMDD — the suffix (commit hash) is ignored.
-    // Two builds from the same day are treated as equal → no update.
-    for (int comp = 0; comp < 2; comp++) {
-        unsigned long na = 0;
-        while (*a >= '0' && *a <= '9') { na = na * 10 + (unsigned long)(*a - '0'); a++; }
-        unsigned long nb = 0;
-        while (*b >= '0' && *b <= '9') { nb = nb * 10 + (unsigned long)(*b - '0'); b++; }
-
-        if (na < nb) return -1;
-        if (na > nb) return  1;
-
-        if (*a == '.') a++;
-        if (*b == '.') b++;
+static bool valid_build_stamp(const char* stamp) {
+    if (!stamp || strlen(stamp) != 20
+        || stamp[4] != '-' || stamp[7] != '-' || stamp[10] != 'T'
+        || stamp[13] != ':' || stamp[16] != ':' || stamp[19] != 'Z') return false;
+    for (size_t i = 0; i < 20; ++i) {
+        if (i == 4 || i == 7 || i == 10 || i == 13 || i == 16 || i == 19) continue;
+        if (stamp[i] < '0' || stamp[i] > '9') return false;
     }
-    return 0;
+    const int month = (stamp[5] - '0') * 10 + stamp[6] - '0';
+    const int day = (stamp[8] - '0') * 10 + stamp[9] - '0';
+    const int hour = (stamp[11] - '0') * 10 + stamp[12] - '0';
+    const int minute = (stamp[14] - '0') * 10 + stamp[15] - '0';
+    const int second = (stamp[17] - '0') * 10 + stamp[18] - '0';
+    return month >= 1 && month <= 12 && day >= 1 && day <= 31
+        && hour <= 23 && minute <= 59 && second <= 59;
+}
+
+static bool valid_sha256(const char* value) {
+    if (!value || strlen(value) != 64) return false;
+    for (size_t i = 0; i < 64; ++i) {
+        if (!isxdigit(static_cast<unsigned char>(value[i]))) return false;
+    }
+    return true;
+}
+
+static int build_stamp_cmp(const char* a, const char* b) {
+    // ISO-8601 UTC timestamps sort lexicographically and represent the exact
+    // compilation date and time. Versions and commit hashes never decide OTA.
+    return strcmp(a, b);
 }
 
 // ── State entry ────────────────────────────────────────────────────
@@ -234,7 +265,10 @@ static void enter_state(OtaState next) {
         g_bytes_written = 0;
         g_server_size   = 0;
         g_server_ver[0] = '\0';
+        g_server_build[0] = '\0';
         g_server_sha256[0] = '\0';
+        g_server_force_id = 0;
+        g_force_update = false;
         break;
     case OtaState::CHECK_VERSION:
         // nothing to init — done in tick
@@ -294,6 +328,7 @@ static void tick_check_version() {
         enter_state(OtaState::RETRY);
         return;
     }
+    http.addHeader("X-Bell-OTA-Protocol", String(OTA_PROTOCOL_VERSION));
 
     int code = http.GET();
     if (code != 200) {
@@ -312,70 +347,70 @@ static void tick_check_version() {
     String body = http.getString();
     http.end();
 
-    // Parse: {"version":"1.2.3","size":786432,"sha256":"abc...64 hex chars"}
-    const char* p = body.c_str();
-
-    // Extract version
-    const char* vtag = strstr(p, "\"version\"");
-    if (!vtag) { enter_state(OtaState::RETRY); return; }
-    vtag = strchr(vtag, ':');
-    if (!vtag) { enter_state(OtaState::RETRY); return; }
-    vtag++; while (*vtag == ' ' || *vtag == '"') vtag++;
-    size_t vlen = 0;
-    while (vtag[vlen] && vtag[vlen] != '"' && vlen < sizeof(g_server_ver) - 1) vlen++;
-    memcpy(g_server_ver, vtag, vlen);
-    g_server_ver[vlen] = '\0';
-
-    // Extract size
-    const char* stag = strstr(p, "\"size\"");
-    if (stag) {
-        stag = strchr(stag, ':');
-        if (stag) { stag++; g_server_size = atol(stag); }
-    }
-
-    // Extract sha256
-    const char* htag = strstr(p, "\"sha256\"");
-    if (htag) {
-        htag = strchr(htag, ':');
-        if (htag) {
-            htag++; while (*htag == ' ' || *htag == '"') htag++;
-            size_t hlen = 0;
-            while (htag[hlen] && htag[hlen] != '"' && hlen < 64) hlen++;
-            memcpy(g_server_sha256, htag, hlen);
-            g_server_sha256[hlen] = '\0';
-        }
-    }
-
+    JsonDocument doc;
+    if (deserializeJson(doc, body)) { enter_state(OtaState::RETRY); return; }
+    const char* version = doc["version"] | "";
+    const char* compiledAt = doc["compiled_at"] | "";
+    const char* sha256 = doc["sha256"] | "";
+    strncpy(g_server_ver, version, sizeof(g_server_ver) - 1);
+    g_server_ver[sizeof(g_server_ver) - 1] = '\0';
+    strncpy(g_server_build, compiledAt, sizeof(g_server_build) - 1);
+    g_server_build[sizeof(g_server_build) - 1] = '\0';
+    strncpy(g_server_sha256, sha256, sizeof(g_server_sha256) - 1);
+    g_server_sha256[sizeof(g_server_sha256) - 1] = '\0';
+    g_server_size = doc["size"] | 0U;
+    g_server_force_id = doc["force_id"] | 0U;
+    const bool serverForce = doc["force"] | false;
+    g_force_update = serverForce && g_server_force_id != 0 && g_server_force_id != g_last_force_id;
     g_version_known = true;
 
-    // Compare versions — this is a definitive answer
-    if (version_cmp(g_server_ver, g_current_ver) <= 0) {
-        Serial.printf("[OTA] Up to date (current=%s, server=%s)\n",
-                      g_current_ver, g_server_ver);
-        g_boot_check_done = true;  // confirmed — don't check again this cycle
-        g_error_count = 0;         // reset on success
+    const uint32_t minimumProtocol = doc["min_ota_protocol"] | 1U;
+    if (minimumProtocol > OTA_PROTOCOL_VERSION && !g_force_update) {
+        Serial.printf("[OTA] Firmware requires OTA protocol %u; device supports %u - skipped\n",
+                      minimumProtocol, OTA_PROTOCOL_VERSION);
+        g_boot_check_done = true;
         g_next_daily_check_ms = millis() + OTA_DAILY_CHECK_INTERVAL_MS;
         enter_state(OtaState::IDLE);
         return;
     }
 
-    Serial.printf("[OTA] New version available: %s -> %s (%u bytes)\n",
-                  g_current_ver, g_server_ver, g_server_size);
+    if (!valid_build_stamp(g_server_build) && !g_force_update) {
+        Serial.println(F("[OTA] Server firmware has no trusted compilation timestamp - skipped"));
+        g_boot_check_done = true;
+        g_next_daily_check_ms = millis() + OTA_DAILY_CHECK_INTERVAL_MS;
+        enter_state(OtaState::IDLE);
+        return;
+    }
 
+    const bool already_applied = g_last_sha256[0] && strcasecmp(g_server_sha256, g_last_sha256) == 0;
+    if (already_applied || (!g_force_update && build_stamp_cmp(g_server_build, FIRMWARE_BUILD_STAMP) <= 0)) {
+        Serial.printf("[OTA] Up to date (compiled current=%s, server=%s)\n",
+                      FIRMWARE_BUILD_STAMP, g_server_build);
+        g_boot_check_done = true;
+        g_error_count = 0;
+        g_next_daily_check_ms = millis() + OTA_DAILY_CHECK_INTERVAL_MS;
+        enter_state(OtaState::IDLE);
+        return;
+    }
+
+    if (g_force_update) {
+        Serial.printf("[OTA] WARNING: forced firmware install #%u requested by dashboard\n", g_server_force_id);
+    } else {
+        Serial.printf("[OTA] New firmware compiled %s is newer than %s (%u bytes)\n",
+                      g_server_build, FIRMWARE_BUILD_STAMP, g_server_size);
+    }
     const esp_partition_t* next_ota = esp_ota_get_next_update_partition(nullptr);
-    uint32_t max_ota_size = next_ota ? next_ota->size : 0;
+    const uint32_t max_ota_size = next_ota ? next_ota->size : 0;
     if (g_server_size == 0 || g_server_size > max_ota_size) {
-        Serial.println(F("[OTA] Invalid firmware size — aborting"));
+        Serial.println(F("[OTA] Invalid firmware size - aborting"));
         enter_state(OtaState::ERROR);
         return;
     }
-
-    if (g_server_sha256[0] == '\0') {
-        Serial.println(F("[OTA] No SHA‑256 provided by server — aborting"));
+    if (!valid_sha256(g_server_sha256)) {
+        Serial.println(F("[OTA] Invalid SHA-256 provided by server - aborting"));
         enter_state(OtaState::ERROR);
         return;
     }
-
     enter_state(OtaState::DOWNLOAD);
 }
 
@@ -418,6 +453,15 @@ static void tick_download() {
     int code = http.GET();
     if (code != 200 && code != 206) {
         http.end();
+        g_dl_retry_at_ms = millis() + OTA_RESUME_RETRY_MS;
+        return;
+    }
+    if (g_bytes_written > 0 && code != 206) {
+        // Never append a full-file response to a partial OTA image.
+        Serial.println(F("[OTA] Server ignored resume range; restarting download"));
+        http.end();
+        Update.abort();
+        g_bytes_written = 0;
         g_dl_retry_at_ms = millis() + OTA_RESUME_RETRY_MS;
         return;
     }
@@ -559,6 +603,7 @@ static void tick_apply() {
     g_current_ver[sizeof(g_current_ver) - 1] = '\0';
     strncpy(g_last_sha256, g_server_sha256, sizeof(g_last_sha256) - 1);
     g_last_sha256[sizeof(g_last_sha256) - 1] = '\0';
+    if (g_force_update) g_last_force_id = g_server_force_id;
     save_nvs_version();
 
     // Record the OTA apply time so "uploaded at" reflects it (clock is valid
@@ -585,6 +630,69 @@ static void tick_error() {
     }
 }
 
+static void acknowledge_control(uint32_t control_id, uint32_t request_id) {
+    WiFiClient client;
+    HTTPClient http;
+    http.setTimeout(500);
+    const String url = String(network_server_base_url()) + "/api/firmware/device-status";
+    if (!http.begin(client, url)) return;
+    http.addHeader("Content-Type", "application/json");
+    JsonDocument doc;
+    doc["control_id"] = control_id;
+    doc["request_id"] = request_id;
+    doc["auto_update"] = g_auto_update_enabled;
+    doc["firmware_version"] = g_current_ver;
+    doc["compiled_at"] = FIRMWARE_BUILD_STAMP;
+    doc["ota_protocol"] = OTA_PROTOCOL_VERSION;
+    String body;
+    serializeJson(doc, body);
+    http.POST(body);
+    http.end();
+}
+
+static void poll_control() {
+    const uint32_t now = millis();
+    if (now - g_last_control_poll < OTA_CONTROL_POLL_MS) return;
+    g_last_control_poll = now;
+    if (WiFi.status() != WL_CONNECTED || !network_server_base_url()[0]) return;
+    const int32_t next_bell_s = bell_core_next_fire_s();
+    if (next_bell_s >= 0 && next_bell_s < (int32_t)OTA_BELL_CHECK_SAFE_S) return;
+
+    WiFiClient client;
+    HTTPClient http;
+    http.setTimeout(1000);
+    const String url = String(network_server_base_url()) + "/api/firmware/control";
+    if (!http.begin(client, url)) return;
+    if (http.GET() != 200) { http.end(); return; }
+
+    JsonDocument doc;
+    const DeserializationError err = deserializeJson(doc, http.getStream());
+    http.end();
+    if (err) return;
+
+    const bool auto_update_enabled = doc["auto_update"] | true;
+    const uint32_t control_id = doc["control_id"] | 0U;
+    const uint32_t request_id = doc["request_id"] | 0U;
+    if (auto_update_enabled && !g_auto_update_enabled) {
+        g_boot_check_done = false;
+        g_next_daily_check_ms = 0;
+    }
+    if (auto_update_enabled != g_auto_update_enabled) {
+        Serial.printf("[OTA] Daily updates %s by dashboard\n", auto_update_enabled ? "enabled" : "disabled");
+    }
+    g_auto_update_enabled = auto_update_enabled;
+    if (control_id != 0 && control_id != g_last_control_id) {
+        g_last_control_id = control_id;
+        acknowledge_control(control_id, request_id);
+        Serial.printf("[OTA] Dashboard control #%u acknowledged\n", control_id);
+    }
+    if (request_id != 0 && request_id != g_last_control_request) {
+        g_last_control_request = request_id;
+        ota_request_check();
+        Serial.printf("[OTA] Dashboard requested update check #%u\n", request_id);
+    }
+}
+
 static void tick_retry() {
     if (millis() >= g_retry_until_ms) {
         Serial.println(F("[OTA] Retry timer expired — checking again"));
@@ -597,6 +705,10 @@ static void tick_retry() {
 void ota_init() {
     load_nvs();
     Serial.printf("[OTA] Firmware version: %s\n", g_current_ver);
+    Serial.printf("[OTA] Compiled at: %s\n", FIRMWARE_BUILD_MARKER + 11);
+    Serial.printf("[OTA] Protocol: %s (minimum device protocol: %s)\n",
+                  FIRMWARE_OTA_PROTOCOL_MARKER + 18,
+                  FIRMWARE_OTA_MIN_PROTOCOL_MARKER + 22);
     if (g_last_sha256[0]) {
         Serial.printf("[OTA] Last applied SHA‑256: %.16s...\n", g_last_sha256);
     }
@@ -620,6 +732,8 @@ bool ota_tick() {
     // once the system clock is valid. No-op after that.
     if (g_new_firmware) record_upload_time();
 
+    if (!ota_busy()) poll_control();
+
     switch (g_state) {
     case OtaState::IDLE: {
         uint32_t now = millis();
@@ -631,6 +745,8 @@ bool ota_tick() {
             enter_state(OtaState::CHECK_VERSION);
             return true;
         }
+
+        if (!g_auto_update_enabled) return false;
 
         // Don't check during error cooldown
         if (now < g_error_until_ms) return false;

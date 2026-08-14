@@ -169,6 +169,21 @@ static bool watchdog_load_nvs() {
         { ch2_keys, 1 },
     };
 
+    // Match the Bell Core rule: a stored config must describe both relays.
+    for (int ci = 0; ci < CHANNEL_COUNT; ++ci) {
+        bool found = false;
+        for (size_t ki = 0; ki < keymaps[ci].count; ++ki) {
+            if (root[keymaps[ci].keys[ki]].is<JsonObject>()) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            Serial.println(F("[WATCHDOG] incomplete NVS config ignored"));
+            return false;
+        }
+    }
+
     for (int ci = 0; ci < CHANNEL_COUNT; ++ci) {
         WdChannel &ch = g_ch[ci];
 

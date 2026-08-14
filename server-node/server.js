@@ -48,6 +48,8 @@ const profiles = require('./lib/profiles');
 const calendar = require('./lib/calendar');
 const profileSettings = require('./lib/settings');
 const profileScheduler = require('./lib/profile-scheduler');
+const firmwareState = require('./lib/firmware-state');
+const firmwareMetadata = require('./lib/firmware-metadata');
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -82,7 +84,9 @@ const FIRMWARE_REPO       = process.env.FIRMWARE_REPO       || 'CoolNinja2009/Be
 // it locally. Subsequent requests serve the cached copy.
 const FIRMWARE_ASSET_NAME  = process.env.FIRMWARE_ASSET_NAME  || 'firmware.bin';
 const FIRMWARE_CACHE_DIR   = path.join(__dirname, '.firmware_cache');
+const CUSTOM_FIRMWARE_DIR  = path.join(FIRMWARE_CACHE_DIR, 'custom');
 const FIRMWARE_TTL_MS      = 30 * 60 * 1000; // re-check GitHub every 30 min
+const MAX_FIRMWARE_SIZE    = 0x150000; // must fit an ESP32 OTA slot
 let   firmwareCache        = null; // { version, sha256, size, path, fetchedAt }
 
 // ---------------------------------------------------------------------------
@@ -299,18 +303,61 @@ const COMMAND_TTL_MS = 300000;     // 5 min — discard if ESP32 never picks it 
 // ---------------------------------------------------------------------------
 const app = express();
 app.disable('x-powered-by');
-app.set('trust proxy', 1); // honor X-Forwarded-For if run behind a reverse proxy
+app.set('trust proxy', process.env.TRUST_PROXY === 'true');
 
 app.use(
   helmet({
-    // The dashboard/login pages use inline <style>/<script> with no nonce,
-    // so a strict default CSP would break them. Other protections (frame
-    // guard, no-sniff, etc.) still apply.
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        baseUri: ["'self'"],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+        imgSrc: ["'self'", 'data:'],
+        objectSrc: ["'none'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        workerSrc: ["'self'"],
+        upgradeInsecureRequests: null,
+      },
+    },
   })
 );
 app.use(express.json({ limit: '256kb' }));
 app.use(express.urlencoded({ extended: false, limit: '64kb' }));
+
+class BoundedSessionStore extends session.Store {
+  constructor(maxEntries = 1000) {
+    super();
+    this.maxEntries = maxEntries;
+    this.sessions = new Map();
+  }
+
+  get(sid, callback) {
+    const entry = this.sessions.get(sid);
+    if (!entry || entry.expiresAt <= Date.now()) {
+      this.sessions.delete(sid);
+      callback(null, null);
+      return;
+    }
+    callback(null, entry.data);
+  }
+
+  set(sid, data, callback = () => {}) {
+    const cookieExpiry = data.cookie && data.cookie.expires ? new Date(data.cookie.expires).getTime() : NaN;
+    const expiresAt = Number.isFinite(cookieExpiry) ? cookieExpiry : Date.now() + 8 * 60 * 60 * 1000;
+    this.sessions.set(sid, { data, expiresAt });
+    while (this.sessions.size > this.maxEntries) this.sessions.delete(this.sessions.keys().next().value);
+    callback(null);
+  }
+
+  destroy(sid, callback = () => {}) {
+    this.sessions.delete(sid);
+    callback(null);
+  }
+}
 
 app.use(
   session({
@@ -318,10 +365,12 @@ app.use(
     secret: auth.loadOrCreateSecretKey(),
     resave: false,
     saveUninitialized: false,
+    store: new BoundedSessionStore(),
     cookie: {
       maxAge: 8 * 60 * 60 * 1000, // 8 hours
       httpOnly: true,
       sameSite: 'lax',
+      secure: process.env.COOKIE_SECURE === 'true',
     },
   })
 );
@@ -543,8 +592,17 @@ async function refreshFirmwareCache() {
     const sha256 = fs.existsSync(shaPath) ? fs.readFileSync(shaPath, 'utf8').trim() : '';
     const stat = fs.statSync(binPath);
 
-    firmwareCache = { version: tag, sha256, size: stat.size, path: binPath, fetchedAt: Date.now() };
-    log(`[firmware] Cached v${tag} (${(stat.size / 1024).toFixed(1)} KB, sha256=${sha256.substring(0, 16)}...)`);
+    firmwareCache = {
+      version: tag,
+      sha256,
+      size: stat.size,
+      path: binPath,
+      compiled_at: firmwareMetadata.readBuildStamp(binPath),
+      ota_protocol: firmwareMetadata.readOtaProtocol(binPath),
+      min_ota_protocol: firmwareMetadata.readMinimumOtaProtocol(binPath),
+      fetchedAt: Date.now(),
+    };
+    log(`[firmware] Cached v${tag} (${(stat.size / 1024).toFixed(1)} KB, compiled=${firmwareCache.compiled_at || 'unverified'}, sha256=${sha256.substring(0, 16)}...)`);
     return firmwareCache;
   } catch (err) {
     logError('[firmware] refreshFirmwareCache', err);
@@ -552,14 +610,269 @@ async function refreshFirmwareCache() {
   }
 }
 
+async function listFirmwareReleases() {
+  const { Octokit } = await import('@octokit/rest');
+  const [owner, repo] = FIRMWARE_REPO.split('/');
+  if (!owner || !repo) throw new Error('Invalid FIRMWARE_REPO');
+  const octokit = new Octokit({ userAgent: 'relay-controller-ota/1.0' });
+  const { data } = await octokit.rest.repos.listReleases({ owner, repo, per_page: 20 });
+  return data.map((release) => ({
+    tag: release.tag_name.replace(/^v/, ''),
+    api_tag: release.tag_name,
+    title: release.name || release.tag_name,
+    published_at: release.published_at,
+    prerelease: !!release.prerelease,
+    draft: !!release.draft,
+    url: release.html_url,
+    asset: release.assets.find((asset) => asset.name === FIRMWARE_ASSET_NAME)
+      ? { name: FIRMWARE_ASSET_NAME, size: release.assets.find((asset) => asset.name === FIRMWARE_ASSET_NAME).size }
+      : null,
+  }));
+}
+
+async function cacheReleaseAsset(tag) {
+  const releases = await listFirmwareReleases();
+  const release = releases.find((item) => item.tag === tag && item.asset);
+  if (!release) throw validationError(`Release '${tag}' has no ${FIRMWARE_ASSET_NAME} asset`);
+
+  const binPath = path.join(FIRMWARE_CACHE_DIR, `${release.tag}_${FIRMWARE_ASSET_NAME}`);
+  const shaPath = `${binPath}.sha256`;
+  if (!fs.existsSync(binPath)) {
+    const { Octokit } = await import('@octokit/rest');
+    const [owner, repo] = FIRMWARE_REPO.split('/');
+    const octokit = new Octokit({ userAgent: 'relay-controller-ota/1.0' });
+    const { data } = await octokit.rest.repos.getReleaseByTag({ owner, repo, tag: release.api_tag });
+    const asset = data.assets.find((item) => item.name === FIRMWARE_ASSET_NAME);
+    if (!asset) throw validationError(`Release '${tag}' has no ${FIRMWARE_ASSET_NAME} asset`);
+    const response = await fetch(asset.browser_download_url, {
+      headers: { 'User-Agent': 'relay-controller-ota/1.0', Accept: 'application/octet-stream' },
+    });
+    if (!response.ok) throw new Error(`Firmware download failed: HTTP ${response.status}`);
+    const binary = Buffer.from(await response.arrayBuffer());
+    if (binary.length === 0 || binary.length > MAX_FIRMWARE_SIZE) throw new Error('Release firmware exceeds the OTA partition size');
+    fs.mkdirSync(FIRMWARE_CACHE_DIR, { recursive: true });
+    fs.writeFileSync(binPath, binary);
+    fs.writeFileSync(shaPath, crypto.createHash('sha256').update(binary).digest('hex'));
+  }
+  const stat = fs.statSync(binPath);
+  return {
+    version: tag,
+    sha256: fs.readFileSync(shaPath, 'utf8').trim(),
+    size: stat.size,
+    path: binPath,
+    compiled_at: firmwareMetadata.readBuildStamp(binPath),
+    ota_protocol: firmwareMetadata.readOtaProtocol(binPath),
+    min_ota_protocol: firmwareMetadata.readMinimumOtaProtocol(binPath),
+    source: 'release',
+  };
+}
+
+async function resolveActiveFirmware() {
+  const state = firmwareState.load();
+  if (state.source === 'custom' && state.custom) {
+    const fileName = path.basename(state.custom.file || '');
+    const filePath = path.join(CUSTOM_FIRMWARE_DIR, fileName);
+    if (fileName && fs.existsSync(filePath)) {
+      const stat = fs.statSync(filePath);
+      return {
+        version: state.custom.version,
+        sha256: state.custom.sha256,
+        size: stat.size,
+        path: filePath,
+        compiled_at: state.custom.compiled_at || firmwareMetadata.readBuildStamp(filePath),
+        ota_protocol: Number.isSafeInteger(state.custom.ota_protocol)
+          ? state.custom.ota_protocol : firmwareMetadata.readOtaProtocol(filePath),
+        min_ota_protocol: Number.isSafeInteger(state.custom.min_ota_protocol)
+          ? state.custom.min_ota_protocol : firmwareMetadata.readMinimumOtaProtocol(filePath),
+        source: 'custom',
+      };
+    }
+    throw new Error('Selected custom firmware file is missing');
+  }
+  if (state.source === 'release' && state.release_tag) return cacheReleaseAsset(state.release_tag);
+  const latest = await refreshFirmwareCache();
+  return latest ? { ...latest, source: 'latest' } : null;
+}
+
+app.get(
+  '/api/firmware/control',
+  asyncRoute(async (req, res) => {
+    const state = firmwareState.load();
+    res.json({
+      auto_update: state.auto_update,
+      control_id: state.control_id,
+      request_id: state.request_id,
+    });
+  })
+);
+
+app.get(
+  '/api/firmware',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const state = firmwareState.load();
+    const releases = await listFirmwareReleases();
+    let active = null;
+    try {
+      active = await resolveActiveFirmware();
+    } catch (err) {
+      logError('[firmware] resolve active manager firmware', err);
+    }
+    res.json({
+      repo: FIRMWARE_REPO,
+      asset_name: FIRMWARE_ASSET_NAME,
+      max_size: MAX_FIRMWARE_SIZE,
+      state,
+      active: active && {
+        version: active.version,
+        size: active.size,
+        compiled_at: active.compiled_at || null,
+        ota_protocol: active.ota_protocol,
+        min_ota_protocol: active.min_ota_protocol,
+        source: active.source,
+      },
+      releases,
+    });
+  })
+);
+
+app.put(
+  '/api/firmware/settings',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    if (!req.body || typeof req.body.auto_update !== 'boolean') throw validationError('auto_update must be boolean');
+    const state = firmwareState.update({ auto_update: req.body.auto_update });
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'firmware_auto_update', note: state.auto_update ? 'enabled' : 'disabled' });
+    res.json(state);
+  })
+);
+
+app.post(
+  '/api/firmware/device-status',
+  express.json({ limit: '2kb' }),
+  asyncRoute(async (req, res) => {
+    const status = req.body || {};
+    if (!Number.isSafeInteger(status.control_id) || status.control_id < 1
+      || !Number.isSafeInteger(status.request_id) || status.request_id < 0
+      || typeof status.auto_update !== 'boolean'
+      || typeof status.firmware_version !== 'string' || status.firmware_version.length > 31
+      || (status.compiled_at !== null && typeof status.compiled_at !== 'string')
+      || (status.ota_protocol !== undefined && (!Number.isSafeInteger(status.ota_protocol)
+        || status.ota_protocol < 1 || status.ota_protocol > 99))) {
+      throw validationError('Invalid firmware device status');
+    }
+    const state = firmwareState.acknowledgeDevice(status);
+    res.json({ ok: true, control_id: state.control_id });
+  })
+);
+
+app.put(
+  '/api/firmware/source',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const source = req.body && req.body.source;
+    if (source === 'latest') {
+      const state = firmwareState.update({ source: 'latest', release_tag: null, force: null }, true);
+      return res.json(state);
+    }
+    if (source !== 'release' || typeof req.body.tag !== 'string') throw validationError('Source must be latest or a release tag');
+    const releases = await listFirmwareReleases();
+    if (!releases.some((release) => release.tag === req.body.tag && release.asset)) {
+      throw validationError(`Release '${req.body.tag}' has no ${FIRMWARE_ASSET_NAME} asset`);
+    }
+    const state = firmwareState.update({ source: 'release', release_tag: req.body.tag, force: null }, true);
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'firmware_source', note: `release ${req.body.tag}` });
+    res.json(state);
+  })
+);
+
+app.post(
+  '/api/firmware/check',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const state = firmwareState.update({}, true);
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'firmware_check_requested' });
+    res.json({ ok: true, control_id: state.control_id, request_id: state.request_id });
+  })
+);
+
+app.post(
+  '/api/firmware/custom',
+  loginRequired,
+  express.raw({ type: 'application/octet-stream', limit: MAX_FIRMWARE_SIZE }),
+  asyncRoute(async (req, res) => {
+    if (!Buffer.isBuffer(req.body) || req.body.length < 4096 || req.body.length > MAX_FIRMWARE_SIZE || req.body[0] !== 0xe9) {
+      throw validationError('Upload must be a valid ESP32 firmware binary that fits the OTA partition');
+    }
+    const force = req.get('X-Firmware-Force') === 'true';
+    const compiledAt = firmwareMetadata.readBuildStamp(req.body);
+    if (!compiledAt && !force) {
+      throw validationError('Firmware is missing the trusted BELL_BUILD compilation timestamp. Build it with this project before uploading.');
+    }
+    const version = compiledAt ? `custom-${compiledAt.replace(/[-:TZ]/g, '')}` : `forced-custom-${Date.now()}`;
+    const sha256 = crypto.createHash('sha256').update(req.body).digest('hex');
+    // Preserve each upload even when multiple builds share one compilation second.
+    const fileName = `${version}-${crypto.randomUUID()}-${sha256.slice(0, 12)}.bin`;
+    const filePath = path.join(CUSTOM_FIRMWARE_DIR, fileName);
+    const tmpPath = `${filePath}.tmp`;
+    fs.mkdirSync(CUSTOM_FIRMWARE_DIR, { recursive: true });
+    fs.writeFileSync(tmpPath, req.body);
+    fs.renameSync(tmpPath, filePath);
+    const custom = {
+      file: fileName,
+      version,
+      sha256,
+      size: req.body.length,
+      compiled_at: compiledAt,
+      ota_protocol: firmwareMetadata.readOtaProtocol(req.body),
+      min_ota_protocol: firmwareMetadata.readMinimumOtaProtocol(req.body),
+      uploaded_at: new Date().toISOString(),
+    };
+    const current = firmwareState.load();
+    const forceRequest = force ? {
+      id: (current.force && current.force.id ? current.force.id : 0) + 1,
+      sha256,
+      requested_at: new Date().toISOString(),
+    } : null;
+    const state = firmwareState.update({ source: 'custom', release_tag: null, custom, force: forceRequest }, true);
+    history.appendHistory({
+      ch: '*',
+      trigger: 'edit',
+      status: force ? 'firmware_custom_forced' : 'firmware_custom_uploaded',
+      note: `${version} (${custom.size} bytes)${force ? ' FORCE BYPASS' : ''}`,
+    });
+    res.status(201).json({ state, custom, forced: force });
+  })
+);
+
 // Serve firmware version info — ESP32 polls this to decide whether to update.
 // Public: no auth required (ESP32 has no interactive login).
 app.get(
   '/api/firmware/version',
   asyncRoute(async (req, res) => {
-    const info = await refreshFirmwareCache();
+    const info = await resolveActiveFirmware();
     if (!info) return res.status(503).json({ error: 'no firmware available' });
-    res.json({ version: info.version, size: info.size, sha256: info.sha256 });
+    const deviceProtocol = firmwareMetadata.parseDeviceOtaProtocol(req.get('X-Bell-OTA-Protocol'));
+    const minimumProtocol = info.min_ota_protocol || firmwareMetadata.LEGACY_OTA_PROTOCOL;
+    if (deviceProtocol < minimumProtocol) {
+      return res.status(426).json({
+        error: 'firmware requires a newer OTA protocol',
+        min_ota_protocol: minimumProtocol,
+      });
+    }
+    const state = firmwareState.load();
+    const force = state.force && state.force.sha256 === info.sha256 ? state.force : null;
+    res.json({
+      version: info.version,
+      size: info.size,
+      sha256: info.sha256,
+      compiled_at: info.compiled_at || null,
+      ota_protocol: info.ota_protocol || firmwareMetadata.LEGACY_OTA_PROTOCOL,
+      min_ota_protocol: minimumProtocol,
+      source: info.source,
+      force: !!force,
+      force_id: force ? force.id : 0,
+    });
   })
 );
 
@@ -568,7 +881,7 @@ app.get(
 app.get(
   '/api/firmware/download',
   asyncRoute(async (req, res) => {
-    const info = await refreshFirmwareCache();
+    const info = await resolveActiveFirmware();
     if (!info || !fs.existsSync(info.path)) {
       return res.status(503).json({ error: 'firmware not available' });
     }
@@ -1251,6 +1564,10 @@ bootstrap();
 startBeacon();
 
 const server = http.createServer(app);
+server.requestTimeout = 15000;
+server.headersTimeout = 10000;
+server.keepAliveTimeout = 5000;
+server.maxRequestsPerSocket = 100;
 server.listen(PORT, HOST, () => {
   const localIp = getLocalIPv4();
   log(`[server] Relay Controller listening on http://${HOST}:${PORT} (accessible at http://${localIp}:${PORT})`);

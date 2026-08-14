@@ -18,7 +18,6 @@ const BASE_DIR = __dirname;
 const PASSWORD_FILE = path.join(BASE_DIR, 'password.json');
 const SECRET_KEY_FILE = path.join(BASE_DIR, 'secret.key');
 
-const DEFAULT_PASSWORD = 'admin'; // only used the very first time the server runs
 const BCRYPT_ROUNDS = 12;
 
 /** Atomic write helper — write to a temp file then rename over the target. */
@@ -30,8 +29,8 @@ function writeFileAtomic(filePath, contents) {
 
 /** Hash `newPassword` and persist it to disk. Throws on invalid input. */
 function setPassword(newPassword) {
-  if (!newPassword || newPassword.length < 4) {
-    throw new Error('Password must be at least 4 characters long');
+  if (!newPassword || newPassword.length < 10) {
+    throw new Error('Password must be at least 10 characters long');
   }
   const hash = bcrypt.hashSync(newPassword, BCRYPT_ROUNDS);
   writeFileAtomic(PASSWORD_FILE, JSON.stringify({ password_hash: hash }, null, 2));
@@ -40,10 +39,11 @@ function setPassword(newPassword) {
 /** Return the stored password hash, creating a default one if missing. */
 function loadPasswordHash() {
   if (!fs.existsSync(PASSWORD_FILE)) {
-    setPassword(DEFAULT_PASSWORD);
+    const initialPassword = crypto.randomBytes(18).toString('base64url');
+    setPassword(initialPassword);
     console.log(
       `[auth] No password set — created default password.json ` +
-      `(default password: '${DEFAULT_PASSWORD}'). ` +
+      `(one-time password: '${initialPassword}'). ` +
       `Please change it: node reset_password.js`
     );
   }

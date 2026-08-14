@@ -447,7 +447,7 @@ Change the dashboard password.
 
 **Body:** `{ "current": "old-password", "next": "new-password" }`
 
-Minimum 4 characters. bcrypt with 12 rounds.
+Minimum 10 characters. bcrypt with 12 rounds.
 
 ---
 
@@ -699,7 +699,7 @@ All state is flat JSON files in the `server-node/` directory. Atomic writes (wri
 
 - Default: `admin` (created on first run with a console warning)
 - Hashing: bcrypt, 12 rounds
-- Minimum length: 4 characters
+- Minimum length: 10 characters
 - Changed via: `POST /api/account/password` or `node reset_password.js`
 - File: `password.json`
 

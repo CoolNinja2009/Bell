@@ -5,6 +5,7 @@ secret.key
 schedule.json
 history.jsonl
 api_keys.json
+firmware_state.json
 *.log
 state/update_state.json
 state/update_state.json.tmp
