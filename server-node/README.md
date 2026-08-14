@@ -776,6 +776,21 @@ The server acts as a firmware distribution point. ESP32 devices check `/api/firm
 7. ESP32 verifies SHA-256, commits to OTA partition, reboots
 ```
 
+### Selection and force bypass
+
+The Firmware Manager can serve GitHub latest, a pinned release, or a local
+firmware upload. The selected artifact is resolved before the choice is saved,
+and the dashboard shows the exact served version, compilation time, and SHA
+prefix.
+
+Normal OTA uses the embedded `BELL_BUILD` UTC compilation timestamp only. Tags,
+version strings, and commit hashes never determine whether the firmware is
+newer. An unmarked release is skipped by a normal check. Triple-clicking the
+same release button within 1.5 seconds creates a warning-only, SHA-bound force
+request. It can bypass the timestamp rule, while SHA-256 verification and
+rollback protection remain active. The ESP32 reports its acknowledgement and
+final OTA outcome through `/api/firmware/device-status`.
+
 ### Caching
 
 - Cache dir: `.firmware_cache/` (gitignored)
@@ -905,7 +920,11 @@ Errors are logged with full stack traces.
 
 ### Device Log Ring Buffer
 
-ESP32 log messages (`POST /api/log`) are stored in an in-memory ring buffer of 100 entries. Each entry: `{ t: "HH:MM:SS", msg: "..." }`. Oldest entries are dropped when full.
+Application `Serial` output is mirrored into a 96-line ring buffer on the
+ESP32. The network task sends batches of up to 8 lines through `POST /api/log`
+and removes them only after a successful response. The server keeps the newest
+300 entries for the dashboard Wi-Fi Serial Monitor. Boot-ROM output printed
+before the firmware starts cannot be mirrored.
 
 ### File Logging (bootstrap only)
 

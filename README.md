@@ -224,6 +224,27 @@ git push → GitHub Actions builds firmware.bin → GitHub Release
       → version newer? downloads 939 KB → SHA‑256 verifies → reboots
 ```
 
+### Current update decision rule
+
+Normal OTA ordering is based only on the embedded `BELL_BUILD` UTC compilation
+timestamp. Release tags, version strings, and commit hashes never decide whether
+an update is newer. A release missing that trusted timestamp is skipped during a
+normal check, even if its tag looks newer.
+
+The Firmware Manager can serve GitHub latest, a pinned GitHub release, or a
+local `.bin` upload. It displays the selected source alongside the actual
+artifact resolved by the server, including its SHA prefix and compilation time.
+The source is `synced` only when those match.
+
+Triple-click the same **Use release** button within 1.5 seconds to issue a
+warning-only force request. The force is bound to that exact SHA-256 and can
+bypass the normal timestamp gate, but SHA-256 verification and partition
+rollback protection remain active. A normal source selection clears the force.
+
+The ESP32 reports acknowledgement, skip reasons, download, verification,
+installation, failure, and stable-boot outcomes back to the dashboard. Its
+latest outcome is retried after a short server interruption.
+
 ### Verified end-to-end
 
 OTA has been tested on real hardware (ESP32 DevKit V3, 4 MB flash).
@@ -250,8 +271,9 @@ Push any change to the `main` branch:
 git add . && git commit -m "fix relay timing" && git push
 ```
 
-GitHub Actions builds `firmware.bin`, creates a release. The Node.js server
-picks it up within 30 minutes. ESP32 checks on every boot (after WiFi connects).
+GitHub Actions builds `firmware.bin` and creates a release. The Node.js server
+picks it up within 30 minutes. The ESP32 uses the embedded compilation time,
+not the release tag, when making a normal update decision.
 
 ### Partition layout
 
@@ -402,6 +424,16 @@ Temporarily switch to any profile regardless of calendar. Optionally set an auto
 - **Backup / Restore** — download or upload a full JSON snapshot
 - **Dark mode** — auto-detected from system preference, manually togglable
 - **Installable PWA** — add to home screen on Android/iOS/desktop for a native app experience, with offline support via service worker
+### Monitoring and workspace
+
+- **ESP32 Serial Monitor** - Wi-Fi mirrored firmware `Serial` output, delivered
+  in retained batches without a USB connection
+- **Movable panels** - drag Firmware Manager, History, and ESP32 Serial Monitor
+  by their headers; each browser remembers its own order
+- **Firmware Manager** - choose latest, pin a release, upload a local build,
+  inspect the served SHA/build timestamp, and request a controlled force install
+  when necessary
+
 ### Profiles page (`/profiles`)
 
 - **Profile sidebar** — create, rename, duplicate, delete profiles
@@ -417,11 +449,13 @@ Temporarily switch to any profile regardless of calendar. Optionally set an auto
 | `GET` | `/api/schedule` | Download active profile's channels for today. Schedule entries may be plain `"HH:MM"` strings (use channel `pulse_ms`) or `{"time":"HH:MM","pulse_ms":N}` objects (per-entry override). Single-digit hours (e.g. `"8:00"`) are accepted and normalized. |
 | `GET` | `/api/schedule/hash` | Quick change detection (MD5, 8 hex chars) |
 | `POST` | `/api/heartbeat?ch=ch1` | Device liveness ping per channel |
-| `POST` | `/api/log` | Device pushes a log line |
+| `POST` | `/api/log` | Device pushes one log line or a batch of up to 8 Wi-Fi mirrored serial lines |
 | `GET` | `/api/commands?ch=ch1` | Poll for queued manual trigger |
 | `POST` | `/api/execution` | Optional: confirm a relay actually fired |
 | `GET` | `/api/firmware/version` | Latest firmware version + SHA-256 hash |
 | `GET` | `/api/firmware/download` | Firmware binary with HTTP Range support for resume |
+| `GET` | `/api/firmware/control` | Dashboard daily-update setting and update-check revision |
+| `POST` | `/api/firmware/device-status` | ESP32 acknowledgement and OTA outcome telemetry |
 
 ### Dashboard endpoints (login required)
 
@@ -451,6 +485,11 @@ Temporarily switch to any profile regardless of calendar. Optionally set an auto
 | `POST` | `/api/calendar/dow` | Assign profile to day of week |
 | `DELETE` | `/api/calendar/:type/:key` | Remove calendar assignment |
 | `GET`/`PUT` | `/api/settings` | Read/update settings |
+| `GET` | `/api/firmware` | Firmware Manager state, served artifact, and GitHub releases |
+| `PUT` | `/api/firmware/source` | Select latest or a pinned release; supports guarded `force: true` |
+| `PUT` | `/api/firmware/settings` | Toggle daily OTA checks |
+| `POST` | `/api/firmware/check` | Request an immediate ESP32 OTA check |
+| `POST` | `/api/firmware/custom` | Upload and select a local firmware binary |
 
 API-key auth: send `X-API-Key` header on endpoints marked as API-key compatible (`/api/status`, `/api/history`, manual trigger).
 
