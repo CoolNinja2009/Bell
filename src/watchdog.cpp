@@ -14,6 +14,7 @@
  *      (time(nullptr) > 1000000000UL).
  */
 #ifdef WATCHDOG_ENABLED
+#include "bell_logger.h"
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h>
@@ -155,7 +156,7 @@ static bool watchdog_load_nvs() {
     DeserializationError err = deserializeJson(doc, cfg);
 #pragma GCC diagnostic pop
     if (err) {
-        Serial.printf("[WATCHDOG] NVS JSON parse error: %s\n", err.c_str());
+        bell_serial.printf("[WATCHDOG] NVS JSON parse error: %s\n", err.c_str());
         return false;
     }
     JsonObject root = doc.as<JsonObject>();
@@ -179,7 +180,7 @@ static bool watchdog_load_nvs() {
             }
         }
         if (!found) {
-            Serial.println(F("[WATCHDOG] incomplete NVS config ignored"));
+            bell_serial.println(F("[WATCHDOG] incomplete NVS config ignored"));
             return false;
         }
     }
@@ -266,7 +267,7 @@ static bool watchdog_load_nvs() {
     strncpy(g_nvs_hash, hash.c_str(), 8);
     g_nvs_hash[8] = '\0';
 
-    Serial.printf("[WATCHDOG] NVS loaded (hash=%s, ch1_slots=%u, ch2_slots=%u)\n",
+    bell_serial.printf("[WATCHDOG] NVS loaded (hash=%s, ch1_slots=%u, ch2_slots=%u)\n",
                   g_nvs_hash,
                   static_cast<unsigned>(g_ch[0].schedule_len),
                   static_cast<unsigned>(g_ch[1].schedule_len));
@@ -317,7 +318,7 @@ static void watchdog_check_channel(WdChannel &ch, uint32_t now_ms, bool taken_ov
             // is intentionally absent from the timetable.
             if (elapsed_since(ch.observed_on_ms) > MAX_UNSCHEDULED_ON_MS + MAX_PULSE_MARGIN_MS) {
                 relay_write(ch.gpio, false);
-                Serial.printf("[WATCHDOG] GPIO%u SAFETY OFF (unscheduled pulse exceeded limit)\n", ch.gpio);
+                bell_serial.printf("[WATCHDOG] GPIO%u SAFETY OFF (unscheduled pulse exceeded limit)\n", ch.gpio);
                 ch.observed_on_ms = 0;
             }
             return;
@@ -330,10 +331,10 @@ static void watchdog_check_channel(WdChannel &ch, uint32_t now_ms, bool taken_ov
             relay_write(ch.gpio, false);
             if (ch.forced_on_ms != 0) {
                 uint32_t duration = now_ms - ch.forced_on_ms;
-                Serial.printf("[WATCHDOG] GPIO%u SAFETY OFF (was on %lums, schedule says off)\n",
+                bell_serial.printf("[WATCHDOG] GPIO%u SAFETY OFF (was on %lums, schedule says off)\n",
                               ch.gpio, static_cast<unsigned long>(duration));
             } else {
-                Serial.printf("[WATCHDOG] GPIO%u SAFETY OFF (stuck relay)\n", ch.gpio);
+                bell_serial.printf("[WATCHDOG] GPIO%u SAFETY OFF (stuck relay)\n", ch.gpio);
             }
             ch.forced_on_ms = 0;
             ch.active_pulse_ms = 0;
@@ -343,7 +344,7 @@ static void watchdog_check_channel(WdChannel &ch, uint32_t now_ms, bool taken_ov
             uint32_t limit = ch.active_pulse_ms + MAX_PULSE_MARGIN_MS;
             if (elapsed_since(ch.forced_on_ms) > limit) {
                 relay_write(ch.gpio, false);
-                Serial.printf("[WATCHDOG] GPIO%u SAFETY OFF (pulse exceeded %lums limit)\n",
+                bell_serial.printf("[WATCHDOG] GPIO%u SAFETY OFF (pulse exceeded %lums limit)\n",
                               ch.gpio, static_cast<unsigned long>(limit));
                 ch.forced_on_ms = 0;
                 ch.active_pulse_ms = 0;
@@ -373,7 +374,7 @@ static void watchdog_check_channel(WdChannel &ch, uint32_t now_ms, bool taken_ov
         }
 
         relay_write(ch.gpio, true);
-        Serial.printf("[WATCHDOG] GPIO%u TAKEOVER ON  (schedule %02u:%02u:%02u, pulse %lums)\n",
+        bell_serial.printf("[WATCHDOG] GPIO%u TAKEOVER ON  (schedule %02u:%02u:%02u, pulse %lums)\n",
                       ch.gpio, t.tm_hour, t.tm_min, t.tm_sec,
                       static_cast<unsigned long>(ch.active_pulse_ms));
     }
@@ -394,7 +395,7 @@ static void watchdog_task_fn(void *param) {
     watchdog_load_nvs();
     g_nvs_reload_at = millis() + NVS_RELOAD_MS;
 
-    Serial.println(F("[WATCHDOG] task started — monitoring relay pins"));
+    bell_serial.println(F("[WATCHDOG] task started — monitoring relay pins"));
 
     for (;;) {
         uint32_t now_ms = millis();
@@ -408,10 +409,10 @@ static void watchdog_task_fn(void *param) {
         // ── Heartbeat check ──────────────────────────────────
         bool stall = (g_heartbeat_ms != 0 && elapsed_since(g_heartbeat_ms) > STALL_TIMEOUT_MS);
         if (stall && !g_taken_over) {
-            Serial.println(F("[WATCHDOG] CRITICAL: bell_core stalled — TAKING OVER relay control"));
+            bell_serial.println(F("[WATCHDOG] CRITICAL: bell_core stalled — TAKING OVER relay control"));
             g_taken_over = true;
         } else if (!stall && g_taken_over) {
-            Serial.println(F("[WATCHDOG] bell_core recovered — releasing takeover"));
+            bell_serial.println(F("[WATCHDOG] bell_core recovered — releasing takeover"));
             g_taken_over = false;
         }
 
@@ -447,7 +448,7 @@ void watchdog_init() {
         0            // core 0
     );
     if (rc != pdPASS) {
-        Serial.println(F("[WATCHDOG] FATAL: task creation failed"));
+        bell_serial.println(F("[WATCHDOG] FATAL: task creation failed"));
     }
 }
 

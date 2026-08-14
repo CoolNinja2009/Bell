@@ -640,7 +640,11 @@
     border-bottom: 1px solid var(--border);
     transition: background 0.2s;
   }
-  .panel-header:hover { background: #0d1420; }
+  .panel-header:hover { background: var(--panel); }
+  .panel-header { cursor: grab; touch-action: none; }
+  .panel-header:active { cursor: grabbing; }
+  .panel.dragging { outline: 2px dashed var(--accent); outline-offset: 2px; }
+  .panel.drag-target { outline: 2px solid var(--accent); outline-offset: 2px; }
   .panel-header .arrow {
     transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     font-size: 0.65rem;
@@ -926,7 +930,7 @@
 <!-- ── Raw device log (unchanged behavior) ─────────────────────── -->
 <div class="panel collapsed" id="log-panel">
   <div class="panel-header" data-toggle="log-panel">
-    <span>Device Log <span id="log-count" style="color:var(--dim)">(0)</span></span>
+    <span>ESP32 Serial Monitor <span id="log-count" style="color:var(--dim)">(0)</span> <span id="log-status" style="color:var(--accent);font-size:0.7rem">Live</span></span>
     <span class="arrow">&#9660;</span>
   </div>
   <div class="panel-body log-body" id="log-body"></div>
@@ -997,8 +1001,82 @@ function toast(msg, isErr) {
 
 document.addEventListener('click', (e) => {
   const header = e.target.closest('[data-toggle]');
+  if (Date.now() < window._suppressPanelToggleUntil) return;
   if (header) $('#' + header.dataset.toggle).classList.toggle('collapsed');
 });
+
+// Dashboard panels can be reordered from their headers. The preference stays
+// in this browser only, so each operator can arrange their own workspace.
+const PANEL_ORDER_KEY = 'bell-dashboard-panel-order-v1';
+window._suppressPanelToggleUntil = 0;
+
+function movablePanels() {
+  const ids = new Set(['firmware-panel', 'hist-panel', 'log-panel']);
+  return $$('.panel').filter(panel => ids.has(panel.id));
+}
+
+function savePanelOrder() {
+  try { localStorage.setItem(PANEL_ORDER_KEY, JSON.stringify(movablePanels().map(panel => panel.id))); } catch {}
+}
+
+function restorePanelOrder() {
+  let order;
+  try { order = JSON.parse(localStorage.getItem(PANEL_ORDER_KEY)); } catch { order = null; }
+  if (!Array.isArray(order)) return;
+  const known = new Map(movablePanels().map(panel => [panel.id, panel]));
+  const panels = order.map(id => known.get(id)).filter(Boolean);
+  if (panels.length !== known.size) return;
+  let anchor = document.getElementById('toast');
+  for (let index = panels.length - 1; index >= 0; index--) {
+    anchor.parentElement.insertBefore(panels[index], anchor);
+    anchor = panels[index];
+  }
+}
+
+function setupPanelReordering() {
+  restorePanelOrder();
+  let activeDrag = null;
+
+  const clearDragState = () => {
+    for (const item of movablePanels()) item.classList.remove('dragging', 'drag-target');
+  };
+
+  const finish = () => {
+    if (!activeDrag) return;
+    const { panel, target, before, dragging } = activeDrag;
+    if (dragging && target && target !== panel) {
+      target.parentElement.insertBefore(panel, before ? target : target.nextElementSibling);
+      savePanelOrder();
+      window._suppressPanelToggleUntil = Date.now() + 250;
+    }
+    clearDragState();
+    activeDrag = null;
+  };
+
+  window.addEventListener('pointermove', (event) => {
+    if (!activeDrag || event.pointerId !== activeDrag.pointerId) return;
+    if (Math.abs(event.clientY - activeDrag.startY) < 8) return;
+    activeDrag.dragging = true;
+    activeDrag.panel.classList.add('dragging');
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('.panel');
+    const validTarget = movablePanels().includes(target) && target !== activeDrag.panel ? target : null;
+    activeDrag.target = validTarget;
+    activeDrag.before = validTarget && event.clientY < validTarget.getBoundingClientRect().top + validTarget.offsetHeight / 2;
+    for (const item of movablePanels()) item.classList.toggle('drag-target', item === validTarget);
+  });
+  window.addEventListener('pointerup', finish);
+  window.addEventListener('pointercancel', finish);
+
+  for (const panel of movablePanels()) {
+    const header = panel.querySelector('.panel-header');
+    header.addEventListener('pointerdown', (event) => {
+      clearDragState();
+      activeDrag = { panel, pointerId: event.pointerId, startY: event.clientY, target: null, before: false, dragging: false };
+    });
+  }
+}
+
+setupPanelReordering();
 
 // ── Channels: render ──────────────────────────────────────────────
 function renderAll(data) {
@@ -1492,39 +1570,47 @@ function fmtBuildStamp(stamp) {
 
 async function waitForFirmwareAck(controlId) {
   if (!Number.isInteger(controlId)) return;
-  for (let attempt = 0; attempt < 6; attempt++) {
+  for (let attempt = 0; attempt < 12; attempt++) {
     await new Promise(resolve => setTimeout(resolve, 1500));
     const data = await api('GET', '/api/firmware?_=' + Date.now());
     const device = data.state && data.state.last_device;
     if (device && device.control_id >= controlId) {
       loadFirmwareManager();
-      toast('ESP32 acknowledged the dashboard change');
-      return;
+      const status = device.ota_status || 'acknowledged';
+      if (status !== 'acknowledged') {
+        toast(`ESP32: ${status}${device.ota_detail ? ' - ' + device.ota_detail : ''}`, status === 'failed');
+        return;
+      }
     }
   }
   loadFirmwareManager();
-  toast('Saved. The ESP32 has not acknowledged yet; check its connection.', true);
+  toast('Saved. The ESP32 has not reported a final OTA result yet; check its connection.', true);
 }
 
 async function loadFirmwareManager() {
   try {
     const data = await api('GET', '/api/firmware?_=' + Date.now());
     const state = data.state;
-    const active = state.source === 'custom'
+    const selected = state.source === 'custom'
       ? (state.custom ? `Local build ${state.custom.version}` : 'Local build unavailable')
       : state.source === 'release' ? `Pinned GitHub release ${state.release_tag}` : 'Latest GitHub release';
-    $('#firmware-active').textContent = active;
-    $('#firmware-source-badge').textContent = `(${state.source})`;
+    const active = data.active;
+    $('#firmware-active').textContent = active
+      ? `Serving ${active.version} (${active.sha256.slice(0, 12)})`
+      : `${selected} unavailable on server`;
+    $('#firmware-source-badge').textContent = data.selection_in_sync ? `(${state.source}, synced)` : `(${state.source}, mismatch)`;
     $('#firmware-auto').checked = !!state.auto_update;
     $('#firmware-meta').textContent = `Repository: ${data.repo} · asset: ${data.asset_name}` + (state.custom ? ` · custom: ${fmtBytes(state.custom.size)}` : '');
     $('#firmware-upload-limit').textContent = `ESP32 OTA limit: ${fmtBytes(data.max_size)}`;
     const device = state.last_device;
-    const activeStamp = data.active && data.active.compiled_at;
+    const activeStamp = active && active.compiled_at;
     const deviceText = device
-      ? `ESP32 acknowledged ${new Date(device.seen_at).toLocaleTimeString()} (${device.auto_update ? 'daily on' : 'daily off'})`
+      ? `ESP32 ${device.ota_status || 'acknowledged'} ${new Date(device.seen_at).toLocaleTimeString()} (${device.auto_update ? 'daily on' : 'daily off'})${device.ota_detail ? ': ' + device.ota_detail : ''}`
       : 'Waiting for ESP32 acknowledgement';
-    $('#firmware-meta').textContent = `Source: ${state.source} | ${fmtBuildStamp(activeStamp)} | ${deviceText}`
-      + (state.force ? ' | WARNING: forced install armed for this exact file' : '');
+    $('#firmware-meta').textContent = `Selected: ${selected} | ${active ? `Server SHA: ${active.sha256.slice(0, 16)} | ` : ''}${fmtBuildStamp(activeStamp)} | ${deviceText}`
+      + (state.force ? (active && state.force.sha256 === active.sha256
+        ? ' | WARNING: forced install armed for this exact file'
+        : ' | WARNING: force request does not match the served firmware') : '');
     const releases = data.releases || [];
     $('#firmware-releases').innerHTML = releases.length ? releases.map((release) => {
       const selected = state.source === 'release' && state.release_tag === release.tag;
@@ -1533,14 +1619,7 @@ async function loadFirmwareManager() {
       return `<div class="firmware-release"><div><div class="firmware-release-name" title="${escapeHtml(release.title)}">${escapeHtml(release.title)} <span style="color:var(--accent);font-family:monospace">${escapeHtml(release.tag)}</span></div><div class="firmware-release-meta">${escapeHtml(meta)}</div></div>${action}</div>`;
     }).join('') : '<div class="empty-hint">No GitHub releases available.</div>';
     $$('[data-firmware-release]').forEach((button) => {
-      button.onclick = async () => {
-        try {
-          const nextState = await api('PUT', '/api/firmware/source', { source: 'release', tag: button.dataset.firmwareRelease });
-          toast('Release selected. Waiting for ESP32 acknowledgement...');
-          waitForFirmwareAck(nextState.control_id);
-          loadFirmwareManager();
-        } catch (e) { toast('Release selection failed: ' + e.message, true); }
-      };
+      button.onclick = () => queueReleaseSelection(button.dataset.firmwareRelease);
     });
   } catch (e) {
     $('#firmware-active').textContent = 'Firmware manager unavailable';
@@ -1576,6 +1655,42 @@ $('#btn-firmware-latest').onclick = async () => {
 let deployClickCount = 0;
 let firstDeployClickAt = 0;
 let deployClickTimer = null;
+let releaseClickCount = 0;
+let firstReleaseClickAt = 0;
+let releaseClickTimer = null;
+let releaseClickTag = null;
+
+async function selectFirmwareRelease(tag, force) {
+  try {
+    const nextState = await api('PUT', '/api/firmware/source', { source: 'release', tag, force });
+    toast(force
+      ? 'WARNING: forced GitHub release sent. SHA-256 verification remains active.'
+      : 'Release selected. Waiting for ESP32 result...');
+    waitForFirmwareAck(nextState.control_id);
+    loadFirmwareManager();
+  } catch (e) { toast('Release selection failed: ' + e.message, true); }
+}
+
+function queueReleaseSelection(tag) {
+  const now = Date.now();
+  if (!releaseClickCount || releaseClickTag !== tag || now - firstReleaseClickAt > 1500) {
+    clearTimeout(releaseClickTimer);
+    releaseClickCount = 1;
+    firstReleaseClickAt = now;
+    releaseClickTag = tag;
+    releaseClickTimer = setTimeout(() => {
+      releaseClickCount = 0;
+      selectFirmwareRelease(tag, false);
+    }, 1500);
+    return;
+  }
+  releaseClickCount += 1;
+  if (releaseClickCount === 3) {
+    clearTimeout(releaseClickTimer);
+    releaseClickCount = 0;
+    selectFirmwareRelease(tag, true);
+  }
+}
 
 async function deployLocalFirmware(force) {
   const input = $('#firmware-upload-file');
@@ -1663,14 +1778,53 @@ function fmtUptime(s) {
 }
 
 // ── Device log (unchanged, just repainted into the new panel) ────
+let lastSerialLogId = 0;
+let serialLogRendered = false;
+
+function serialLogLine(entry) {
+  const row = document.createElement('div');
+  row.className = 'log-line';
+  const time = document.createElement('span');
+  time.className = 'log-time';
+  time.textContent = entry.t;
+  const message = document.createElement('span');
+  message.className = 'log-msg';
+  message.textContent = entry.msg;
+  row.append(time, message);
+  return row;
+}
+
+function renderSerialLog(entries, append) {
+  const body = $('#log-body');
+  const lines = document.createDocumentFragment();
+  for (const entry of entries) lines.append(serialLogLine(entry));
+  if (append) body.append(lines);
+  else if (entries.length) body.replaceChildren(lines);
+  else body.innerHTML = '<div class="empty-hint">No device log entries yet.</div>';
+}
+
 async function pollLog() {
   try {
     const entries = await api('GET', '/api/log?_=' + Date.now());
+    const body = $('#log-body');
+    const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 24;
     $('#log-count').textContent = `(${entries.length})`;
-    $('#log-body').innerHTML = entries.slice().reverse().map(e =>
-      `<div class="log-line"><span class="log-time">${e.t}</span><span class="log-msg">${escapeHtml(e.msg)}</span></div>`
-    ).join('') || '<div class="empty-hint">No device log entries yet.</div>';
-  } catch (e) { /* non-fatal */ }
+    $('#log-status').textContent = 'Live';
+    $('#log-status').style.color = 'var(--accent)';
+    const newestId = entries.length && Number.isInteger(entries[entries.length - 1].id)
+      ? entries[entries.length - 1].id : 0;
+    if (!serialLogRendered || newestId < lastSerialLogId) {
+      renderSerialLog(entries, false);
+    } else if (newestId > lastSerialLogId) {
+      renderSerialLog(entries.filter(entry => entry.id > lastSerialLogId), true);
+    }
+    lastSerialLogId = newestId;
+    serialLogRendered = true;
+    if (nearBottom && newestId) body.scrollTop = body.scrollHeight;
+  } catch (e) {
+    $('#log-status').textContent = 'Server unavailable';
+    $('#log-status').style.color = 'var(--danger)';
+  }
 }
 
 // ── History & analytics ──────────────────────────────────────────
@@ -1892,7 +2046,7 @@ $('#btn-clear-override-sched').onclick = async () => {
   refreshProfileBar();
   loadFirmwareManager();
   setInterval(pollStatus, 5000);
-  setInterval(pollLog, 8000);
+  setInterval(pollLog, 2000);
   setInterval(loadHistory, 20000);
   setInterval(refreshProfileBar, 15000);
   setInterval(loadProfileOptions, 60000);

@@ -70,6 +70,8 @@ function acknowledgeDevice(status) {
       firmware_version: status.firmware_version,
       compiled_at: status.compiled_at,
       ota_protocol: status.ota_protocol || 1,
+      ota_status: status.ota_status || 'acknowledged',
+      ota_detail: status.ota_detail || null,
       seen_at: new Date().toISOString(),
     },
   });

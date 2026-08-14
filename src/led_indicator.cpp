@@ -4,6 +4,7 @@
  * Single translation unit — state is NOT duplicated across TUs.
  */
 #include "led_indicator.h"
+#include "bell_logger.h"
 
 // ============================================================================
 //  PWM CONFIG
@@ -114,8 +115,8 @@ static const char *led_state_name(LedState s) {
 
 static void led_apply_transition(LedState state) {
     if (LED_SERIAL_LOG && state != s_current_state) {
-        Serial.print(F("LED: "));
-        Serial.println(led_state_name(state));
+        bell_serial.print(F("LED: "));
+        bell_serial.println(led_state_name(state));
     }
     s_current_state = state;
     s_blink_on      = true;

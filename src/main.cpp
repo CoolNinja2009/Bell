@@ -23,6 +23,7 @@
 #include "ota_update.h"
 #include "storage.h"
 #include "watchdog.h"
+#include "bell_logger.h"
 #include <esp_ota_ops.h>
 
 void setup() {
@@ -50,10 +51,10 @@ void setup() {
     {
         const esp_partition_t *p = esp_ota_get_running_partition();
         if (p) {
-            Serial.printf("BOOT: running from %s partition (0x%06X)  Built: %s %s  Uploaded: %s\n",
+            bell_serial.printf("BOOT: running from %s partition (0x%06X)  Built: %s %s  Uploaded: %s\n",
                           p->label, p->address, __DATE__, __TIME__, ota_uploaded_at());
         } else {
-            Serial.println(F("BOOT: running from UNKNOWN partition"));
+            bell_serial.println(F("BOOT: running from UNKNOWN partition"));
         }
     }
 }

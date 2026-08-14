@@ -20,6 +20,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
+#include "bell_logger.h"
 
 // ============================================================================
 //  CONFIGURATION  (tweak these if needed)
@@ -49,7 +50,7 @@ static void eraseWiFiCredentials() {
     prefs.remove(WIFI_NVS_SSID_KEY);
     prefs.remove(WIFI_NVS_PASS_KEY);
     prefs.end();
-    Serial.println(F("[WiFi] Credentials erased from NVS"));
+    bell_serial.println(F("[WiFi] Credentials erased from NVS"));
 }
 
 // ============================================================================
@@ -61,7 +62,7 @@ static void saveCredentials(const char* ssid, const char* pass) {
     prefs.putString(WIFI_NVS_SSID_KEY, ssid);
     prefs.putString(WIFI_NVS_PASS_KEY, pass);
     prefs.end();
-    Serial.println(F("[WiFi] Credentials saved to NVS"));
+    bell_serial.println(F("[WiFi] Credentials saved to NVS"));
 }
 
 // ============================================================================
@@ -107,11 +108,11 @@ static void checkBootButtonReset() {
         // Button just pressed — start timing
         held = true;
         press_start = millis();
-        Serial.println(F("BOOT held — hold 5s for WiFi factory reset..."));
+        bell_serial.println(F("BOOT held — hold 5s for WiFi factory reset..."));
     } else if (pressed && held) {
         // Still holding — check if 5 seconds elapsed
         if (millis() - press_start >= BOOT_BUTTON_HOLD_MS) {
-            Serial.println(F("WiFi Reset Successful"));
+            bell_serial.println(F("WiFi Reset Successful"));
             eraseWiFiCredentials();
             delay(500);
             ESP.restart();
@@ -131,13 +132,13 @@ static bool connectSavedWiFi() {
     char ssid[32] = {0};
     char pass[64] = {0};
 
-    Serial.println(F("Reading WiFi credentials..."));
+    bell_serial.println(F("Reading WiFi credentials..."));
     if (!loadCredentials(ssid, sizeof(ssid), pass, sizeof(pass))) {
-        Serial.println(F("No WiFi configured."));
+        bell_serial.println(F("No WiFi configured."));
         return false;
     }
 
-    Serial.printf("Connecting to %s...", ssid);
+    bell_serial.printf("Connecting to %s...", ssid);
     WiFi.setAutoReconnect(true);
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, pass);
@@ -146,15 +147,15 @@ static bool connectSavedWiFi() {
     while (WiFi.status() != WL_CONNECTED
            && millis() - start < WIFI_PROV_CONNECT_MS) {
         delay(250);
-        Serial.print(".");
+        bell_serial.print(".");
     }
 
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.println(F(" connected"));
+        bell_serial.println(F(" connected"));
         return true;
     }
 
-    Serial.println(F(""));
+    bell_serial.println(F(""));
     return false;
 }
 
@@ -470,7 +471,7 @@ setTimeout(scanNetworks, 600);
 //      submits credentials.  Then saves them and restarts.
 // ============================================================================
 static void startSetupMode() {
-    Serial.println(F("Entering Setup Mode..."));
+    bell_serial.println(F("Entering Setup Mode..."));
 
     // Start Access Point
     WiFi.mode(WIFI_AP);
@@ -478,7 +479,7 @@ static void startSetupMode() {
     WiFi.softAP(AP_SSID, AP_PASS);
     delay(200);
 
-    Serial.print(F("AP Started\nSSID: Bell_Setup\nPassword: 12345678\nOpen: http://192.168.4.1\n"));
+    bell_serial.print(F("AP Started\nSSID: Bell_Setup\nPassword: 12345678\nOpen: http://192.168.4.1\n"));
 
     // Build the web server
     WebServer server(80);
@@ -521,7 +522,7 @@ static void startSetupMode() {
             const String ssid = server.arg("ssid");
             const String pass = server.arg("pass");
 
-            Serial.print(F("Saving WiFi...\n"));
+            bell_serial.print(F("Saving WiFi...\n"));
             saveCredentials(ssid.c_str(), pass.c_str());
 
             // Respond before restarting
@@ -530,7 +531,7 @@ static void startSetupMode() {
             // Brief delay to let the HTTP response reach the client
             delay(SAVE_RESTART_DELAY_MS);
 
-            Serial.println(F("Restarting..."));
+            bell_serial.println(F("Restarting..."));
             delay(500);
             ESP.restart();
         } else {
@@ -555,7 +556,7 @@ static void startSetupMode() {
         if (millis() - last_button_check >= 100) {
             last_button_check = millis();
             if (digitalRead(0) == LOW) {
-                Serial.println(F("BOOT held — waiting 5s to abort setup..."));
+                bell_serial.println(F("BOOT held — waiting 5s to abort setup..."));
                 const uint32_t btn_start = millis();
                 bool held = true;
                 while (millis() - btn_start < BOOT_BUTTON_HOLD_MS) {
@@ -567,7 +568,7 @@ static void startSetupMode() {
                     }
                 }
                 if (held) {
-                    Serial.println(F("Setup aborted — restarting without saving"));
+                    bell_serial.println(F("Setup aborted — restarting without saving"));
                     delay(500);
                     ESP.restart();
                 }
