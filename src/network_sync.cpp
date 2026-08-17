@@ -51,6 +51,14 @@ static bool      g_server_seen    = false;
 static uint32_t  g_last_beacon_ms = 0;
 static WiFiUDP   g_udp;
 
+// Persistent keep-alive connection reused by the high-frequency pollers
+// (command poll, heartbeats, schedule-hash). The command poll ticks every
+// ~1s, well under the server's 5s keep-alive timeout, so a healthy socket
+// stays open and we stop churning ~2.7 sockets/sec. That churn was the root
+// cause of intermittent `connect(): socket: 105` (ENOBUFS) when lwIP's
+// 16-socket pool filled during network hiccups.
+static WiFiClient g_http;
+
 static bool      s_was_server_seen    = false;
 static bool      g_server_config_loaded = false;
 static bool      s_was_connected       = false;
@@ -217,13 +225,16 @@ static void send_heartbeats() {
     for (uint8_t i = 0; i < 2; i++) {
         const char *key = bell_core_channel_key(i);
         if (!key) continue;
-        WiFiClient client;
         HTTPClient http;
+        http.setReuse(true);
         http.setTimeout(4000);
         String url = server_base_url() + "/api/heartbeat?ch=" + String(key);
-        if (http.begin(client, url)) {
-            http.POST("");
+        if (http.begin(g_http, url)) {
+            const int code = http.POST("");
             http.end();
+            if (code < 0) g_http.stop();  // transport error → reconnect next poll
+        } else {
+            g_http.stop();
         }
     }
 }
@@ -289,13 +300,13 @@ static void poll_commands() {
     for (uint8_t i = 0; i < 2; i++) {
         const char *key = bell_core_channel_key(i);
         if (!key) continue;
-        WiFiClient client;
         HTTPClient http;
+        http.setReuse(true);
         http.setTimeout(3000);
         String url = server_base_url() + "/api/commands?ch=" + String(key);
-        if (!http.begin(client, url)) continue;
+        if (!http.begin(g_http, url)) { g_http.stop(); continue; }
         int code = http.GET();
-        if (code != 200) { http.end(); continue; }
+        if (code != 200) { http.end(); g_http.stop(); continue; }
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
         JsonDocument doc;
@@ -313,28 +324,33 @@ static void check_schedule_update() {
     if (WiFi.status() != WL_CONNECTED) return;
     // ── Quick hash poll (only when we have a real server) ──
     if (g_server_seen && elapsed_since(g_last_hash_poll) >= HASH_POLL_MS) {
-        WiFiClient client;
+        bool got200 = false;
         HTTPClient http;
+        http.setReuse(true);
         http.setTimeout(3000);
         String url = server_base_url() + "/api/schedule/hash";
-        if (http.begin(client, url) && http.GET() == 200) {
+        if (http.begin(g_http, url)) {
+            got200 = (http.GET() == 200);
+            if (got200) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-            JsonDocument doc;
+                JsonDocument doc;
 #pragma GCC diagnostic pop
-            if (!deserializeJson(doc, http.getStream())) {
-                const char *h = doc["h"] | "";
-                char current[9] = {0};
-                bell_core_copy_schedule_hash(current, sizeof(current));
-                if (strlen(h) == 8 && (strlen(current) != 8 || strcmp(h, current) != 0)) {
-                    DBGLN(F("NET: hash changed — fetching schedule"));
-                    if (fetch_schedule()) {
-                        g_last_poll = millis();
+                if (!deserializeJson(doc, http.getStream())) {
+                    const char *h = doc["h"] | "";
+                    char current[9] = {0};
+                    bell_core_copy_schedule_hash(current, sizeof(current));
+                    if (strlen(h) == 8 && (strlen(current) != 8 || strcmp(h, current) != 0)) {
+                        DBGLN(F("NET: hash changed — fetching schedule"));
+                        if (fetch_schedule()) {
+                            g_last_poll = millis();
+                        }
                     }
                 }
             }
         }
         http.end();
+        if (!got200) g_http.stop();  // begin/GET failed → reconnect cleanly next poll
         g_last_hash_poll = millis();
     }
 
@@ -427,6 +443,7 @@ static void network_sync_task_fn(void *param) {
         if (g_server_seen && elapsed_since(g_last_beacon_ms) >= BEACON_TIMEOUT_MS) {
             bell_serial.println(F("!!! SERVER CONNECTION LOST — running from NVS !!!"));
             g_server_seen = false;
+            g_http.stop();  // drop the keep-alive socket to the now-gone server
         }
 
         // ── Server online/offline transitions ───────────
@@ -443,6 +460,7 @@ static void network_sync_task_fn(void *param) {
 
         // ── WiFi watchdog ──────────────────────────────────
         if (WiFi.status() != WL_CONNECTED) {
+            if (s_was_connected) g_http.stop();  // WiFi dropped → stale socket
             s_was_connected = false;
             if (elapsed_since(g_wifi_last_attempt) >= WIFI_RETRY_MS) {
                 static bool s_first_wifi_failure = true;
