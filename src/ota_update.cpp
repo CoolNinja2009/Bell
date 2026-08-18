@@ -24,6 +24,7 @@
 #include "led_indicator.h"
 #include "network_sync.h"
 #include "bell_logger.h"
+#include "time_fmt.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <Update.h>
@@ -224,9 +225,9 @@ static void record_upload_time() {
 
     struct tm t;
     if (localtime_r(&now, &t)) {
-        bell_serial.printf("[OTA] Uploaded at: %04d-%02d-%02d %02d:%02d:%02d\n",
-                      t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
-                      t.tm_hour, t.tm_min, t.tm_sec);
+        char ts[24];
+        time_fmt_datetime(ts, sizeof(ts), &t);
+        bell_serial.printf("[OTA] Uploaded at: %s\n", ts);
     }
 }
 
@@ -900,8 +901,6 @@ const char* ota_uploaded_at() {
     time_t tsec = (time_t)g_uploaded_at;
     struct tm t;
     if (!localtime_r(&tsec, &t)) return "n/a";
-    snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
-             t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
-             t.tm_hour, t.tm_min, t.tm_sec);
+    time_fmt_datetime(buf, sizeof(buf), &t);
     return buf;
 }

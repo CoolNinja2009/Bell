@@ -965,6 +965,25 @@
         <div class="empty-hint">Copy this now — it won't be shown again. Send it as header <code>X-API-Key</code>.</div>
       </div>
     </div>
+    <div class="settings-section">
+      <h4>Date &amp; Time Format <span style="color:var(--dim);font-weight:400;">— dashboard and ESP32</span></h4>
+      <div class="field">
+        <label>Date format</label>
+        <select id="date-format">
+          <option value="dd-mm-yyyy">DD-MM-YYYY (Indian)</option>
+          <option value="mm-dd-yyyy">MM-DD-YYYY (US)</option>
+          <option value="yyyy-mm-dd">YYYY-MM-DD (ISO)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Time format</label>
+        <select id="time-format">
+          <option value="hh:mm:ss">24-hour with seconds (HH:MM:SS)</option>
+          <option value="hh:mm">24-hour (HH:MM)</option>
+        </select>
+      </div>
+      <button class="btn btn-save" id="btn-save-format" style="width:100%;">Save Format</button>
+    </div>
   </div>
 </div>
 
@@ -990,6 +1009,22 @@ async function api(method, path, body) {
   }
   return res.json();
 }
+
+// ── Date/time formatting (Indian DD-MM-YYYY / HH:MM:SS by default) ──
+let TIME_FORMAT = { date: 'dd-mm-yyyy', time: 'hh:mm:ss' };
+function pad2(n) { return String(n).padStart(2, '0'); }
+function fmtDate(d) {
+  const f = TIME_FORMAT.date || 'dd-mm-yyyy';
+  const dd = pad2(d.getDate()), mm = pad2(d.getMonth() + 1), yyyy = String(d.getFullYear());
+  if (f === 'mm-dd-yyyy') return mm + '-' + dd + '-' + yyyy;
+  if (f === 'yyyy-mm-dd') return yyyy + '-' + mm + '-' + dd;
+  return dd + '-' + mm + '-' + yyyy;
+}
+function fmtTime(d) {
+  const hh = pad2(d.getHours()), mm = pad2(d.getMinutes());
+  return TIME_FORMAT.time === 'hh:mm' ? hh + ':' + mm : hh + ':' + mm + ':' + pad2(d.getSeconds());
+}
+function fmtDateTime(d) { return fmtDate(d) + ' ' + fmtTime(d); }
 
 function toast(msg, isErr) {
   const el = $('#toast');
@@ -1565,7 +1600,7 @@ function fmtBytes(bytes) {
 }
 
 function fmtBuildStamp(stamp) {
-  return stamp ? new Date(stamp).toLocaleString() + ' (UTC build stamp)' : 'Compilation time unavailable';
+  return stamp ? fmtDateTime(new Date(stamp)) + ' (UTC build stamp)' : 'Compilation time unavailable';
 }
 
 async function waitForFirmwareAck(controlId) {
@@ -1605,7 +1640,7 @@ async function loadFirmwareManager() {
     const device = state.last_device;
     const activeStamp = active && active.compiled_at;
     const deviceText = device
-      ? `ESP32 ${device.ota_status || 'acknowledged'} ${new Date(device.seen_at).toLocaleTimeString()} (${device.auto_update ? 'daily on' : 'daily off'})${device.ota_detail ? ': ' + device.ota_detail : ''}`
+      ? `ESP32 ${device.ota_status || 'acknowledged'} ${fmtTime(new Date(device.seen_at))} (${device.auto_update ? 'daily on' : 'daily off'})${device.ota_detail ? ': ' + device.ota_detail : ''}`
       : 'Waiting for ESP32 acknowledgement';
     $('#firmware-meta').textContent = `Selected: ${selected} | ${active ? `Server SHA: ${active.sha256.slice(0, 16)} | ` : ''}${fmtBuildStamp(activeStamp)} | ${deviceText}`
       + (state.force ? (active && state.force.sha256 === active.sha256
@@ -1614,7 +1649,7 @@ async function loadFirmwareManager() {
     const releases = data.releases || [];
     $('#firmware-releases').innerHTML = releases.length ? releases.map((release) => {
       const selected = state.source === 'release' && state.release_tag === release.tag;
-      const meta = [release.published_at ? new Date(release.published_at).toLocaleDateString() : '', release.prerelease ? 'pre-release' : '', release.asset ? fmtBytes(release.asset.size) : 'no firmware.bin'].filter(Boolean).join(' · ');
+      const meta = [release.published_at ? fmtDate(new Date(release.published_at)) : '', release.prerelease ? 'pre-release' : '', release.asset ? fmtBytes(release.asset.size) : 'no firmware.bin'].filter(Boolean).join(' · ');
       const action = release.asset ? `<button class="btn ${selected ? 'btn-ghost' : 'btn-save'} btn-sm" data-firmware-release="${escapeHtml(release.tag)}" ${selected ? 'disabled' : ''}>${selected ? 'Selected' : 'Use release'}</button>` : '';
       return `<div class="firmware-release"><div><div class="firmware-release-name" title="${escapeHtml(release.title)}">${escapeHtml(release.title)} <span style="color:var(--accent);font-family:monospace">${escapeHtml(release.tag)}</span></div><div class="firmware-release-meta">${escapeHtml(meta)}</div></div>${action}</div>`;
     }).join('') : '<div class="empty-hint">No GitHub releases available.</div>';
@@ -1863,7 +1898,7 @@ function renderHistTable(entries) {
   }
   tbody.innerHTML = entries.map(e => {
     const d = new Date(e.ts);
-    const time = d.toLocaleString();
+    const time = fmtDateTime(d);
     const trigClass = e.trigger === 'manual' ? 'manual' : (e.trigger === 'edit' ? 'edit' : 'schedule');
     let detail = e.status || '';
     if (e.pulse_ms) detail += ` · ${e.pulse_ms}ms`;
@@ -1905,6 +1940,27 @@ $('#hist-filter-trigger').onchange = loadHistory;
 $('#btn-settings').onclick = () => {
   $('#settings-backdrop').classList.add('show');
   loadKeys();
+  loadTimeFormatOptions();
+};
+
+async function loadTimeFormatOptions() {
+  try {
+    const s = await api('GET', '/api/settings?_=' + Date.now());
+    if (s.date_format) { TIME_FORMAT.date = s.date_format; $('#date-format').value = s.date_format; }
+    if (s.time_format) { TIME_FORMAT.time = s.time_format; $('#time-format').value = s.time_format; }
+  } catch (e) { /* non-fatal */ }
+}
+
+$('#btn-save-format').onclick = async () => {
+  try {
+    const s = await api('PUT', '/api/settings', {
+      date_format: $('#date-format').value,
+      time_format: $('#time-format').value,
+    });
+    TIME_FORMAT.date = s.date_format;
+    TIME_FORMAT.time = s.time_format;
+    toast('Format saved — ESP32 will apply it on its next poll');
+  } catch (e) { toast('Failed: ' + e.message, true); }
 };
 $('#btn-close-settings').onclick = () => $('#settings-backdrop').classList.remove('show');
 $('#settings-backdrop').onclick = (e) => { if (e.target.id === 'settings-backdrop') $('#settings-backdrop').classList.remove('show'); };
@@ -1930,7 +1986,7 @@ async function loadKeys() {
       <div class="key-row">
         <div>
           <div>${escapeHtml(k.name)}</div>
-          <div class="meta">${escapeHtml(k.prefix)}… · created ${new Date(k.created).toLocaleDateString()}${k.last_used ? ' · last used ' + new Date(k.last_used).toLocaleDateString() : ' · never used'}</div>
+          <div class="meta">${escapeHtml(k.prefix)}… · created ${fmtDate(new Date(k.created))}${k.last_used ? ' · last used ' + fmtDate(new Date(k.last_used)) : ' · never used'}</div>
         </div>
         <button class="btn btn-danger" style="padding:6px 12px;" data-revoke="${k.id}">Revoke</button>
       </div>
@@ -1961,6 +2017,7 @@ async function boot() {
   try {
     const data = await api('GET', '/api/schedule?_=' + Date.now());
     renderAll(data);
+    loadTimeFormatOptions();
   } catch (e) {
     toast('Failed to load schedule', true);
   }

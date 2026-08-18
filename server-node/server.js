@@ -123,6 +123,12 @@ function loadSchedule() {
   };
 }
 
+/** Current date/time display format (Indian default) — shared with the ESP32. */
+function timeFormatSettings() {
+  const s = profileSettings.getSettings();
+  return { date_format: s.date_format, time_format: s.time_format };
+}
+
 function saveSchedule(data) {
   profileScheduler.resolveAndApply();
   const s = profileSettings.getSettings();
@@ -499,7 +505,7 @@ app.get(
 app.get(
   '/api/schedule/hash',
   asyncRoute(async (req, res) => {
-    res.json({ h: scheduleHash() });
+    res.json({ h: scheduleHash(), ...timeFormatSettings() });
   })
 );
 
@@ -1403,6 +1409,15 @@ app.put(
     if (req.body && req.body.default_profile !== undefined) {
       if (req.body.default_profile && !profiles.getProfile(req.body.default_profile)) throw validationError('Profile not found');
       profileSettings.setDefaultProfile(req.body.default_profile);
+    }
+    if (req.body && (req.body.date_format !== undefined || req.body.time_format !== undefined)) {
+      if (req.body.date_format !== undefined && !profileSettings.DATE_FORMATS.includes(req.body.date_format)) {
+        throw validationError(`date_format must be one of: ${profileSettings.DATE_FORMATS.join(', ')}`);
+      }
+      if (req.body.time_format !== undefined && !profileSettings.TIME_FORMATS.includes(req.body.time_format)) {
+        throw validationError(`time_format must be one of: ${profileSettings.TIME_FORMATS.join(', ')}`);
+      }
+      profileSettings.setTimeFormat(req.body.date_format, req.body.time_format);
     }
     profileScheduler.resolveAndApply();
     res.json(profileSettings.getSettings());

@@ -20,6 +20,7 @@
 #include <esp_sntp.h>
 #include "led_indicator.h"
 #include "bell_logger.h"
+#include "time_fmt.h"
 // ============================================================================
 //  SERIAL DEBUG MACROS
 // ============================================================================
@@ -217,9 +218,16 @@ static bool rtc_seed_system_clock() {
 
     static bool s_first_seed = true;
     if (s_first_seed) {
-        bell_serial.printf("RTC: clock seeded — %04d-%02d-%02d %02d:%02d:%02d\n",
-                      now.year(), now.month(), now.day(),
-                      now.hour(), now.minute(), now.second());
+        struct tm ft = {};
+        ft.tm_year = now.year() - 1900;
+        ft.tm_mon  = now.month() - 1;
+        ft.tm_mday = now.day();
+        ft.tm_hour = now.hour();
+        ft.tm_min  = now.minute();
+        ft.tm_sec  = now.second();
+        char ts[24];
+        time_fmt_datetime(ts, sizeof(ts), &ft);
+        bell_serial.printf("RTC: clock seeded — %s\n", ts);
         s_first_seed = false;
     }
     return true;
@@ -238,9 +246,16 @@ static void rtc_sync_from_system() {
     DateTime verify = g_rtc.now();
     static bool s_first_sync = true;
     if (s_first_sync) {
-        bell_serial.printf("RTC: synced & verified — %04d-%02d-%02d %02d:%02d:%02d\n",
-                      verify.year(), verify.month(), verify.day(),
-                      verify.hour(), verify.minute(), verify.second());
+        struct tm ft = {};
+        ft.tm_year = verify.year() - 1900;
+        ft.tm_mon  = verify.month() - 1;
+        ft.tm_mday = verify.day();
+        ft.tm_hour = verify.hour();
+        ft.tm_min  = verify.minute();
+        ft.tm_sec  = verify.second();
+        char ts[24];
+        time_fmt_datetime(ts, sizeof(ts), &ft);
+        bell_serial.printf("RTC: synced & verified — %s\n", ts);
         s_first_sync = false;
     }
 }

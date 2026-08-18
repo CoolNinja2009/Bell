@@ -739,6 +739,30 @@ async function api(method, path, body) {
   return res.json();
 }
 
+// ── Date/time formatting (Indian DD-MM-YYYY / HH:MM:SS by default) ──
+let TIME_FORMAT = { date: 'dd-mm-yyyy', time: 'hh:mm:ss' };
+function pad2(n) { return String(n).padStart(2, '0'); }
+function fmtDate(d) {
+  const f = TIME_FORMAT.date || 'dd-mm-yyyy';
+  const dd = pad2(d.getDate()), mm = pad2(d.getMonth() + 1), yyyy = String(d.getFullYear());
+  if (f === 'mm-dd-yyyy') return mm + '-' + dd + '-' + yyyy;
+  if (f === 'yyyy-mm-dd') return yyyy + '-' + mm + '-' + dd;
+  return dd + '-' + mm + '-' + yyyy;
+}
+function fmtTime(d) {
+  const hh = pad2(d.getHours()), mm = pad2(d.getMinutes());
+  return TIME_FORMAT.time === 'hh:mm' ? hh + ':' + mm : hh + ':' + mm + ':' + pad2(d.getSeconds());
+}
+function fmtDateTime(d) { return fmtDate(d) + ' ' + fmtTime(d); }
+
+async function loadTimeFormat() {
+  try {
+    const s = await api('GET', '/api/settings?_=' + Date.now());
+    if (s.date_format) TIME_FORMAT.date = s.date_format;
+    if (s.time_format) TIME_FORMAT.time = s.time_format;
+  } catch (e) { /* non-fatal */ }
+}
+
 function toast(msg, isErr) {
   const el = $('#toast');
   el.textContent = msg;
@@ -761,6 +785,7 @@ function fmtScheduleEntry(e) {
 
 // ── Load everything ────────────────────────────────────────────────
 async function loadAll() {
+  await loadTimeFormat();
   await loadProfilesList();  // must finish first — calendar rendering needs allProfilesMap
   await Promise.all([loadActiveInfo(), loadCalendar()]);
 }
@@ -868,7 +893,7 @@ function renderProfileEditor() {
   let html = `
     <div class="section">
       <h2>${escapeHtml(p.name)}</h2>
-      <div class="sub">${Object.keys(channels).length} channel(s) · Updated ${new Date(p.updated).toLocaleString()}</div>
+      <div class="sub">${Object.keys(channels).length} channel(s) · Updated ${fmtDateTime(new Date(p.updated))}</div>
   `;
 
   html += '<div class="grid">';

@@ -18,6 +18,7 @@
 
 #include "bell_core.h"
 #include "bell_logger.h"
+#include "time_fmt.h"
 #include "wifi_provision.h"
 #include "led_indicator.h"
 #include <WiFi.h>
@@ -338,6 +339,7 @@ static void check_schedule_update() {
 #pragma GCC diagnostic pop
                 if (!deserializeJson(doc, http.getStream())) {
                     const char *h = doc["h"] | "";
+                    time_fmt_set(doc["date_format"] | "", doc["time_format"] | "");
                     char current[9] = {0};
                     bell_core_copy_schedule_hash(current, sizeof(current));
                     if (strlen(h) == 8 && (strlen(current) != 8 || strcmp(h, current) != 0)) {

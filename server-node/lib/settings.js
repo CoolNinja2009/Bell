@@ -19,12 +19,25 @@ function writeFileAtomic(filePath, contents) {
   fs.renameSync(tmp, filePath);
 }
 
+const DATE_FORMATS = ['dd-mm-yyyy', 'mm-dd-yyyy', 'yyyy-mm-dd'];
+const TIME_FORMATS = ['hh:mm:ss', 'hh:mm'];
+
+function validDateFormat(value) {
+  return DATE_FORMATS.includes(value) ? value : 'dd-mm-yyyy';
+}
+
+function validTimeFormat(value) {
+  return TIME_FORMATS.includes(value) ? value : 'hh:mm:ss';
+}
+
 function defaults() {
   return {
     active_profile: null,
     default_profile: null,
     manual_override: null,
     override_until: null,
+    date_format: 'dd-mm-yyyy',
+    time_format: 'hh:mm:ss',
   };
 }
 
@@ -38,6 +51,8 @@ function load() {
       default_profile: typeof data.default_profile === 'string' ? data.default_profile : null,
       manual_override: typeof data.manual_override === 'string' ? data.manual_override : null,
       override_until: typeof data.override_until === 'string' ? data.override_until : null,
+      date_format: validDateFormat(data.date_format),
+      time_format: validTimeFormat(data.time_format),
     };
   } catch {
     return defaults();
@@ -128,13 +143,26 @@ function replaceAll(data) {
     default_profile: data.default_profile || null,
     manual_override: data.manual_override || null,
     override_until: data.override_until || null,
+    date_format: validDateFormat(data.date_format),
+    time_format: validTimeFormat(data.time_format),
   };
   save(next);
   return next;
 }
 
+/** Set the date/time display format. Unknown values fall back to the Indian default. */
+function setTimeFormat(date_format, time_format) {
+  const s = load();
+  if (date_format !== undefined) s.date_format = validDateFormat(date_format);
+  if (time_format !== undefined) s.time_format = validTimeFormat(time_format);
+  save(s);
+  return s;
+}
+
 module.exports = {
   SETTINGS_FILE,
+  DATE_FORMATS,
+  TIME_FORMATS,
   getSettings,
   setOverride,
   clearOverride,
@@ -142,4 +170,5 @@ module.exports = {
   setActiveProfile,
   clearProfileReferences,
   replaceAll,
+  setTimeFormat,
 };

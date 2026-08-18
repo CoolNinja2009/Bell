@@ -2,5 +2,7 @@
   "active_profile": "regular-working-day",
   "default_profile": "regular-working-day",
   "manual_override": null,
-  "override_until": null
+  "override_until": null,
+  "date_format": "dd-mm-yyyy",
+  "time_format": "hh:mm:ss"
 }
