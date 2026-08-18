@@ -33,6 +33,7 @@ static const IPAddress AP_NETMASK            (255, 255, 255, 0);
 
 constexpr uint32_t  BOOT_BUTTON_HOLD_MS      = 5000;   // how long to hold BOOT for reset
 constexpr uint32_t  WIFI_PROV_CONNECT_MS     = 30000;  // max time to wait for connection
+constexpr uint32_t  WIFI_TEST_CONNECT_MS     = 15000;  // max time to verify creds on /api/save
 constexpr uint32_t  SAVE_RESTART_DELAY_MS    = 2000;   // delay before reboot after saving
 constexpr uint32_t  WIFI_RETRY_MS            = 30000;  // WiFi reconnect interval in loop()
 
@@ -435,6 +436,10 @@ function saveConfig() {
         '<h2 style="margin-bottom:6px">Configuration Saved</h2>' +
         '<p style="color:#5e7088">Rebooting...</p>' +
         '</div></div>';
+    } else if (xhr.status === 401) {
+      showToast('Wrong password or network not found', true);
+      btn.textContent = 'Save & Connect';
+      btn.disabled = false;
     } else {
       showToast('Save failed (server error)', true);
       btn.textContent = 'Save & Connect';
@@ -522,15 +527,31 @@ static void startSetupMode() {
             const String ssid = server.arg("ssid");
             const String pass = server.arg("pass");
 
-            bell_serial.print(F("Saving WiFi...\n"));
+            // Verify the credentials actually connect before saving them.
+            // AP stays alive (AP_STA) so this response still reaches the phone.
+            bell_serial.print(F("Testing WiFi...\n"));
+            WiFi.mode(WIFI_AP_STA);
+            WiFi.begin(ssid.c_str(), pass.c_str());
+
+            const uint32_t start = millis();
+            bool connected = false;
+            while (millis() - start < WIFI_TEST_CONNECT_MS) {
+                if (WiFi.status() == WL_CONNECTED) { connected = true; break; }
+                delay(100);
+            }
+
+            if (!connected) {
+                WiFi.disconnect(true);
+                WiFi.mode(WIFI_AP);
+                bell_serial.println(F("WiFi test failed — wrong password or network unreachable"));
+                server.send(401, "text/plain", "connection failed");
+                return;
+            }
+
+            bell_serial.print(F("WiFi OK — saving...\n"));
             saveCredentials(ssid.c_str(), pass.c_str());
-
-            // Respond before restarting
             server.send(200, "text/plain", "OK");
-
-            // Brief delay to let the HTTP response reach the client
             delay(SAVE_RESTART_DELAY_MS);
-
             bell_serial.println(F("Restarting..."));
             delay(500);
             ESP.restart();
