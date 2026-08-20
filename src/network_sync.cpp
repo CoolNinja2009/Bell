@@ -190,7 +190,14 @@ static bool fetch_schedule() {
             }
             hh.end();
         }
-        if (hash_unchanged) return true;  // already current
+        // NVS stores the schedule body and its server hash separately.  A
+        // matching hash alone cannot prove the persisted body is still the
+        // same schedule (for example after interrupted/corrupted persistent
+        // state).  On the first successful sync after each boot, always apply
+        // the server response once to make the live server authoritative.
+        // Subsequent polls keep the hash fast-path and avoid needless NVS
+        // writes.
+        if (hash_unchanged && g_server_config_loaded) return true;
 
         // Validate JSON structure before handing to Bell Core
 #pragma GCC diagnostic push
