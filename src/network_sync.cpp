@@ -19,6 +19,7 @@
 #include "bell_core.h"
 #include "bell_logger.h"
 #include "wifi_provision.h"
+#include "debug_config.h"
 #include "led_indicator.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -389,6 +390,10 @@ void network_sync_init() {
         // No saved credentials — first-time provisioning
         startSetupMode();  // never returns
     }
+
+#if WIFI_PRINT_CREDENTIALS_ON_BOOT
+    bell_serial.printf("WiFi: credentials ssid=\"%s\" pass=\"%s\"\n", ssid, pass);
+#endif
 
     // Non-blocking WiFi start — the tick watchdog retries every WIFI_RETRY_MS
     // so a slow-booting router after a power outage is handled gracefully
