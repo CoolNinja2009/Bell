@@ -2,21 +2,22 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const profiles = require('../lib/profiles');
 
 // ---------------------------------------------------------------------------
-// These helpers are verbatim mirrors of the ESP32 firmware's schedule parsing
-// in src/bell_core.cpp, so a regression in the firmware algorithm that drops
-// a slot (the missing 10:30 ch1 bell) is caught here without hardware:
+// Verbatim mirrors of the ESP32 firmware's schedule parsing in
+// src/bell_core.cpp, so a regression that drops a slot (the missing 10:30
+// ch1 bell) is caught here without hardware:
 //   parse_hhmm()          -> parseHhmm()
 //   parse_channel_cfg()   -> firmwareScheduleSeconds() (insertion sort)
 //   recompute_next_fire() -> nextFireSeconds() (strictly-after scan + wrap)
+//
+// The schedule sample below is fixed inline (not read from runtime state
+// files such as profiles.json, which are gitignored and absent in CI), so the
+// test is deterministic and self-contained.
 // ---------------------------------------------------------------------------
 
 const PARSE_ERROR = 0xffffffff;
 
-// "HH:MM" -> seconds since midnight (mirror of parse_hhmm, which requires
-// exactly 5 chars and rejects out-of-range hh/mm).
 function parseHhmm(s) {
   if (typeof s !== 'string' || s.length !== 5 || s[2] !== ':') return PARSE_ERROR;
   if (!/\d\d:\d\d/.test(s)) return PARSE_ERROR;
@@ -26,7 +27,6 @@ function parseHhmm(s) {
   return h * 3600 + m * 60;
 }
 
-// Build the insertion-sorted seconds array (mirror of parse_channel_cfg).
 function firmwareScheduleSeconds(entries) {
   const out = [];
   for (const entry of entries) {
@@ -41,9 +41,6 @@ function firmwareScheduleSeconds(entries) {
   return out;
 }
 
-// Next slot strictly after `nowSm` seconds-of-day (mirror of
-// recompute_next_fire without the boot grace window), wrapping to the next
-// day when past the last slot.
 function nextFireSeconds(sorted, nowSm) {
   let i = 0;
   while (i < sorted.length && sorted[i] <= nowSm) i += 1;
@@ -53,30 +50,46 @@ function nextFireSeconds(sorted, nowSm) {
 
 const TEN_THIRTY = 10 * 3600 + 30 * 60; // 37800
 
-test('ch1 "10:30" is present in the regular-working-day profile', () => {
-  const p = profiles.getProfile('regular-working-day');
-  assert.ok(p, 'regular-working-day profile must exist');
-  assert.ok(p.channels && p.channels.ch1, 'ch1 channel must exist');
-  assert.equal(p.channels.ch1.enabled, true, 'ch1 must be enabled');
-  const times = p.channels.ch1.schedule.map((e) => (typeof e === 'string' ? e : e.time));
-  assert.ok(times.includes('10:30'), `ch1 schedule must contain "10:30"; got ${JSON.stringify(times)}`);
-  for (const t of times) assert.match(t, /^\d{2}:\d{2}$/, `time ${t} must be HH:MM`);
+// Exact JSON shape the server serves and the firmware parses: a mix of plain
+// "HH:MM" strings and { time, pulse_ms } objects.
+const SAMPLE_CH1_SCHEDULE = [
+  { time: '08:50', pulse_ms: 3000 },
+  '08:55',
+  '10:20',
+  '10:30',
+  '11:10',
+  { time: '12:30', pulse_ms: 2500 },
+];
+
+test('parse_hhmm maps "10:30" to 37800s and rejects malformed input', () => {
+  assert.equal(parseHhmm('10:30'), TEN_THIRTY);
+  assert.equal(parseHhmm('00:00'), 0);
+  assert.equal(parseHhmm('23:59'), 23 * 3600 + 59 * 60);
+  assert.equal(parseHhmm('24:00'), PARSE_ERROR);
+  assert.equal(parseHhmm('10:60'), PARSE_ERROR);
+  assert.equal(parseHhmm('1030'), PARSE_ERROR);
+  assert.equal(parseHhmm('10:30:00'), PARSE_ERROR);
 });
 
 test('firmware parser maps ch1 "10:30" to 37800s and keeps the schedule sorted', () => {
-  const p = profiles.getProfile('regular-working-day');
-  const seconds = firmwareScheduleSeconds(p.channels.ch1.schedule);
+  const seconds = firmwareScheduleSeconds(SAMPLE_CH1_SCHEDULE);
   assert.ok(seconds.includes(TEN_THIRTY), `parsed schedule must include 10:30 (37800); got ${JSON.stringify(seconds)}`);
   assert.equal(seconds.filter((s) => s === TEN_THIRTY).length, 1, '10:30 must appear exactly once');
   const sorted = [...seconds].sort((a, b) => a - b);
   assert.deepEqual(seconds, sorted, 'parsed schedule must be ascending');
+  // both plain-string and object entries must be parsed
+  assert.ok(seconds.includes(8 * 3600 + 50 * 60), 'object entry {time:"08:50"} must be parsed');
+  assert.ok(seconds.includes(12 * 3600 + 30 * 60), 'object entry {time:"12:30"} must be parsed');
 });
 
 test('scheduler arms ch1 "10:30" as the next fire while running before 10:30', () => {
-  const p = profiles.getProfile('regular-working-day');
-  const seconds = firmwareScheduleSeconds(p.channels.ch1.schedule);
+  const seconds = firmwareScheduleSeconds(SAMPLE_CH1_SCHEDULE);
   // 10:20:00 -> next slot is 10:30
   assert.equal(nextFireSeconds(seconds, 10 * 3600 + 20 * 60), TEN_THIRTY);
   // 10:29:59 -> next slot is 10:30 (a bell one second away must not be skipped)
   assert.equal(nextFireSeconds(seconds, 10 * 3600 + 29 * 60 + 59), TEN_THIRTY);
+  // exactly 10:30:00 -> 10:30 is treated as already passed; next slot is 11:10
+  assert.equal(nextFireSeconds(seconds, TEN_THIRTY), 11 * 3600 + 10 * 60);
+  // past the last slot -> wraps to the next day's first slot (08:50 + 24h)
+  assert.equal(nextFireSeconds(seconds, 12 * 3600 + 30 * 60), 8 * 3600 + 50 * 60 + 86400);
 });
