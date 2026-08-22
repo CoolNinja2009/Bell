@@ -200,6 +200,7 @@ server-node/
 | `MAX_CHANNELS` | `24` | Maximum relay channels |
 | `CHANNEL_KEY_RE` | `/^[a-zA-Z][a-zA-Z0-9_-]{0,19}$/` | Valid channel key pattern |
 | `PROFILE_REFRESH_INTERVAL_MS` | `60000` | Midnight rollover check interval |
+| `SCHEDULE_TIME_ZONE` | `Asia/Kolkata` | IANA timezone used for calendar dates and weekday profiles |
 | `FIRMWARE_REPO` | `CoolNinja2009/Bell` | GitHub repo for OTA firmware |
 | `FIRMWARE_ASSET_NAME` | `firmware.bin` | Asset name in release |
 | `FIRMWARE_TTL_MS` | `1800000` | Firmware cache TTL (30 min) |

@@ -93,3 +93,15 @@ test('scheduler arms ch1 "10:30" as the next fire while running before 10:30', (
   // past the last slot -> wraps to the next day's first slot (08:50 + 24h)
   assert.equal(nextFireSeconds(seconds, 12 * 3600 + 30 * 60), 8 * 3600 + 50 * 60 + 86400);
 });
+
+test('profile selection uses the configured school timezone at the UTC/IST day boundary', () => {
+  const scheduler = require('../lib/profile-scheduler');
+  // 2026-08-21 19:00 UTC is 2026-08-22 00:30 in Asia/Kolkata: Saturday.
+  const istSaturday = new Date('2026-08-21T19:00:00.000Z');
+  assert.equal(scheduler.todayStr(istSaturday), '2026-08-22');
+  assert.equal(scheduler.todayDow(istSaturday), 'saturday');
+  assert.deepEqual(scheduler.resolveActiveProfileId(istSaturday), {
+    profileId: 'saturday',
+    reason: 'calendar_dow:saturday',
+  });
+});

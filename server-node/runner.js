@@ -9,7 +9,12 @@ let startedAt = 0;
 
 function launch() {
   startedAt = Date.now();
-  child = spawn(process.execPath, ['server.js'], { stdio: 'inherit' });
+  child = spawn(process.execPath, ['server.js'], {
+    stdio: 'inherit',
+    // Keep direct `npm start` behavior identical to the PM2 deployment.
+    // An inherited OS TZ must never move a Saturday profile into Friday.
+    env: { ...process.env, TZ: 'Asia/Kolkata', SCHEDULE_TIME_ZONE: 'Asia/Kolkata' },
+  });
   child.on('exit', (code, signal) => {
     if (stopping) process.exit(code || 0);
     if (Date.now() - startedAt > 60000) restartDelayMs = 1000;
