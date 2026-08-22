@@ -17,35 +17,45 @@ const profiles = require('./profiles');
 const calendar = require('./calendar');
 const settings = require('./settings');
 
+// Calendar dates and weekday assignments must be calculated in the school's
+// timezone, not in the host machine's timezone.  Keep this separate from
+// process.env.TZ: Date's local getters are host-dependent, while Intl lets us
+// make the scheduling clock explicit and stable across Windows/Linux/PM2.
 const SCHEDULE_TIME_ZONE = process.env.SCHEDULE_TIME_ZONE || 'Asia/Kolkata';
 
-function nowParts() {
+try {
+  new Intl.DateTimeFormat('en-US', { timeZone: SCHEDULE_TIME_ZONE });
+} catch {
+  throw new Error(`Invalid SCHEDULE_TIME_ZONE: ${SCHEDULE_TIME_ZONE}`);
+}
+
+function nowParts(now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: SCHEDULE_TIME_ZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
     weekday: 'long',
-  }).formatToParts(new Date());
+  }).formatToParts(now);
   return Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
 }
 
 /** Get today's date as YYYY-MM-DD in local timezone. */
-function todayStr() {
-  const p = nowParts();
+function todayStr(now) {
+  const p = nowParts(now);
   return `${p.year}-${p.month}-${p.day}`;
 }
 
 /** Get current day of week as lowercase English name. */
-function todayDow() {
-  return nowParts().weekday.toLowerCase();
+function todayDow(now) {
+  return nowParts(now).weekday.toLowerCase();
 }
 
 /**
  * Resolve which profile ID should be active right now.
  * Returns { profileId, reason } where reason explains the selection.
  */
-function resolveActiveProfileId() {
+function resolveActiveProfileId(now = new Date()) {
   const s = settings.getSettings();
   const exists = (id) => !!(id && profiles.getProfile(id));
 
@@ -57,13 +67,16 @@ function resolveActiveProfileId() {
   const cal = calendar.getAll();
 
   // 2. Date-specific assignment
-  const today = todayStr();
+  // Derive both fields from one instant.  Calling the clock twice could pair
+  // yesterday's date with today's weekday during the midnight boundary.
+  const parts = nowParts(now);
+  const today = `${parts.year}-${parts.month}-${parts.day}`;
   if (exists(cal.dates[today])) {
     return { profileId: cal.dates[today], reason: `calendar_date:${today}` };
   }
 
   // 3. Day-of-week assignment
-  const dow = todayDow();
+  const dow = parts.weekday.toLowerCase();
   if (exists(cal.dow[dow])) {
     return { profileId: cal.dow[dow], reason: `calendar_dow:${dow}` };
   }
@@ -86,8 +99,8 @@ function resolveActiveProfileId() {
  * Resolve and apply the active profile.
  * Updates settings.active_profile and returns the resolved info.
  */
-function resolveAndApply() {
-  const { profileId, reason } = resolveActiveProfileId();
+function resolveAndApply(now) {
+  const { profileId, reason } = resolveActiveProfileId(now);
   const previousProfileId = settings.getSettings().active_profile;
 
   if (profileId) {
@@ -142,4 +155,12 @@ function getActiveInfo() {
   };
 }
 
-module.exports = { resolveAndApply, getActiveSchedule, getActiveInfo, todayStr, todayDow, SCHEDULE_TIME_ZONE };
+module.exports = {
+  resolveActiveProfileId,
+  resolveAndApply,
+  getActiveSchedule,
+  getActiveInfo,
+  todayStr,
+  todayDow,
+  SCHEDULE_TIME_ZONE,
+};

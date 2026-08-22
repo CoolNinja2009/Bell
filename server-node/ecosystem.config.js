@@ -20,6 +20,9 @@ module.exports = {
       max_memory_restart: '256M',
       env: {
         NODE_ENV: 'production',
+        // The calendar maps profiles by the school's local date/day, not UTC.
+        TZ: 'Asia/Kolkata',
+        SCHEDULE_TIME_ZONE: 'Asia/Kolkata',
       },
       // PM2 native log rotation
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
