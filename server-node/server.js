@@ -56,6 +56,8 @@ const firmwareMetadata = require('./lib/firmware-metadata');
 const HOST = '0.0.0.0';
 const PORT = 8080;
 const SCHEDULE_FILE = path.join(__dirname, 'schedule.json'); // legacy — kept for migration
+const DEFAULT_PROFILES_FILE = path.join(__dirname, 'defaults', 'profiles.json');
+const DEFAULT_CALENDAR_FILE = path.join(__dirname, 'defaults', 'calendar.json');
 const PROFILES_TPL = path.join(__dirname, 'templates', 'profiles.html');
 const PROFILE_REFRESH_INTERVAL_MS = 60000; // check every minute for midnight rollover
 const BEACON_PORT = 9999;
@@ -1588,6 +1590,38 @@ function startBeacon() {
 // ---------------------------------------------------------------------------
 const startTime = Date.now();
 
+/**
+ * Older installations keep their runtime JSON across git updates.  Seed the
+ * built-in weekday/weekend profiles and assignments when they are absent, but
+ * never replace an administrator's existing profile or calendar assignment.
+ */
+function seedMissingBuiltInCalendar() {
+  let defaultProfiles;
+  let defaultCalendar;
+  try {
+    defaultProfiles = JSON.parse(fs.readFileSync(DEFAULT_PROFILES_FILE, 'utf8'));
+    defaultCalendar = JSON.parse(fs.readFileSync(DEFAULT_CALENDAR_FILE, 'utf8'));
+  } catch (err) {
+    logError('loading built-in profile defaults', err);
+    return;
+  }
+
+  for (const [id, profile] of Object.entries(defaultProfiles.profiles || {})) {
+    if (!profiles.getProfile(id) && profile && profile.name && profile.channels) {
+      const created = profiles.createProfile(profile.name, profile.channels);
+      log(`[server] Restored missing built-in profile '${created.name}' (${created.id})`);
+    }
+  }
+
+  const current = calendar.getAll();
+  for (const [dow, profileId] of Object.entries(defaultCalendar.dow || {})) {
+    if (current.dow[dow] === undefined && profiles.getProfile(profileId)) {
+      calendar.assignDow(dow, profileId);
+      log(`[server] Restored missing ${dow} profile assignment -> ${profileId}`);
+    }
+  }
+}
+
 function bootstrap() {
   // Migration: if old schedule.json exists but profiles.json doesn't,
   // create a "Regular Working Day" profile from the existing schedule.
@@ -1604,12 +1638,20 @@ function bootstrap() {
     }
   }
 
+  // Existing installations retain calendar.json/profiles.json, so they need
+  // an explicit non-destructive migration when built-in days are introduced.
+  seedMissingBuiltInCalendar();
+
   // Ensure at least one profile exists
   const ids = profiles.listIds();
   if (ids.length === 0) {
     const created = profiles.createProfile('Regular Working Day');
     profileSettings.setDefaultProfile(created.id);
     log(`[server] Created default profile '${created.name}'`);
+  }
+
+  if (!profileSettings.getSettings().default_profile && profiles.getProfile('regular-working-day')) {
+    profileSettings.setDefaultProfile('regular-working-day');
   }
 
   // Resolve and apply the active profile for today
