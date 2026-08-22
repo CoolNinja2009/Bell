@@ -492,14 +492,16 @@ app.get(
   '/api/schedule',
   asyncRoute(async (req, res) => {
     cleanStaleHeartbeats();
-    res.json(loadSchedule());
+    // A profile can change at a day boundary. Never allow an intermediary or
+    // a browser/device cache to hold the previous day's resolved schedule.
+    res.set('Cache-Control', 'no-store').json(loadSchedule());
   })
 );
 
 app.get(
   '/api/schedule/hash',
   asyncRoute(async (req, res) => {
-    res.json({ h: scheduleHash() });
+    res.set('Cache-Control', 'no-store').json({ h: scheduleHash() });
   })
 );
 

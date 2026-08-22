@@ -1,7 +1,7 @@
 'use strict';
 
-const CACHE_NAME = 'relay-ctrl-v1';
-const APP_SHELL = ['/', '/login'];
+const CACHE_NAME = 'relay-ctrl-v2';
+const APP_SHELL = ['/login'];
 
 // Install: pre-cache the app shell
 self.addEventListener('install', (event) => {
@@ -35,7 +35,16 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets (HTML, manifest, icons, SW itself): cache-first
+  // The dashboard HTML contains its control logic.  Serving a cached copy
+  // can leave it displaying an old active-profile calculation after the
+  // server is updated.  Always prefer the server for pages; only fall back
+  // to the cache when offline.
+  if (event.request.mode === 'navigate' || pathname === '/' || pathname === '/login') {
+    event.respondWith(networkFirst(event.request));
+    return;
+  }
+
+  // Versioned/static assets may use the offline cache.
   event.respondWith(cacheFirst(event.request));
 });
 

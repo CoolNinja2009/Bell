@@ -464,6 +464,21 @@ static void network_sync_task_fn(void *param) {
                           g_server_ip.toString().c_str(), g_server_port);
             led_release_state(LedState::OFFLINE_MODE);
             s_was_server_seen = true;
+
+            // The UDP beacon is our notification that the server is ready.
+            // Fetch the resolved profile immediately instead of preserving the
+            // old NVS schedule until the 5/30-second polling windows elapse.
+            // This is the closest reliable equivalent to a server push on a
+            // LAN where the ESP32 is intentionally an HTTP-polling client.
+            if (WiFi.status() == WL_CONNECTED) {
+                bell_serial.println(F("NET: server discovered — fetching active schedule now"));
+                if (fetch_schedule()) {
+                    g_last_poll = now_ms;
+                    g_last_hash_poll = now_ms;
+                } else {
+                    bell_serial.println(F("NET: immediate schedule fetch failed; retrying via normal poll"));
+                }
+            }
         } else if (!g_server_seen && s_was_server_seen) {
             led_request_state(LedState::OFFLINE_MODE);
             bell_core_discard_commands();  // safety: no stale run-now survives server loss
