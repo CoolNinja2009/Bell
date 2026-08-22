@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'relay-ctrl-v2';
+const CACHE_NAME = 'relay-ctrl-v3';
 const APP_SHELL = ['/login'];
 
 // Install: pre-cache the app shell
