@@ -139,8 +139,16 @@ function getActiveInfo() {
   const resolved = resolveAndApply();
   const s = settings.getSettings();
   const profileId = s.active_profile;
+  const now = new Date();
 
-  if (!profileId) return { profileId: null, name: null, reason: 'none' };
+  if (!profileId) return {
+    profileId: null,
+    name: null,
+    reason: 'none',
+    date: todayStr(now),
+    day: todayDow(now),
+    timeZone: SCHEDULE_TIME_ZONE,
+  };
 
   // Re-derive the reason (we don't persist it)
   const p = profiles.getProfile(profileId);
@@ -152,6 +160,9 @@ function getActiveInfo() {
     override: !!s.manual_override,
     overrideUntil: s.override_until || null,
     channelCount: p && p.channels ? Object.keys(p.channels).length : 0,
+    date: todayStr(now),
+    day: todayDow(now),
+    timeZone: SCHEDULE_TIME_ZONE,
   };
 }
 

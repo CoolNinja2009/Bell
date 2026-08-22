@@ -862,6 +862,7 @@
       <option value="">Loading...</option>
     </select>
   </div>
+  <span class="profile-bar-reason" id="schedule-day" aria-live="polite"></span>
   <span class="profile-bar-reason" id="profile-reason"></span>
   <div class="profile-bar-actions">
     <button class="btn btn-ghost btn-sm" id="btn-clear-override-sched" style="display:none;">Clear Override</button>
@@ -1094,12 +1095,16 @@ function renderChannel(key, ch) {
   div.className = 'channel' + (ch.enabled ? '' : ' disabled');
   div.dataset.key = key;
   const label = ch.label || key.toUpperCase();
+  const dayContext = activeProfileInfo && activeProfileInfo.day
+    ? `${activeProfileInfo.day[0].toUpperCase()}${activeProfileInfo.day.slice(1)}${activeProfileInfo.date ? ` · ${activeProfileInfo.date}` : ''}`
+    : '';
   const isOn = !!ch.enabled;
   div.innerHTML = `
     <div class="ch-header">
       <div style="flex:1;min-width:0;">
         <h2 contenteditable="${isOn}" spellcheck="false" data-field="label">${escapeHtml(label)}</h2>
         <span class="ch-key-tag">${escapeHtml(key)}</span>
+        ${dayContext ? `<span class="ch-key-tag" style="margin-left:6px;color:var(--accent);">${escapeHtml(dayContext)}</span>` : ''}
       </div>
       <div class="ch-controls">
         <button class="toggle${isOn ? ' active' : ''}" data-action="toggle" title="${isOn ? 'Turn channel off' : 'Turn channel on'}"></button>
@@ -1968,6 +1973,7 @@ async function boot() {
 
 // ── Profile switcher ───────────────────────────────────────────────
 let allProfileOptions = [];
+let activeProfileInfo = null;
 
 async function loadProfileOptions() {
   try {
@@ -1988,10 +1994,21 @@ async function refreshProfileBar() {
     const info = await api('GET', '/api/profiles/active?_=' + Date.now());
     const sel = $('#profile-switcher');
     const reason = $('#profile-reason');
+    const day = $('#schedule-day');
     const clearBtn = $('#btn-clear-override-sched');
+
+    // Ensure the select has today's profile before assigning its value; an
+    // absent option otherwise makes the browser display the first profile.
+    if (info.profileId && !allProfileOptions.some((p) => p.id === info.profileId)) {
+      await loadProfileOptions();
+    }
 
     if (info.profileId) {
       sel.value = info.profileId;
+      if (sel.value !== info.profileId) {
+        await loadProfileOptions();
+        sel.value = info.profileId;
+      }
       const reasonMap = {
         manual_override: 'Manual override',
         default: 'Default profile',
@@ -2006,12 +2023,28 @@ async function refreshProfileBar() {
         reasonText = reasonMap[info.reason] || info.reason || '';
       reason.textContent = reasonText;
       reason.className = 'profile-bar-reason' + (info.override ? ' override' : '');
+      const dayFromReason = info.reason && info.reason.startsWith('calendar_dow:')
+        ? info.reason.split(':')[1]
+        : '';
+      const displayDay = info.day || dayFromReason;
+      day.textContent = displayDay
+        ? `${displayDay[0].toUpperCase()}${displayDay.slice(1)}${info.date ? ` · ${info.date}` : ''}`
+        : '';
       clearBtn.style.display = info.override ? '' : 'none';
     } else {
       sel.value = '';
       reason.textContent = '';
+      day.textContent = '';
       clearBtn.style.display = 'none';
     }
+
+    const changed = !activeProfileInfo
+      || activeProfileInfo.profileId !== info.profileId
+      || activeProfileInfo.date !== info.date;
+    activeProfileInfo = { ...info, day: info.day || (info.reason && info.reason.startsWith('calendar_dow:')
+      ? info.reason.split(':')[1]
+      : '') };
+    if (changed) await boot();
   } catch (e) { /* non-fatal */ }
 }
 
