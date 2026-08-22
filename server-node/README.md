@@ -36,7 +36,7 @@ Node.js / Express backend for the ESP32 Relay Controller. Serves the dashboard, 
 cd server-node
 npm install
 npm start
-# → Dashboard at http://localhost:8080
+# → Dashboard at http://bell-server.local
 # → Beacon broadcasts on UDP port 9999
 # → Default password: admin (change immediately)
 ```
@@ -75,7 +75,7 @@ stop.bat       # Windows
                           (session)   (X-API-Key)
                                ▼           ▼
 ┌──────────────────────────────────────────────────────────┐
-│                     server.js :8080                       │
+│                     server.js :80                         │
 │                                                          │
 │  ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌───────────┐  │
 │  │ Profiles │ │ Calendar │ │ Settings  │ │ Scheduler │  │
@@ -189,11 +189,11 @@ server-node/
 
 | Constant | Default | Purpose |
 |----------|---------|---------|
-| `PORT` | `8080` | HTTP listen port |
+| `PORT` | `80` | HTTP listen port |
 | `HOST` | `0.0.0.0` | Bind address |
 | `BEACON_PORT` | `9999` | UDP broadcast port |
 | `BEACON_INTERVAL_MS` | `5000` | Beacon broadcast interval |
-| `BEACON_MSG` | `RELAY_CTRL:8080\n` | Beacon payload |
+| `BEACON_MSG` | `RELAY_CTRL:80\n` | Beacon payload |
 | `HEARTBEAT_TTL_MS` | `120000` | Heartbeat staleness threshold (2 min) |
 | `COMMAND_TTL_MS` | `300000` | Pending command expiry (5 min) |
 | `MAX_LOG_ENTRIES` | `100` | Device log ring buffer size |
@@ -880,7 +880,7 @@ Status values: `up_to_date`, `updated`, `rolled_back`, `github_unreachable`, `he
 
 The server broadcasts a UDP beacon every 5 seconds on port 9999 to `255.255.255.255`. This lets ESP32 devices on the same subnet auto-discover the server without any configuration.
 
-**Payload:** `RELAY_CTRL:8080\n`
+**Payload:** `RELAY_CTRL:80\n`
 
 The ESP32 parses this to get the server's IP and port. If the beacon isn't heard for 20 seconds (4 missed beacons), the ESP32 falls back to the provisioned IP or hardcoded fallback.
 
@@ -888,18 +888,26 @@ The ESP32 parses this to get the server's IP and port. If the beacon isn't heard
 
 ## mDNS / LAN Hostname
 
-On Linux, the bootstrap auto-configures mDNS so the dashboard is reachable at `http://<hostname>.local:8080`.
+On Linux, the bootstrap auto-configures mDNS so the dashboard is reachable at `http://bell-server.local`.
 
 **Flow:**
 1. Check if `avahi-daemon` is installed (`dpkg -s`)
 2. If not installed: attempt `sudo apt-get install -y avahi-daemon`
 3. If sudo requires a password: print manual install instructions, skip
-4. Verify `<hostname>.local` resolves to the LAN IP via `dns.lookup`
-5. Verify `http://<hostname>.local:8080/health` responds
+4. Verify `bell-server.local` resolves to the LAN IP via `dns.lookup`
+5. Verify `http://bell-server.local/health` responds
 
 **Manual install:**
 ```bash
 sudo apt-get install -y avahi-daemon
+```
+
+The dashboard is served on port 80, so it's reachable at `http://bell-server.local` (no port). `setup.sh` sets the hostname to `bell-server` and enables unprivileged port-80 binding; on an existing deployment run once:
+
+```bash
+sudo hostnamectl set-hostname bell-server
+echo 'net.ipv4.ip_unprivileged_port_start=0' | sudo tee /etc/sysctl.d/99-bell.conf
+sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0
 ```
 
 **Passwordless sudo (for auto-install):**
@@ -1049,7 +1057,7 @@ If no profiles exist at all (fresh install):
 
 1. `npm install`
 2. `npm start` (or `start.bat` / `./start.sh`)
-3. Open `http://localhost:8080`
+3. Open `http://bell-server.local`
 4. Login with password `admin`
 5. Change password immediately (Settings → Change Password)
 6. Add your channels and schedules

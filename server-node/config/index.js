@@ -37,13 +37,19 @@ module.exports = {
   // ── Health check ────────────────────────────────────────────────────
   health: {
     /** URL to check (must return HTTP 200). */
-    url: 'http://127.0.0.1:8080/health',
+    url: 'http://127.0.0.1:80/health',
     /** Request timeout per attempt (ms). */
     timeoutMs: 10000,
     /** Number of health check attempts. */
     retries: 10,
     /** Delay between retries (ms). */
     retryDelayMs: 2000,
+  },
+
+  // ── Network / mDNS ─────────────────────────────────────────────────
+  network: {
+    /** Desired mDNS hostname — must match the Pi's system hostname. */
+    hostname: 'bell-server',
   },
 
   // ── Paths (relative to server-node root) ────────────────────────────

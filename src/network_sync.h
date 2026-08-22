@@ -23,7 +23,7 @@
 // ============================================================================
 constexpr uint16_t BEACON_PORT         = 9999;
 constexpr uint32_t BEACON_TIMEOUT_MS   = 20000;
-constexpr uint16_t SERVER_PORT         = 8080;
+constexpr uint16_t SERVER_PORT         = 80;
 constexpr uint32_t HASH_POLL_MS        = 5000;
 constexpr uint32_t FULL_POLL_MS        = 30000;
 constexpr uint32_t POLL_TIMEOUT_MS     = 8000;

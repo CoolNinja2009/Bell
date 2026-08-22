@@ -8,8 +8,8 @@
  * Quick start:
  *   npm install
  *   npm start
- *   → Dashboard at http://<host>:8080
- *   → ESP32 polls   http://<host>:8080/api/schedule
+ *   → Dashboard at http://<host>:80
+ *   → ESP32 polls   http://<host>:80/api/schedule
  *
  * Storage: schedule.json, history.jsonl, api_keys.json (all auto-created)
  *
@@ -54,7 +54,7 @@ const firmwareMetadata = require('./lib/firmware-metadata');
 // Config
 // ---------------------------------------------------------------------------
 const HOST = '0.0.0.0';
-const PORT = 8080;
+const PORT = 80;
 const SCHEDULE_FILE = path.join(__dirname, 'schedule.json'); // legacy — kept for migration
 const PROFILES_TPL = path.join(__dirname, 'templates', 'profiles.html');
 const PROFILE_REFRESH_INTERVAL_MS = 60000; // check every minute for midnight rollover
@@ -1649,7 +1649,8 @@ server.keepAliveTimeout = 5000;
 server.maxRequestsPerSocket = 100;
 server.listen(PORT, HOST, () => {
   const localIp = getLocalIPv4();
-  log(`[server] Relay Controller listening on http://${HOST}:${PORT} (accessible at http://${localIp}:${PORT})`);
+  const portSuffix = PORT === 80 ? '' : `:${PORT}`;
+  log(`[server] Relay Controller listening on http://${localIp}${portSuffix}`);
 
 });
 

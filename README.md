@@ -121,8 +121,8 @@ start.bat  →  bootstrap.js  →  PM2 + server
 Updating repository...
 Health check........ PASS
 Server online.
-Dashboard: http://my-pi.local:8080
-           http://192.168.0.104:8080
+Dashboard: http://bell-server.local
+           http://192.168.0.104
 ```
 
 ### CLI flags
@@ -149,10 +149,10 @@ Both stop the PM2-managed server process. The ESP32 continues running its last-k
 
 ### mDNS / LAN hostname (Linux)
 
-On Linux, the bootstrap auto-configures mDNS so you can reach the dashboard at `http://<hostname>.local:8080` instead of remembering an IP address. It:
+On Linux, the bootstrap auto-configures mDNS so you can reach the dashboard at `http://bell-server.local` instead of remembering an IP address. It:
 
 - Detects and optionally auto-installs `avahi-daemon` via `apt`
-- Verifies `<hostname>.local` resolves to the LAN IP
+- Verifies `bell-server.local` resolves to the LAN IP
 - Confirms the health endpoint is reachable via mDNS
 
 If `sudo` requires a password, the auto-install is skipped — install manually:
@@ -161,13 +161,21 @@ If `sudo` requires a password, the auto-install is skipped — install manually:
 sudo apt-get install -y avahi-daemon
 ```
 
+`setup.sh` also sets the system hostname to `bell-server` and enables unprivileged port-80 binding, so the dashboard is served at `http://bell-server.local` (no port). On an already-deployed Pi, apply the same once:
+
+```bash
+sudo hostnamectl set-hostname bell-server
+echo 'net.ipv4.ip_unprivileged_port_start=0' | sudo tee /etc/sysctl.d/99-bell.conf
+sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0
+```
+
 ### Manual (Raspberry Pi / Linux)
 
 ```bash
 cd server-node
 npm install
 npm start
-# → Dashboard at http://<host>:8080
+# → Dashboard at http://<host>
 # → Beacon broadcasts on UDP port 9999
 ```
 

@@ -9,7 +9,7 @@ const http = require('http');
 
 /**
  * Perform a single health check request.
- * @param {string} url - full URL (e.g. 'http://127.0.0.1:8080/health')
+ * @param {string} url - full URL (e.g. 'http://127.0.0.1:80/health')
  * @param {number} timeoutMs - request timeout
  * @returns {Promise<boolean>}
  */

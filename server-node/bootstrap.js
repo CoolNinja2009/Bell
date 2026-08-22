@@ -97,6 +97,13 @@ function phaseHeader(text) {
 }
 
 /**
+ * Format a dashboard URL. Omits the port when it's the HTTP default (80).
+ */
+function dashboardUrl(host, portStr) {
+  return portStr && portStr !== '80' ? `http://${host}:${portStr}` : `http://${host}`;
+}
+
+/**
  * Print final status.
  * @param {{ lanIp: string, portStr: string, mdnsHost: string, mdnsOk: boolean } | null} mdnsInfo
  */
@@ -104,16 +111,16 @@ function printServerOnline(mdnsInfo) {
   let portStr = mdnsInfo && mdnsInfo.portStr;
   if (!portStr) {
     const m = config.health.url.match(/:(\d+)/);
-    portStr = m ? m[1] : '8080';
+    portStr = m ? m[1] : '80';
   }
   console.log(`\nServer online.`);
   if (mdnsInfo && mdnsInfo.mdnsOk) {
-    console.log(`Dashboard: http://${mdnsInfo.mdnsHost}:${portStr}`);
-    console.log(`           http://${mdnsInfo.lanIp}:${portStr}`);
+    console.log(`Dashboard: ${dashboardUrl(mdnsInfo.mdnsHost, portStr)}`);
+    console.log(`           ${dashboardUrl(mdnsInfo.lanIp, portStr)}`);
   } else if (mdnsInfo) {
-    console.log(`Dashboard: http://${mdnsInfo.lanIp}:${portStr}`);
+    console.log(`Dashboard: ${dashboardUrl(mdnsInfo.lanIp, portStr)}`);
   } else {
-    console.log(`Dashboard: http://localhost:${portStr}`);
+    console.log(`Dashboard: ${dashboardUrl('localhost', portStr)}`);
   }
   console.log();
 }
@@ -700,8 +707,8 @@ function saveState(currentCommit, previousCommit, status) {
 async function checkMdnsReachability() {
   const lanIp = getLocalIPv4();
   const portMatch = config.health.url.match(/:(\d+)/);
-  const portStr = portMatch ? portMatch[1] : '8080';
-  const hostname = os.hostname();
+  const portStr = portMatch ? portMatch[1] : '80';
+  const hostname = config.network.hostname;
   const mdnsHost = `${hostname}.local`;
 
   phaseHeader('Phase 6: mDNS / LAN reachability');
@@ -823,7 +830,7 @@ async function checkMdnsReachability() {
   // ── 3. mDNS HTTP ─────────────────────────────────────────────────
   let mdnsHttpOk = false;
   if (mdnsResolvedIp) {
-    const mdnsUrl = `http://${mdnsHost}:${portStr}/health`;
+    const mdnsUrl = `${dashboardUrl(mdnsHost, portStr)}/health`;
     mdnsHttpOk = await healthSvc.checkOnce(mdnsUrl, config.health.timeoutMs);
     checkLine(mdnsHttpOk, 'mDNS HTTP', mdnsUrl);
     logToFile(BOOTSTRAP_LOG, `mDNS HTTP check: ${mdnsUrl} — ${mdnsHttpOk ? 'PASS' : 'FAIL'}`);
