@@ -2,6 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 // ---------------------------------------------------------------------------
 // Verbatim mirrors of the ESP32 firmware's schedule parsing in
@@ -95,6 +98,27 @@ test('scheduler arms ch1 "10:30" as the next fire while running before 10:30', (
 });
 
 test('profile selection uses the configured school timezone at the UTC/IST day boundary', () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bell-scheduler-test-'));
+  fs.writeFileSync(path.join(fixtureDir, 'profiles.json'), JSON.stringify({
+    profiles: {
+      saturday: { name: 'Saturday', channels: {} },
+    },
+    order: ['saturday'],
+  }));
+  fs.writeFileSync(path.join(fixtureDir, 'calendar.json'), JSON.stringify({
+    dates: {},
+    dow: { saturday: 'saturday' },
+  }));
+  fs.writeFileSync(path.join(fixtureDir, 'settings.json'), JSON.stringify({
+    active_profile: null,
+    default_profile: null,
+    manual_override: null,
+    override_until: null,
+  }));
+  process.env.RELAY_PROFILES_FILE = path.join(fixtureDir, 'profiles.json');
+  process.env.RELAY_CALENDAR_FILE = path.join(fixtureDir, 'calendar.json');
+  process.env.RELAY_SETTINGS_FILE = path.join(fixtureDir, 'settings.json');
+
   const scheduler = require('../lib/profile-scheduler');
   // 2026-08-21 19:00 UTC is 2026-08-22 00:30 in Asia/Kolkata: Saturday.
   const istSaturday = new Date('2026-08-21T19:00:00.000Z');
@@ -104,4 +128,6 @@ test('profile selection uses the configured school timezone at the UTC/IST day b
     profileId: 'saturday',
     reason: 'calendar_dow:saturday',
   });
+
+  fs.rmSync(fixtureDir, { recursive: true, force: true });
 });

@@ -9,7 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const CALENDAR_FILE = path.join(__dirname, '..', 'calendar.json');
+const CALENDAR_FILE = process.env.RELAY_CALENDAR_FILE || path.join(__dirname, '..', 'calendar.json');
 
 const VALID_DOWS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
