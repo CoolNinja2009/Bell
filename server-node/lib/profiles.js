@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const PROFILES_FILE = path.join(__dirname, '..', 'profiles.json');
+const PROFILES_FILE = process.env.RELAY_PROFILES_FILE || path.join(__dirname, '..', 'profiles.json');
 const MAX_PROFILES = 50;
 const MAX_CHANNELS = 24;
 const ID_RE = /^[a-z][a-z0-9-]{0,39}$/;

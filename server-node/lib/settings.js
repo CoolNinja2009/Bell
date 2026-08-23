@@ -11,7 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const SETTINGS_FILE = path.join(__dirname, '..', 'settings.json');
+const SETTINGS_FILE = process.env.RELAY_SETTINGS_FILE || path.join(__dirname, '..', 'settings.json');
 
 function writeFileAtomic(filePath, contents) {
   const tmp = filePath + '.tmp';
