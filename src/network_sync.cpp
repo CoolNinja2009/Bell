@@ -138,8 +138,53 @@ static void check_beacon() {
 //  HTTP HELPERS
 // ============================================================================
 
+// Fetches /api/schedule/hash only. Returns true and fills out_hash (8 chars
+// + NUL) on success; returns false (out_hash left untouched) on any
+// transport/parse failure. Kept separate so both the cheap pre-check and the
+// post-apply hash capture share one implementation.
+static bool fetch_hash_only(char out_hash[9]) {
+    WiFiClient hc;
+    HTTPClient hh;
+    hh.setTimeout(3000);
+    String hurl = server_base_url() + "/api/schedule/hash";
+    bool ok = false;
+    if (hh.begin(hc, hurl) && hh.GET() == 200) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+        JsonDocument hdoc;
+#pragma GCC diagnostic pop
+        if (!deserializeJson(hdoc, hh.getStream())) {
+            const char *h = hdoc["h"] | "";
+            if (strlen(h) == 8) {
+                memcpy(out_hash, h, 8);
+                out_hash[8] = '\0';
+                ok = true;
+            }
+        }
+    }
+    hh.end();
+    return ok;
+}
+
 static bool fetch_schedule() {
     if (WiFi.status() != WL_CONNECTED || !g_server_seen) return false;
+
+    // ── Cheap pre-check ──────────────────────────────────────────
+    // Only pull the full schedule body if the server's hash actually
+    // differs from the one we last applied ourselves. This is what stops
+    // an unchanged schedule from being re-fetched/re-applied/re-logged on
+    // every full poll. If the pre-check itself fails (network hiccup),
+    // fall through and let the retry loop below sort it out.
+    {
+        char applied_hash[9] = {0};
+        bell_core_copy_schedule_hash(applied_hash, sizeof(applied_hash));
+        char server_hash[9] = {0};
+        if (fetch_hash_only(server_hash) && g_server_config_loaded &&
+            strlen(applied_hash) == 8 && strcmp(server_hash, applied_hash) == 0) {
+            return true;  // unchanged — nothing to fetch, nothing to log
+        }
+    }
+
     for (int attempt = 0; attempt < 3; attempt++) {
         if (attempt > 0) delay(attempt * 500);  // backoff: 500ms, 1000ms
 
@@ -164,41 +209,20 @@ static bool fetch_schedule() {
         body.trim();
         if (body.length() < 2 || body[0] != '{') continue;
 
-        // Get hash for dedup check — also used for Bell Core if schedule changed
-        char current_hash[9] = {0};
-        bell_core_copy_schedule_hash(current_hash, sizeof(current_hash));
-        String server_hash = "________";
+        // Re-check the hash now that we have a body in hand — also used
+        // for Bell Core if schedule changed.
+        char server_hash[9] = {0};
         bool hash_unchanged = false;
-        {
-            WiFiClient hc;
-            HTTPClient hh;
-            hh.setTimeout(3000);
-            String hurl = server_base_url() + "/api/schedule/hash";
-            if (hh.begin(hc, hurl) && hh.GET() == 200) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-                JsonDocument hdoc;
-#pragma GCC diagnostic pop
-                if (!deserializeJson(hdoc, hh.getStream())) {
-                    const char *h = hdoc["h"] | "";
-                    if (strlen(h) == 8) {
-                        server_hash = h;
-                        if (strlen(current_hash) == 8 && strcmp(h, current_hash) == 0) {
-                            hash_unchanged = true;
-                        }
-                    }
-                }
+        if (fetch_hash_only(server_hash)) {
+            char applied_hash[9] = {0};
+            bell_core_copy_schedule_hash(applied_hash, sizeof(applied_hash));
+            if (g_server_config_loaded && strlen(applied_hash) == 8 &&
+                strcmp(server_hash, applied_hash) == 0) {
+                hash_unchanged = true;
             }
-            hh.end();
         }
-        // NVS stores the schedule body and its server hash separately.  A
-        // matching hash alone cannot prove the persisted body is still the
-        // same schedule (for example after interrupted/corrupted persistent
-        // state).  On the first successful sync after each boot, always apply
-        // the server response once to make the live server authoritative.
-        // Subsequent polls keep the hash fast-path and avoid needless NVS
-        // writes.
-        if (hash_unchanged && g_server_config_loaded) return true;
+        if (hash_unchanged) return true;
+        if (strlen(server_hash) != 8) return false;
 
         // Validate JSON structure before handing to Bell Core
 #pragma GCC diagnostic push
@@ -213,11 +237,15 @@ static bool fetch_schedule() {
         if (!doc.is<JsonObject>()) continue;
 
         // Hand off to Bell Core for atomic application (reuses server_hash)
-        if (bell_core_apply_schedule(body.c_str(), server_hash.c_str())) {
+        char previous_hash[9] = {0};
+        bell_core_copy_schedule_hash(previous_hash, sizeof(previous_hash));
+        const bool schedule_changed = strlen(previous_hash) != 8
+                                    || strcmp(previous_hash, server_hash) != 0;
+        if (bell_core_apply_schedule(body.c_str(), server_hash)) {
             if (!g_server_config_loaded) {
                 bell_serial.println(F("NET: first server config loaded"));
                 g_server_config_loaded = true;
-            } else {
+            } else if (schedule_changed) {
                 bell_serial.println(F("NET: schedule updated from server"));
             }
             return true;
@@ -346,9 +374,11 @@ static void check_schedule_update() {
 #pragma GCC diagnostic pop
                 if (!deserializeJson(doc, http.getStream())) {
                     const char *h = doc["h"] | "";
-                    char current[9] = {0};
-                    bell_core_copy_schedule_hash(current, sizeof(current));
-                    if (strlen(h) == 8 && (strlen(current) != 8 || strcmp(h, current) != 0)) {
+                    char applied_hash[9] = {0};
+                    bell_core_copy_schedule_hash(applied_hash, sizeof(applied_hash));
+                    if (strlen(h) == 8 &&
+                        (!g_server_config_loaded || strlen(applied_hash) != 8 ||
+                         strcmp(h, applied_hash) != 0)) {
                         DBGLN(F("NET: hash changed — fetching schedule"));
                         if (fetch_schedule()) {
                             g_last_poll = millis();
@@ -363,12 +393,11 @@ static void check_schedule_update() {
     }
 
     if (g_server_seen && elapsed_since(g_last_poll) >= FULL_POLL_MS) {
-        if (fetch_schedule()) {
-            if (!g_server_config_loaded) {
-                bell_serial.println(F("NET: first server config"));
-                g_server_config_loaded = true;
-            }
-        } else {
+        // fetch_schedule() itself is now a no-op (no fetch, no log) when the
+        // server hash matches s_last_applied_hash, so this periodic call is
+        // safe to make unconditionally — it will only ever apply/log on a
+        // genuine change.
+        if (!fetch_schedule()) {
             DBGLN(F("NET: full poll failed"));
         }
         g_last_poll = millis();
