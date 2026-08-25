@@ -651,7 +651,7 @@ async function listFirmwareReleases() {
   const [owner, repo] = FIRMWARE_REPO.split('/');
   if (!owner || !repo) throw new Error('Invalid FIRMWARE_REPO');
   const octokit = await githubClient();
-  const { data } = await octokit.rest.repos.listReleases({ owner, repo, per_page: 20 });
+  const { data } = await octokit.rest.repos.listReleases({ owner, repo, per_page: 100 });
   const releases = data.map((release) => ({
     tag: release.tag_name.replace(/^v/, ''),
     api_tag: release.tag_name,
