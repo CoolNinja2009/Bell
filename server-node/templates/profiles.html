@@ -966,6 +966,21 @@
   .site-footer:hover {
     opacity: 1;
   }
+
+  .site-footer p {
+    margin: 0 0 8px;
+  }
+
+  .footer-links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px 16px;
+  }
+
+  .footer-links a {
+    color: inherit;
+  }
 </style>
 </head>
 <body>
@@ -1862,6 +1877,14 @@ $('#btn-cal-dow').onclick = async () => {
 })();
 </script>
 
-<footer class="site-footer">&#x1F514; Built from silicon to server. &mdash; Chinmayakeshav</footer>
+<footer class="site-footer">
+  <p>&#x1F514; Built from silicon to server. &mdash; Chinmayakeshav</p>
+  <div class="footer-links">
+    <a href="https://github.com/CoolNinja2009" target="_blank" rel="noopener noreferrer">GitHub</a>
+    <a href="https://github.com/CoolNinja2009?tab=repositories" target="_blank" rel="noopener noreferrer">Projects</a>
+    <span>ESP32 + Node.js</span>
+    <span>ISC License</span>
+  </div>
+</footer>
 </body>
 </html>
