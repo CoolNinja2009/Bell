@@ -2137,6 +2137,10 @@ $('#restore-file').onchange = async (e) => {
 // ── Heartbeats (dynamic per-channel) ─────────────────────────────
 // A channel is "offline" if its last heartbeat is older than 10 s.
 // Firmware manager
+const FIRMWARE_INITIAL_RELEASES = 5;
+const FIRMWARE_RELEASE_PAGE_SIZE = 25;
+let firmwareReleaseVisibleCount = FIRMWARE_INITIAL_RELEASES;
+
 function fmtBytes(bytes) {
   if (!Number.isFinite(bytes)) return '';
   return bytes >= 1024 * 1024 ? (bytes / (1024 * 1024)).toFixed(2) + ' MB' : Math.round(bytes / 1024) + ' KB';
@@ -2195,15 +2199,25 @@ async function loadFirmwareManager() {
         ? ' | ⚠ Forced install armed'
         : ' | ⚠ Force mismatch') : '');
     const releases = data.releases || [];
-    $('#firmware-releases').innerHTML = releases.length ? releases.map((release) => {
+    const visibleReleases = releases.slice(0, firmwareReleaseVisibleCount);
+    $('#firmware-releases').innerHTML = releases.length ? visibleReleases.map((release) => {
       const selected = state.source === 'release' && state.release_tag === release.tag;
       const meta = [release.published_at ? new Date(release.published_at).toLocaleDateString() : '', release.prerelease ? 'pre-release' : '', release.asset ? fmtBytes(release.asset.size) : 'no firmware.bin'].filter(Boolean).join(' · ');
       const action = release.asset ? `<button class="btn ${selected ? 'btn-ghost' : 'btn-save'} btn-sm" data-firmware-release="${escapeHtml(release.tag)}" ${selected ? 'disabled' : ''}>${selected ? 'Selected' : 'Use release'}</button>` : '';
       return `<div class="firmware-release"><div><div class="firmware-release-name" title="${escapeHtml(release.title)}">${escapeHtml(release.title)} <span style="color:var(--accent);font-family:monospace">${escapeHtml(release.tag)}</span></div><div class="firmware-release-meta">${escapeHtml(meta)}</div></div>${action}</div>`;
-    }).join('') : '<div class="empty-hint">No GitHub releases available.</div>';
+    }).join('') + (visibleReleases.length < releases.length
+      ? '<button class="btn btn-ghost btn-sm" id="btn-firmware-show-more" style="margin-top:12px;">Show more</button>'
+      : '') : '<div class="empty-hint">No GitHub releases available.</div>';
     $$('[data-firmware-release]').forEach((button) => {
       button.onclick = () => queueReleaseSelection(button.dataset.firmwareRelease);
     });
+    const showMore = $('#btn-firmware-show-more');
+    if (showMore) {
+      showMore.onclick = () => {
+        firmwareReleaseVisibleCount += FIRMWARE_RELEASE_PAGE_SIZE;
+        loadFirmwareManager();
+      };
+    }
   } catch (e) {
     $('#firmware-active').textContent = 'Firmware manager unavailable';
     $('#firmware-meta').textContent = e.message;
@@ -2411,6 +2425,10 @@ async function pollLog() {
 }
 
 // ── History & analytics ──────────────────────────────────────────
+const HISTORY_INITIAL_ENTRIES = 10;
+const HISTORY_PAGE_SIZE = 25;
+let historyVisibleCount = HISTORY_INITIAL_ENTRIES;
+
 function refreshHistFilterOptions(keys) {
   const sel = $('#hist-filter-ch');
   const current = sel.value;
@@ -2424,7 +2442,7 @@ function historyQuery() {
   const trig = $('#hist-filter-trigger').value;
   if (ch) params.set('ch', ch);
   if (trig) params.set('trigger', trig);
-  params.set('limit', '300');
+  params.set('limit', '5000');
   return params.toString();
 }
 
@@ -2440,11 +2458,15 @@ async function loadHistory() {
 
 function renderHistTable(entries) {
   const tbody = $('#hist-tbody');
+  const tableWrap = $('#hist-table-wrap');
+  const oldButton = $('#btn-history-show-more');
+  if (oldButton) oldButton.remove();
   if (!entries.length) {
     tbody.innerHTML = `<tr><td colspan="4" class="empty-hint">No history yet — manual triggers, schedule saves, and device-confirmed runs will show up here.</td></tr>`;
     return;
   }
-  tbody.innerHTML = entries.map(e => {
+  const visibleEntries = entries.slice(0, historyVisibleCount);
+  tbody.innerHTML = visibleEntries.map(e => {
     const d = new Date(e.ts);
     const time = d.toLocaleString();
     const trigClass = e.trigger === 'manual' ? 'manual' : (e.trigger === 'edit' ? 'edit' : 'schedule');
@@ -2453,6 +2475,18 @@ function renderHistTable(entries) {
     if (e.note) detail += ` · ${escapeHtml(e.note)}`;
     return `<tr><td>${time}</td><td>${escapeHtml((e.ch||'').toUpperCase())}</td><td><span class="pill ${trigClass}">${escapeHtml(e.trigger||'')}</span></td><td>${detail}</td></tr>`;
   }).join('');
+  if (visibleEntries.length < entries.length) {
+    const showMore = document.createElement('button');
+    showMore.className = 'btn btn-ghost btn-sm';
+    showMore.id = 'btn-history-show-more';
+    showMore.style.marginTop = '12px';
+    showMore.textContent = 'Show more';
+    showMore.onclick = () => {
+      historyVisibleCount += HISTORY_PAGE_SIZE;
+      renderHistTable(entries);
+    };
+    tableWrap.appendChild(showMore);
+  }
 }
 
 function renderHistChart(entries) {
