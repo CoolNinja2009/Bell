@@ -1576,12 +1576,17 @@ function toast(msg, isErr) {
 document.addEventListener('click', (e) => {
   const header = e.target.closest('[data-toggle]');
   if (Date.now() < window._suppressPanelToggleUntil) return;
-  if (header) $('#' + header.dataset.toggle).classList.toggle('collapsed');
+  if (header) {
+    const panel = $('#' + header.dataset.toggle);
+    panel.classList.toggle('collapsed');
+    savePanelCollapseState();
+  }
 });
 
 // Dashboard panels can be reordered from their headers. The preference stays
 // in this browser only, so each operator can arrange their own workspace.
 const PANEL_ORDER_KEY = 'bell-dashboard-panel-order-v1';
+const PANEL_COLLAPSE_KEY = 'bell-dashboard-panel-collapse-v1';
 window._suppressPanelToggleUntil = 0;
 
 function movablePanels() {
@@ -1591,6 +1596,23 @@ function movablePanels() {
 
 function savePanelOrder() {
   try { localStorage.setItem(PANEL_ORDER_KEY, JSON.stringify(movablePanels().map(panel => panel.id))); } catch {}
+}
+
+function savePanelCollapseState() {
+  try {
+    localStorage.setItem(PANEL_COLLAPSE_KEY, JSON.stringify(
+      Object.fromEntries(movablePanels().map(panel => [panel.id, panel.classList.contains('collapsed')]))
+    ));
+  } catch {}
+}
+
+function restorePanelCollapseState() {
+  let collapsed;
+  try { collapsed = JSON.parse(localStorage.getItem(PANEL_COLLAPSE_KEY)); } catch { collapsed = null; }
+  if (!collapsed || typeof collapsed !== 'object' || Array.isArray(collapsed)) return;
+  for (const panel of movablePanels()) {
+    if (typeof collapsed[panel.id] === 'boolean') panel.classList.toggle('collapsed', collapsed[panel.id]);
+  }
 }
 
 function restorePanelOrder() {
@@ -1609,6 +1631,7 @@ function restorePanelOrder() {
 
 function setupPanelReordering() {
   restorePanelOrder();
+  restorePanelCollapseState();
   let activeDrag = null;
 
   const clearDragState = () => {
