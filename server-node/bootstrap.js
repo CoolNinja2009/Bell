@@ -70,23 +70,17 @@ function checkLine(ok, label, value) {
  * Print a banner header.
  */
 function printBanner() {
-  const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  const version = `v${yyyy}.${mm}${dd}`;
-
   const lines = [
     '',
     '========================================================',
-    `      Relay Controller Server ${version}`,
+    '      Relay Controller Server',
     '========================================================',
     '',
   ];
   for (const line of lines) {
     console.log(line);
   }
-  logToFile(BOOTSTRAP_LOG, `Bootstrap started — ${version}`);
+  logToFile(BOOTSTRAP_LOG, 'Bootstrap started');
 }
 
 /**
