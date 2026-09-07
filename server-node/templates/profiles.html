@@ -1009,9 +1009,56 @@
   </div>
 </header>
 
+<!-- ── Broken profile.json banner (server-side JSON validation) ───── -->
+<style>
+  .profile-broken-banner{background:rgba(239,68,68,.12);border:1px solid var(--danger);border-radius:10px;margin:16px 0;padding:12px 16px}
+  .profile-broken-banner-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .profile-broken-icon{font-size:22px;color:var(--danger)}
+  .profile-broken-text{flex:1;min-width:220px;color:var(--danger)}
+  .profile-broken-text strong{display:block;font-size:14px;letter-spacing:.02em}
+  .profile-broken-text span{font-size:12px;opacity:.85}
+  .profile-broken-actions{display:flex;gap:8px;flex-wrap:wrap}
+  .btn-broken{background:var(--danger);color:#fff;border:none;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer;text-decoration:none;font-family:inherit}
+  .btn-broken:hover{opacity:.85}
+  .profile-broken-details{margin-top:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:pre-wrap;max-height:220px;overflow:auto;background:rgba(0,0,0,.15);border-radius:6px;padding:8px;color:inherit}
+</style>
+<div id="profile-broken-banner" class="profile-broken-banner" style="display:none">
+  <div class="profile-broken-banner-row">
+    <span class="profile-broken-icon">⚠</span>
+    <div class="profile-broken-text">
+      <strong>⚠ BROKEN PROFILE.JSON DETECTED</strong>
+      <span id="profile-broken-summary"></span>
+    </div>
+    <div class="profile-broken-actions">
+      <a class="btn-broken" href="/profile-editor">Open JSON Editor</a>
+      <button type="button" class="btn-broken" id="btn-broken-repair">🔧 Attempt Automatic Repair</button>
+      <button type="button" class="btn-broken" id="btn-broken-revalidate">Reload / Revalidate</button>
+      <button type="button" class="btn-broken" id="btn-broken-details">View Validation Details</button>
+    </div>
+  </div>
+  <div id="profile-broken-details" class="profile-broken-details" style="display:none"></div>
+</div>
+
+<!-- ── System file health banner (settings/calendar/api_keys/firmware_state) -->
+<div id="system-health-banner" class="profile-broken-banner" style="display:none">
+  <div class="profile-broken-banner-row">
+    <span class="profile-broken-icon">⚠</span>
+    <div class="profile-broken-text">
+      <strong>⚠ SYSTEM FILE ERROR</strong>
+      <span id="system-health-summary"></span>
+    </div>
+    <div class="profile-broken-actions">
+      <button type="button" class="btn-broken" id="btn-health-revalidate">Reload / Revalidate</button>
+      <button type="button" class="btn-broken" id="btn-health-details">View Details</button>
+    </div>
+  </div>
+  <div id="system-health-details" class="profile-broken-details" style="display:none"></div>
+</div>
+
 <div class="nav-tabs">
   <a class="nav-tab" href="/">Schedule</a>
   <a class="nav-tab active" href="/profiles">Profiles</a>
+  <a class="nav-tab" href="/profile-editor">JSON Editor</a>
 </div>
 
 <!-- ── Active profile banner ──────────────────────────────────── -->
@@ -1886,5 +1933,100 @@ $('#btn-cal-dow').onclick = async () => {
     <span>ISC License</span>
   </div>
 </footer>
+<script>
+(function () {
+  var banner = document.getElementById('profile-broken-banner');
+  var summary = document.getElementById('profile-broken-summary');
+  var details = document.getElementById('profile-broken-details');
+  if (!banner) return;
+
+  function renderErrors(errors) {
+    if (!errors || !errors.length) return '(no error detail available)';
+    return errors.map(function (e) {
+      var loc = (e.line != null) ? ('line ' + e.line + (e.column != null ? ', col ' + e.column : '')) : '';
+      return '[' + e.severity.toUpperCase() + '] (' + e.type + ') ' + e.path + (loc ? ' — ' + loc : '') + '\n  ' + e.message;
+    }).join('\n\n');
+  }
+
+  async function checkProfile() {
+    try {
+      var res = await fetch('/api/profile/validate', { cache: 'no-store' });
+      if (!res.ok) return;
+      var data = await res.json();
+      if (data.valid) {
+        banner.style.display = 'none';
+        return;
+      }
+      var errCount = (data.errors || []).filter(function (e) { return e.severity === 'error'; }).length;
+      summary.textContent = 'profiles.json failed validation (' + errCount + ' error' + (errCount === 1 ? '' : 's') +
+        ') — profile data shown on this page may be stale or incomplete.';
+      details.textContent = renderErrors(data.errors);
+      banner.style.display = 'block';
+    } catch (err) {
+      // Network hiccup — don't flash a false alarm, just try again next cycle.
+    }
+  }
+
+  var btnRevalidate = document.getElementById('btn-broken-revalidate');
+  var btnDetails = document.getElementById('btn-broken-details');
+  var btnRepair = document.getElementById('btn-broken-repair');
+  if (btnRevalidate) btnRevalidate.addEventListener('click', checkProfile);
+  if (btnDetails) btnDetails.addEventListener('click', function () {
+    details.style.display = details.style.display === 'none' ? 'block' : 'none';
+  });
+  if (btnRepair) btnRepair.addEventListener('click', function () {
+    window.location.href = '/profile-editor?repair=1';
+  });
+
+  checkProfile();
+  setInterval(checkProfile, 15000);
+})();
+
+// ── System file health (settings/calendar/api_keys/firmware_state) ──────
+(function () {
+  var banner = document.getElementById('system-health-banner');
+  var summary = document.getElementById('system-health-summary');
+  var details = document.getElementById('system-health-details');
+  if (!banner) return;
+
+  var FILE_LABELS = {
+    settings: 'settings.json',
+    calendar: 'calendar.json',
+    api_keys: 'api_keys.json',
+    firmware_state: 'firmware_state.json',
+  };
+
+  async function checkHealth() {
+    try {
+      var res = await fetch('/api/system/health', { cache: 'no-store' });
+      if (!res.ok) return;
+      var data = await res.json();
+      if (data.healthy) {
+        banner.style.display = 'none';
+        return;
+      }
+      var broken = Object.keys(data.files).filter(function (k) { return data.files[k].broken; });
+      summary.textContent = broken.map(function (k) { return FILE_LABELS[k] || k; }).join(', ') +
+        ' failed to load — related settings can\'t be changed until this is fixed. Existing data is untouched and being served from memory where possible.';
+      details.textContent = broken.map(function (k) {
+        return '[' + (FILE_LABELS[k] || k) + '] ' + (data.files[k].error || '(no detail available)');
+      }).join('\n\n');
+      banner.style.display = 'block';
+    } catch (err) {
+      // Network hiccup — try again next cycle rather than flashing a false alarm.
+    }
+  }
+
+  var btnRevalidate = document.getElementById('btn-health-revalidate');
+  var btnDetails = document.getElementById('btn-health-details');
+  if (btnRevalidate) btnRevalidate.addEventListener('click', checkHealth);
+  if (btnDetails) btnDetails.addEventListener('click', function () {
+    details.style.display = details.style.display === 'none' ? 'block' : 'none';
+  });
+
+  checkHealth();
+  setInterval(checkHealth, 15000);
+})();
+</script>
 </body>
 </html>

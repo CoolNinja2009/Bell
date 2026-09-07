@@ -13,11 +13,13 @@
   },
   "dependencies": {
     "@octokit/rest": "^21.0.0",
+    "ajv": "^8.20.0",
     "bcryptjs": "^2.4.3",
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
     "express-session": "^1.18.0",
-    "helmet": "^7.1.0"
+    "helmet": "^7.1.0",
+    "jsonc-parser": "^3.3.1"
   },
   "overrides": {
     "body-parser": "1.20.6"

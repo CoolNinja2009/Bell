@@ -5,19 +5,49 @@
  * Stores schedule profiles (each containing channel configs identical
  * to the ESP32 format) in profiles.json. Profile IDs are alphanumeric
  * slugs derived from the name.
+ *
+ * VALIDATION / CORRUPTION HANDLING
+ * ─────────────────────────────────────────────────────────────────────
+ * Every read of profiles.json is routed through lib/profile-validator.js
+ * (syntax -> schema -> business rules). A profiles.json that fails any of
+ * those layers is never silently treated as empty:
+ *   - `storeBroken` flips true and `lastValidation` holds the full,
+ *     structured error report (see lib/profile-validator.js).
+ *   - Reads fall back to the last successfully-validated in-memory copy
+ *     (`lastGoodData`) so a dashboard that was already running keeps
+ *     functioning for *display* purposes — but every write path below
+ *     (save()) refuses to run while storeBroken is true, so nothing ever
+ *     overwrites the broken on-disk file with a "helpfully" reconstructed
+ *     empty store. This is the "last known-good in-memory" carve-out
+ *     described in the validation spec, applied narrowly: it prevents
+ *     data loss, it never hides the broken status from the UI (server.js
+ *     exposes lastValidation via GET/POST /api/profile/validate), and it
+ *     never lets a mutation succeed against stale/empty data.
+ *   - The only way out of `storeBroken` is writeValidatedText(), used by
+ *     the JSON editor's "Save" and the repair flow's "Apply", both of
+ *     which run the *new* content through the full validation pipeline
+ *     first and refuse to write anything that doesn't pass.
  */
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { validateProfilesBuffer, validateProfilesText } = require('./profile-validator');
 
 const PROFILES_FILE = process.env.RELAY_PROFILES_FILE || path.join(__dirname, '..', 'profiles.json');
+const BACKUP_FILE = PROFILES_FILE + '.bak';
 const MAX_PROFILES = 50;
 const MAX_CHANNELS = 24;
 const ID_RE = /^[a-z][a-z0-9-]{0,39}$/;
 
 function writeFileAtomic(filePath, contents) {
   const tmp = filePath + '.tmp';
-  fs.writeFileSync(tmp, contents);
+  const fd = fs.openSync(tmp, 'w');
+  try {
+    fs.writeFileSync(fd, contents);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
   fs.renameSync(tmp, filePath);
 }
 
@@ -41,17 +71,166 @@ function defaultProfileChannels() {
   };
 }
 
-function load() {
-  if (!fs.existsSync(PROFILES_FILE)) return { profiles: {}, order: [] };
-  try {
-    return JSON.parse(fs.readFileSync(PROFILES_FILE, 'utf8'));
-  } catch {
-    return { profiles: {}, order: [] };
+// ---------------------------------------------------------------------------
+// Validation-aware load/save — see header comment above.
+// ---------------------------------------------------------------------------
+const EMPTY_STORE = Object.freeze({ profiles: {}, order: [] });
+
+let lastGoodData = null;
+let storeBroken = false;
+let brokenRawText = null;
+let lastValidation = {
+  valid: true, syntax_valid: true, schema_valid: true, application_valid: true, errors: [], source: 'uninitialized',
+};
+
+function logValidationFailure(result) {
+  console.error(`[PROFILE] profiles.json failed validation: syntax=${result.syntax_valid} schema=${result.schema_valid} application=${result.application_valid}`);
+  for (const e of result.errors) {
+    console.error(`[PROFILE]   ${e.severity.toUpperCase()} (${e.type}) ${e.path} line ${e.line ?? '?'} col ${e.column ?? '?'}: ${e.message}`);
   }
 }
 
+function load() {
+  if (!fs.existsSync(PROFILES_FILE)) {
+    lastValidation = { valid: true, syntax_valid: true, schema_valid: true, application_valid: true, errors: [], source: 'missing' };
+    storeBroken = false;
+    brokenRawText = null;
+    lastGoodData = { profiles: {}, order: [] };
+    return lastGoodData;
+  }
+
+  let buf;
+  try {
+    buf = fs.readFileSync(PROFILES_FILE);
+  } catch (err) {
+    storeBroken = true;
+    lastValidation = {
+      valid: false, syntax_valid: false, schema_valid: false, application_valid: false, source: 'read-error',
+      errors: [{
+        type: 'encoding', message: `Could not read profiles.json: ${err.message}`, path: '$',
+        line: null, column: null, severity: 'error', recoverable: false, field: null,
+      }],
+    };
+    console.error(`[PROFILE] Failed to read ${PROFILES_FILE}: ${err.message}`);
+    return lastGoodData || { profiles: {}, order: [] };
+  }
+
+  const result = validateProfilesBuffer(buf);
+  lastValidation = { ...result, source: 'file' };
+
+  if (!result.valid) {
+    storeBroken = true;
+    brokenRawText = buf.toString('utf8');
+    logValidationFailure(result);
+    // Serve the last known-good in-memory copy (if this process has one)
+    // for *read* continuity only — never persisted, never silently healed.
+    return lastGoodData || { profiles: {}, order: [] };
+  }
+
+  storeBroken = false;
+  brokenRawText = null;
+  lastGoodData = result.parsed;
+  return result.parsed;
+}
+
 function save(data) {
+  if (storeBroken) {
+    const err = new Error(
+      'profiles.json is currently broken on disk and cannot be safely modified. ' +
+      'Open the JSON Editor to view the error, or use Attempt Automatic Repair.'
+    );
+    err.status = 409;
+    err.code = 'PROFILE_STORE_BROKEN';
+    throw err;
+  }
   writeFileAtomic(PROFILES_FILE, JSON.stringify(data, null, 2));
+  lastGoodData = data;
+  lastValidation = { valid: true, syntax_valid: true, schema_valid: true, application_valid: true, errors: [], source: 'file' };
+}
+
+/** True when the on-disk profiles.json currently fails validation. */
+function isStoreBroken() {
+  return storeBroken;
+}
+
+/** Full structured validation result for the on-disk file (or the
+ *  in-memory store, if it was never loaded from a broken file). */
+function getValidationState() {
+  return lastValidation;
+}
+
+/** Raw text of the broken on-disk file, for the editor to load verbatim
+ *  (never fabricated — this is exactly what's on disk right now). */
+function getBrokenRawText() {
+  return brokenRawText;
+}
+
+/** Current on-disk text, whether valid or broken — used by the editor's
+ *  "Open" action so it always shows the real file, not a reconstruction. */
+function getCurrentRawText() {
+  if (!fs.existsSync(PROFILES_FILE)) return JSON.stringify(EMPTY_STORE, null, 2);
+  try {
+    return fs.readFileSync(PROFILES_FILE, 'utf8');
+  } catch (err) {
+    return brokenRawText || '';
+  }
+}
+
+/**
+ * Validate arbitrary text (e.g. the editor's current buffer) against the
+ * exact same pipeline used for the on-disk file, without touching disk.
+ */
+function validateCandidateText(text) {
+  return validateProfilesText(text);
+}
+
+/**
+ * Atomically replace profiles.json with new, already-validated text.
+ * Refuses to write anything that doesn't pass the full pipeline, keeps a
+ * single rotating backup of whatever was on disk before (even if that
+ * "before" state was itself broken — the backup is for forensic/undo
+ * purposes and is never validated), and clears storeBroken on success.
+ */
+function writeValidatedText(text, { reason } = {}) {
+  const result = validateProfilesText(text);
+  if (!result.valid) {
+    const err = new Error('Refusing to save: the provided content does not pass validation.');
+    err.status = 400;
+    err.code = 'PROFILE_VALIDATION_FAILED';
+    err.validation = result;
+    throw err;
+  }
+
+  if (fs.existsSync(PROFILES_FILE)) {
+    try {
+      fs.copyFileSync(PROFILES_FILE, BACKUP_FILE);
+    } catch (err) {
+      console.error(`[PROFILE] Could not write backup ${BACKUP_FILE}: ${err.message}`);
+    }
+  }
+
+  writeFileAtomic(PROFILES_FILE, text);
+  storeBroken = false;
+  brokenRawText = null;
+  lastGoodData = result.parsed;
+  lastValidation = { ...result, source: 'file' };
+  console.log(`[PROFILE] profiles.json replaced via ${reason || 'editor'} — validation: PASS`);
+  return result;
+}
+
+/** Restore profiles.json from the single rotating backup, if present. */
+function restoreBackup() {
+  if (!fs.existsSync(BACKUP_FILE)) {
+    const err = new Error('No backup file exists');
+    err.status = 404;
+    throw err;
+  }
+  const text = fs.readFileSync(BACKUP_FILE, 'utf8');
+  return writeValidatedText(text, { reason: 'restore-backup' });
+}
+
+function hasBackup() {
+  return fs.existsSync(BACKUP_FILE);
 }
 
 /** Return profile IDs in display order. */
@@ -209,6 +388,7 @@ function importProfiles(bundle) {
 
 module.exports = {
   PROFILES_FILE,
+  BACKUP_FILE,
   listIds,
   listProfiles,
   getProfile,
@@ -219,4 +399,12 @@ module.exports = {
   saveChannels,
   exportAll,
   importProfiles,
+  isStoreBroken,
+  getValidationState,
+  getBrokenRawText,
+  getCurrentRawText,
+  validateCandidateText,
+  writeValidatedText,
+  restoreBackup,
+  hasBackup,
 };

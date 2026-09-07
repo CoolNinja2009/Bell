@@ -28,31 +28,78 @@ function defaults() {
   };
 }
 
+let lastGoodData = defaults();
+let storeBroken = false;
+let lastError = null;
+
 function load() {
-  if (!fs.existsSync(SETTINGS_FILE)) return defaults();
+  if (!fs.existsSync(SETTINGS_FILE)) {
+    storeBroken = false;
+    lastError = null;
+    lastGoodData = defaults();
+    return lastGoodData;
+  }
   try {
     const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return defaults();
-    return {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new Error('settings.json must contain a JSON object');
+    }
+    const clean = {
       active_profile: typeof data.active_profile === 'string' ? data.active_profile : null,
       default_profile: typeof data.default_profile === 'string' ? data.default_profile : null,
       manual_override: typeof data.manual_override === 'string' ? data.manual_override : null,
       override_until: typeof data.override_until === 'string' ? data.override_until : null,
     };
-  } catch {
-    return defaults();
+    storeBroken = false;
+    lastError = null;
+    lastGoodData = clean;
+    return clean;
+  } catch (err) {
+    // Critical: setActiveProfile() is called automatically by the scheduler
+    // on every resolve cycle, with no user action at all. If a broken file
+    // were silently treated as "no settings yet", that automatic call would
+    // immediately overwrite it with a near-empty file — permanently losing
+    // default_profile / manual_override. So: log it, serve the last
+    // known-good in-memory copy for read continuity, and block writes.
+    if (!storeBroken || lastError !== err.message) {
+      console.error(`[SETTINGS] settings.json failed to load: ${err.message}`);
+      console.error('[SETTINGS] Serving last known-good in-memory settings (if any); writes are blocked until the file is fixed or removed.');
+    }
+    storeBroken = true;
+    lastError = err.message;
+    return lastGoodData;
   }
 }
 
 function save(data) {
+  if (storeBroken) {
+    const err = new Error(
+      'settings.json is currently broken on disk and cannot be safely modified. ' +
+      'Fix or remove the file, then try again.'
+    );
+    err.status = 409;
+    err.code = 'SETTINGS_STORE_BROKEN';
+    throw err;
+  }
   writeFileAtomic(SETTINGS_FILE, JSON.stringify(data, null, 2));
+  lastGoodData = data;
+}
+
+/** True when settings.json currently fails to load. */
+function isBroken() {
+  return storeBroken;
+}
+
+/** Human-readable reason for the current failure, or null if healthy. */
+function getLastError() {
+  return lastError;
 }
 
 /** Get all settings. */
 function getSettings() {
   // Auto-clear expired overrides
   const s = load();
-  if (s.manual_override && s.override_until) {
+  if (s.manual_override && s.override_until && !storeBroken) {
     const until = new Date(s.override_until);
     if (!isNaN(until.getTime()) && until <= new Date()) {
       s.manual_override = null;
@@ -142,4 +189,6 @@ module.exports = {
   setActiveProfile,
   clearProfileReferences,
   replaceAll,
+  isBroken,
+  getLastError,
 };

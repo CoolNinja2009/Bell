@@ -33,22 +33,66 @@ function writeFileAtomic(filePath, contents) {
   fs.renameSync(tmp, filePath);
 }
 
+let lastGoodData = emptyCalendar();
+let storeBroken = false;
+let lastError = null;
+
 function load() {
-  if (!fs.existsSync(CALENDAR_FILE)) return emptyCalendar();
+  if (!fs.existsSync(CALENDAR_FILE)) {
+    storeBroken = false;
+    lastError = null;
+    lastGoodData = emptyCalendar();
+    return lastGoodData;
+  }
   try {
     const data = JSON.parse(fs.readFileSync(CALENDAR_FILE, 'utf8'));
-    if (!isPlainObject(data)) return emptyCalendar();
-    return {
+    if (!isPlainObject(data)) throw new Error('calendar.json must contain a JSON object with "dates" and "dow"');
+    const clean = {
       dates: isPlainObject(data.dates) ? data.dates : {},
       dow: isPlainObject(data.dow) ? data.dow : {},
     };
-  } catch {
-    return emptyCalendar();
+    storeBroken = false;
+    lastError = null;
+    lastGoodData = clean;
+    return clean;
+  } catch (err) {
+    // A broken calendar.json must never be silently treated as "no
+    // assignments" — that would let a later save() permanently erase
+    // whatever was on disk. Log it, serve the last known-good in-memory
+    // copy (if this process has one) for read continuity, and block
+    // writes until the file is fixed.
+    if (!storeBroken || lastError !== err.message) {
+      console.error(`[CALENDAR] calendar.json failed to load: ${err.message}`);
+      console.error('[CALENDAR] Serving last known-good in-memory assignments (if any); writes are blocked until the file is fixed or removed.');
+    }
+    storeBroken = true;
+    lastError = err.message;
+    return lastGoodData;
   }
 }
 
 function save(data) {
+  if (storeBroken) {
+    const err = new Error(
+      'calendar.json is currently broken on disk and cannot be safely modified. ' +
+      'Fix or remove the file (a backup may help), then try again.'
+    );
+    err.status = 409;
+    err.code = 'CALENDAR_STORE_BROKEN';
+    throw err;
+  }
   writeFileAtomic(CALENDAR_FILE, JSON.stringify(data, null, 2));
+  lastGoodData = data;
+}
+
+/** True when calendar.json currently fails to load. */
+function isBroken() {
+  return storeBroken;
+}
+
+/** Human-readable reason for the current failure, or null if healthy. */
+function getLastError() {
+  return lastError;
 }
 
 /** Get all calendar assignments. */
@@ -122,4 +166,4 @@ function replaceAll(data) {
   return getAll();
 }
 
-module.exports = { CALENDAR_FILE, getAll, assignDate, assignDow, removeAssignment, removeProfileAssignments, replaceAll, VALID_DOWS, isValidDate };
+module.exports = { CALENDAR_FILE, getAll, assignDate, assignDow, removeAssignment, removeProfileAssignments, replaceAll, VALID_DOWS, isValidDate, isBroken, getLastError };

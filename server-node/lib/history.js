@@ -46,12 +46,19 @@ function readAllRaw() {
   const raw = fs.readFileSync(HISTORY_FILE, 'utf8');
   const lines = raw.split('\n').filter(Boolean);
   const out = [];
+  let skipped = 0;
   for (const line of lines) {
     try {
       out.push(JSON.parse(line));
     } catch {
-      // skip a corrupt line rather than failing the whole read
+      // Skip a corrupt line rather than failing the whole read — this is
+      // a best-effort append-only log, not something the scheduler
+      // depends on for safety. Still worth knowing about, though.
+      skipped++;
     }
+  }
+  if (skipped > 0) {
+    console.error(`[history] Skipped ${skipped} corrupt line(s) in ${HISTORY_FILE} — those events are unrecoverable, but the rest of the log is intact.`);
   }
   return out;
 }

@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Profile JSON Editor — Relay Controller</title>
+<link rel="icon" href="/bell.svg">
+<link rel="stylesheet" href="/vendor/codemirror/lib/codemirror.css">
+<link rel="stylesheet" href="/vendor/codemirror/addon/dialog/dialog.css">
+<style>
+  /* ── Design Tokens — identical to / and /profiles, so localStorage's
+     shared 'theme' key keeps all three pages in sync automatically ──── */
+  :root {
+    --bg:       #f8fafc;
+    --panel:    #ffffff;
+    --panel2:   #f1f5f9;
+    --border:   #e2e8f0;
+    --text:     #0f172a;
+    --dim:      #64748b;
+    --accent:   #10b981;
+    --accent2:  #f59e0b;
+    --accent3:  #3b82f6;
+    --danger:   #ef4444;
+    --on:       #10b981;
+    --off:      #cbd5e1;
+    --radius:   10px;
+    --glass:    rgba(255, 255, 255, 0.9);
+    --shadow:   0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+  [data-theme="dark"] {
+    --bg:       #0a0f16;
+    --panel:    #111921;
+    --panel2:   #0d1419;
+    --border:   #1e2936;
+    --text:     #e2e8f0;
+    --dim:      #64748b;
+    --accent:   #10b981;
+    --accent2:  #f59e0b;
+    --accent3:  #3b82f6;
+    --danger:   #ef4444;
+    --on:       #10b981;
+    --off:      #334155;
+    --glass:    rgba(17, 25, 33, 0.9);
+    --shadow:   0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+  [data-theme="light"] {
+    --bg:       #f8fafc;
+    --panel:    #ffffff;
+    --panel2:   #f1f5f9;
+    --border:   #e2e8f0;
+    --text:     #0f172a;
+    --dim:      #64748b;
+    --accent:   #10b981;
+    --accent2:  #f59e0b;
+    --accent3:  #3b82f6;
+    --danger:   #ef4444;
+    --on:       #10b981;
+    --off:      #cbd5e1;
+    --radius:   10px;
+    --glass:    rgba(255, 255, 255, 0.9);
+    --shadow:   0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) {
+      --bg:       #0a0f16;
+      --panel:    #111921;
+      --panel2:   #0d1419;
+      --border:   #1e2936;
+      --text:     #e2e8f0;
+      --dim:      #64748b;
+      --accent:   #10b981;
+      --accent2:  #f59e0b;
+      --accent3:  #3b82f6;
+      --danger:   #ef4444;
+      --on:       #10b981;
+      --off:      #334155;
+      --glass:    rgba(17, 25, 33, 0.9);
+      --shadow:   0 4px 12px rgba(0, 0, 0, 0.4);
+    }
+  }
+
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;transition:background .2s,color .2s}
+  header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap}
+  header h1{font-size:15px;margin:0;font-weight:600;flex:1;min-width:180px}
+  header a.back{color:var(--dim);text-decoration:none;font-size:13px}
+  header a.back:hover{color:var(--text)}
+  .icon-btn{background:transparent;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:14px;font-family:inherit;color:var(--text);padding:5px 9px}
+  .icon-btn:hover{background:var(--panel2)}
+  .toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:8px 16px;background:var(--panel2);border-bottom:1px solid var(--border)}
+  .toolbar .sep{width:1px;height:20px;background:var(--border);margin:0 4px}
+  button.tbtn, label.tbtn{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12.5px;cursor:pointer;font-family:inherit;white-space:nowrap}
+  button.tbtn:hover{background:var(--bg)}
+  button.tbtn.primary{background:var(--accent);border-color:var(--accent);color:#04150e;font-weight:600}
+  button.tbtn.primary:hover{filter:brightness(1.08)}
+  button.tbtn.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+  button.tbtn:disabled{opacity:.5;cursor:not-allowed}
+  select.tbtn{padding:6px 8px}
+  main{flex:1;display:flex;min-height:0}
+  .editor-wrap{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+  .CodeMirror{
+    flex:1;height:100%;width:100%;min-height:0;
+    font-size:13.5px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    background:var(--panel);color:var(--text);
+  }
+  /* Custom theme matching this app's own design tokens (no external CDN
+     theme) — reads the SAME --variables the rest of the site uses, so it
+     repaints instantly whenever [data-theme] changes, light or dark. */
+  .cm-s-bell.CodeMirror{background:var(--panel);color:var(--text)}
+  .cm-s-bell .CodeMirror-gutters{background:var(--panel2);border-right:1px solid var(--border)}
+  .cm-s-bell .CodeMirror-linenumber{color:var(--dim)}
+  .cm-s-bell .CodeMirror-cursor{border-left:1.5px solid var(--text)}
+  .cm-s-bell .CodeMirror-selected{background:rgba(59,130,246,.28)}
+  .cm-s-bell .CodeMirror-activeline-background{background:rgba(128,128,128,.10)}
+  .cm-s-bell .CodeMirror-matchingbracket{color:var(--accent) !important;font-weight:700;background:rgba(16,185,129,.18)}
+  .cm-s-bell .cm-property{color:var(--accent3)}
+  .cm-s-bell .cm-string{color:var(--accent)}
+  .cm-s-bell .cm-string-2{color:var(--accent)}
+  .cm-s-bell .cm-number{color:var(--accent3)}
+  .cm-s-bell .cm-atom{color:var(--accent2)}
+  .cm-s-bell .cm-keyword{color:var(--accent2)}
+  .cm-s-bell .cm-punctuation, .cm-s-bell .cm-bracket{color:var(--dim)}
+  .cm-s-bell .cm-error{color:var(--danger);background:rgba(239,68,68,.15)}
+  .CodeMirror-dialog{background:var(--panel2);color:var(--text);border-bottom:1px solid var(--border)}
+  .CodeMirror-dialog input{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px}
+  .CodeMirror-search-hint{color:var(--dim)}
+  .statusbar{display:flex;align-items:center;gap:14px;padding:8px 16px;background:var(--panel);border-top:1px solid var(--border);font-size:12.5px;flex-wrap:wrap}
+  .statusbar .item{display:flex;align-items:center;gap:6px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--off);flex-shrink:0}
+  .dot.ok{background:var(--on)} .dot.err{background:var(--danger)} .dot.pending{background:var(--accent2)}
+  .status-msg{color:var(--dim)}
+  .status-msg.err{color:var(--danger)}
+  .status-msg.ok{color:var(--accent)}
+  #unsaved-flag{color:var(--accent2);display:none}
+  .errlist{max-height:180px;overflow:auto;border-top:1px solid var(--border);background:var(--panel);font-family:ui-monospace,monospace;font-size:12px}
+  .errlist .row{padding:6px 16px;border-bottom:1px solid var(--border);cursor:pointer;white-space:pre-wrap}
+  .errlist .row:hover{background:var(--panel2)}
+  .errlist .row.error{color:var(--danger)}
+  .errlist .row.warning{color:var(--accent2)}
+  .errlist .tag{opacity:.7;font-size:10.5px;text-transform:uppercase;margin-right:6px}
+  /* Modal */
+  .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+  .modal-backdrop.open{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--border);border-radius:12px;max-width:900px;width:100%;max-height:90vh;display:flex;flex-direction:column;overflow:hidden}
+  .modal h2{margin:0;padding:14px 18px;border-bottom:1px solid var(--border);font-size:15px}
+  .modal .body{padding:16px 18px;overflow:auto}
+  .modal .foot{padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+  .recovery-summary{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;font-size:13px}
+  .recovery-summary b{display:block;font-size:18px}
+  .warnings{background:rgba(245,158,11,.1);border:1px solid var(--accent2);border-radius:8px;padding:10px 12px;font-size:12.5px;max-height:140px;overflow:auto;margin-bottom:12px}
+  .diff{font-family:ui-monospace,monospace;font-size:12px;border:1px solid var(--border);border-radius:8px;max-height:320px;overflow:auto}
+  .diff .l{padding:1px 8px;white-space:pre-wrap}
+  .diff .add{background:rgba(16,185,129,.18);color:var(--accent)}
+  .diff .del{background:rgba(239,68,68,.18);color:var(--danger);text-decoration:line-through}
+  .diff .ctx{color:var(--dim)}
+  .confirm-row{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px}
+  .hidden{display:none !important}
+</style>
+</head>
+<body>
+<header>
+  <h1>📝 profiles.json — JSON Editor</h1>
+  <button class="icon-btn" id="btn-theme" title="Toggle light/dark mode">☀</button>
+  <a class="back" href="/profiles">← Back to Profiles</a>
+</header>
+
+<div class="toolbar">
+  <button class="tbtn" id="btn-new" title="New — start from an empty valid skeleton">New</button>
+  <label class="tbtn" title="Open a local .json file into the editor (does not save)">Open<input type="file" id="file-open" accept=".json,application/json,text/plain" style="display:none"></label>
+  <button class="tbtn primary" id="btn-save" title="Validate and atomically save to profiles.json">Save</button>
+  <button class="tbtn" id="btn-saveas" title="Download the current editor content as a .json file">Save As / Export</button>
+  <button class="tbtn" id="btn-reload" title="Reload the current on-disk profiles.json into the editor">Reload</button>
+  <button class="tbtn" id="btn-revert" title="Discard changes, revert to last-loaded content">Revert</button>
+  <div class="sep"></div>
+  <button class="tbtn" id="btn-undo" title="Undo (Ctrl+Z)">Undo</button>
+  <button class="tbtn" id="btn-redo" title="Redo (Ctrl+Shift+Z / Ctrl+Y)">Redo</button>
+  <div class="sep"></div>
+  <button class="tbtn" id="btn-format" title="Pretty-print / re-indent">Format</button>
+  <button class="tbtn" id="btn-find" title="Find (Ctrl+F)">Find</button>
+  <button class="tbtn" id="btn-replace" title="Replace (Ctrl+H)">Replace</button>
+  <button class="tbtn" id="btn-goto" title="Go to line (Ctrl+G)">Go to Line</button>
+  <button class="tbtn" id="btn-dupline" title="Duplicate current line/selection">Duplicate Line</button>
+  <button class="tbtn" id="btn-delline" title="Delete current line">Delete Line</button>
+  <select class="tbtn" id="sel-indent" title="Indent width">
+    <option value="2">Indent: 2</option>
+    <option value="4">Indent: 4</option>
+  </select>
+  <div class="sep"></div>
+  <button class="tbtn" id="btn-validate" title="Validate current editor content on the server">Validate</button>
+  <button class="tbtn danger" id="btn-repair" title="Attempt Automatic Repair">🔧 Repair JSON</button>
+</div>
+
+<main>
+  <div class="editor-wrap">
+    <textarea id="editor"></textarea>
+  </div>
+</main>
+
+<div class="statusbar">
+  <div class="item"><span class="dot" id="dot-syntax"></span> <span id="lbl-syntax">JSON syntax</span></div>
+  <div class="item"><span class="dot" id="dot-schema"></span> <span id="lbl-schema">Schema</span></div>
+  <div class="item"><span class="dot" id="dot-app"></span> <span id="lbl-app">Application rules</span></div>
+  <div class="item status-msg" id="status-msg">Loading…</div>
+  <div class="item" id="unsaved-flag">● Unsaved changes</div>
+</div>
+<div class="errlist" id="errlist"></div>
+
+<!-- Repair modal -->
+<div class="modal-backdrop" id="repair-modal">
+  <div class="modal">
+    <h2>🔧 Attempt Automatic Repair</h2>
+    <div class="body">
+      <p style="margin-top:0;color:var(--dim);font-size:13px">
+        This scans the broken text for recognizable schedule information (channels, times, pulse durations)
+        and proposes a freshly rebuilt <code>profiles.json</code>. Nothing is written until you explicitly confirm below.
+        Values that could not be confidently recovered are <b>never guessed</b> — they're listed as warnings instead.
+      </p>
+      <div class="recovery-summary" id="recovery-summary"></div>
+      <div class="warnings hidden" id="recovery-warnings"></div>
+      <h3 style="font-size:13px;margin:14px 0 6px">Preview — broken text (left) vs. rebuilt profiles.json (right)</h3>
+      <div class="diff" id="recovery-diff"></div>
+      <div class="confirm-row">
+        <label><input type="checkbox" id="chk-confirm-repair"> I understand this will replace profiles.json with the rebuilt version above.</label>
+      </div>
+    </div>
+    <div class="foot">
+      <button class="tbtn" id="btn-repair-load">Load into Editor (don't save)</button>
+      <button class="tbtn" id="btn-repair-cancel">Cancel</button>
+      <button class="tbtn danger" id="btn-repair-apply" disabled>Apply &amp; Replace profiles.json</button>
+    </div>
+  </div>
+</div>
+
+<script src="/vendor/codemirror/lib/codemirror.js"></script>
+<script src="/vendor/codemirror/mode/javascript/javascript.js"></script>
+<script src="/vendor/codemirror/addon/edit/matchbrackets.js"></script>
+<script src="/vendor/codemirror/addon/edit/closebrackets.js"></script>
+<script src="/vendor/codemirror/addon/selection/active-line.js"></script>
+<script src="/vendor/codemirror/addon/search/searchcursor.js"></script>
+<script src="/vendor/codemirror/addon/search/search.js"></script>
+<script src="/vendor/codemirror/addon/dialog/dialog.js"></script>
+<script src="/vendor/codemirror/addon/search/jump-to-line.js"></script>
+<script>
+'use strict';
+
+const EMPTY_SKELETON = JSON.stringify({ profiles: {}, order: [] }, null, 2);
+
+const cm = CodeMirror.fromTextArea(document.getElementById('editor'), {
+  mode: { name: 'javascript', json: true },
+  theme: 'bell',
+  lineNumbers: true,
+  matchBrackets: true,
+  autoCloseBrackets: true,
+  styleActiveLine: true,
+  indentUnit: 2,
+  tabSize: 2,
+  indentWithTabs: false,
+  lineWrapping: false,
+  extraKeys: {
+    'Ctrl-F': 'find', 'Cmd-F': 'find',
+    'Ctrl-H': 'replace', 'Cmd-Alt-F': 'replace',
+    'Ctrl-G': 'jumpToLine', 'Cmd-G': 'jumpToLine',
+    'Ctrl-S': (c) => { saveProfile(); },
+    'Cmd-S': (c) => { saveProfile(); },
+  },
+});
+cm.setSize('100%', '100%');
+
+let lastLoadedText = '';
+let dirty = false;
+
+function markDirty() {
+  dirty = true;
+  document.getElementById('unsaved-flag').style.display = 'inline';
+}
+function clearDirty(text) {
+  dirty = false;
+  lastLoadedText = text;
+  document.getElementById('unsaved-flag').style.display = 'none';
+}
+
+cm.on('change', () => {
+  if (cm.getValue() !== lastLoadedText) markDirty();
+  scheduleValidate();
+});
+
+// ---------------------------------------------------------------------------
+// Server calls — always the SAME validation pipeline used everywhere else.
+// ---------------------------------------------------------------------------
+async function postText(url, text) {
+  return fetch(url, { method: 'POST', body: text }); // text/plain by default -> bypasses express.json()
+}
+async function postJson(url, obj) {
+  return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) });
+}
+
+function setDot(id, state) { // state: 'ok' | 'err' | 'pending' | ''
+  const el = document.getElementById(id);
+  el.className = 'dot' + (state ? ' ' + state : '');
+}
+
+function renderStatus(result, { network } = {}) {
+  if (network) {
+    setDot('dot-syntax', 'pending'); setDot('dot-schema', 'pending'); setDot('dot-app', 'pending');
+    document.getElementById('status-msg').textContent = 'Checking…';
+    document.getElementById('status-msg').className = 'item status-msg';
+    return;
+  }
+  setDot('dot-syntax', result.syntax_valid ? 'ok' : 'err');
+  setDot('dot-schema', result.syntax_valid ? (result.schema_valid ? 'ok' : 'err') : '');
+  setDot('dot-app', result.schema_valid ? (result.application_valid ? 'ok' : 'err') : '');
+
+  const msgEl = document.getElementById('status-msg');
+  if (result.valid) {
+    msgEl.textContent = '✓ Valid JSON · ✓ Schema valid · ✓ Application rules valid';
+    msgEl.className = 'item status-msg ok';
+  } else if (!result.syntax_valid) {
+    const first = (result.errors || [])[0];
+    msgEl.textContent = '✗ JSON syntax error' + (first && first.line != null ? ` — Line ${first.line}, Column ${first.column}` : '');
+    msgEl.className = 'item status-msg err';
+  } else if (!result.schema_valid) {
+    const first = (result.errors || []).find((e) => e.type === 'schema');
+    msgEl.textContent = '✓ JSON syntax valid · ✗ Schema validation failed' + (first ? ` — ${first.path}: ${first.message}` : '');
+    msgEl.className = 'item status-msg err';
+  } else {
+    const first = (result.errors || []).find((e) => e.severity === 'error');
+    msgEl.textContent = '✓ Syntax + schema valid · ✗ Application validation failed' + (first ? ` — ${first.path}: ${first.message}` : '');
+    msgEl.className = 'item status-msg err';
+  }
+
+  const list = document.getElementById('errlist');
+  list.innerHTML = '';
+  (result.errors || []).forEach((e) => {
+    const row = document.createElement('div');
+    row.className = 'row ' + (e.severity || 'error');
+    const loc = e.line != null ? `line ${e.line}${e.column != null ? ', col ' + e.column : ''}` : (e.path || '$');
+    row.textContent = `${e.message}  (${loc})`;
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = `${e.severity} · ${e.type}`;
+    row.prepend(tag);
+    if (e.line != null) {
+      row.style.cursor = 'pointer';
+      row.addEventListener('click', () => {
+        cm.setCursor({ line: e.line - 1, ch: Math.max(0, (e.column || 1) - 1) });
+        cm.focus();
+      });
+    }
+    list.appendChild(row);
+  });
+}
+
+let validateTimer = null;
+function scheduleValidate() {
+  renderStatus(null, { network: true });
+  clearTimeout(validateTimer);
+  validateTimer = setTimeout(doValidate, 500);
+}
+
+async function doValidate() {
+  try {
+    const res = await postText('/api/profile/validate', cm.getValue());
+    if (!res.ok) throw new Error('validate request failed');
+    const data = await res.json();
+    renderStatus(data);
+    return data;
+  } catch (err) {
+    document.getElementById('status-msg').textContent = 'Could not reach server to validate.';
+    document.getElementById('status-msg').className = 'item status-msg err';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// File operations
+// ---------------------------------------------------------------------------
+async function loadFromServer() {
+  const res = await fetch('/api/profile/raw', { cache: 'no-store' });
+  const data = await res.json();
+  cm.setValue(data.text);
+  clearDirty(data.text);
+  doValidate();
+}
+
+async function saveProfile() {
+  const btn = document.getElementById('btn-save');
+  btn.disabled = true;
+  try {
+    const res = await postText('/api/profile/save', cm.getValue());
+    const data = await res.json();
+    if (res.ok && data.valid) {
+      clearDirty(cm.getValue());
+      document.getElementById('status-msg').textContent = '✓ Saved to profiles.json';
+      document.getElementById('status-msg').className = 'item status-msg ok';
+    } else {
+      renderStatus(data.errors ? data : { valid: false, syntax_valid: true, schema_valid: true, application_valid: false, errors: data.errors || [] });
+      alert('Save blocked: the content did not pass validation. See the error list below the editor.');
+    }
+  } catch (err) {
+    alert('Save failed: could not reach the server.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function downloadCurrent() {
+  const blob = new Blob([cm.getValue()], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'profiles.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+document.getElementById('btn-new').addEventListener('click', () => {
+  if (dirty && !confirm('Discard unsaved changes and start a new empty profile file?')) return;
+  cm.setValue(EMPTY_SKELETON);
+  markDirty();
+});
+document.getElementById('file-open').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => { cm.setValue(String(reader.result)); markDirty(); };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+document.getElementById('btn-save').addEventListener('click', saveProfile);
+document.getElementById('btn-saveas').addEventListener('click', downloadCurrent);
+document.getElementById('btn-reload').addEventListener('click', () => {
+  if (dirty && !confirm('Discard unsaved changes and reload from disk?')) return;
+  loadFromServer();
+});
+document.getElementById('btn-revert').addEventListener('click', () => {
+  cm.setValue(lastLoadedText);
+  clearDirty(lastLoadedText);
+  doValidate();
+});
+document.getElementById('btn-undo').addEventListener('click', () => cm.undo());
+document.getElementById('btn-redo').addEventListener('click', () => cm.redo());
+document.getElementById('btn-format').addEventListener('click', () => {
+  try {
+    const parsed = JSON.parse(cm.getValue());
+    const indent = Number(document.getElementById('sel-indent').value) || 2;
+    cm.setValue(JSON.stringify(parsed, null, indent));
+    markDirty();
+  } catch (err) {
+    alert('Cannot format: the JSON has a syntax error. Fix that first (see status bar).');
+  }
+});
+document.getElementById('btn-find').addEventListener('click', () => cm.execCommand('find'));
+document.getElementById('btn-replace').addEventListener('click', () => cm.execCommand('replace'));
+document.getElementById('btn-goto').addEventListener('click', () => cm.execCommand('jumpToLine'));
+document.getElementById('btn-dupline').addEventListener('click', () => {
+  if (cm.somethingSelected()) {
+    const sel = cm.getSelection();
+    cm.replaceSelection(sel + sel);
+  } else {
+    const line = cm.getCursor().line;
+    const text = cm.getLine(line);
+    cm.replaceRange('\n' + text, { line, ch: text.length });
+  }
+  cm.focus();
+});
+document.getElementById('btn-delline').addEventListener('click', () => {
+  const line = cm.getCursor().line;
+  const from = { line, ch: 0 };
+  const to = line < cm.lastLine() ? { line: line + 1, ch: 0 } : { line, ch: cm.getLine(line).length };
+  cm.replaceRange('', from, to);
+  cm.focus();
+});
+document.getElementById('sel-indent').addEventListener('change', (e) => {
+  const n = Number(e.target.value) || 2;
+  cm.setOption('indentUnit', n);
+  cm.setOption('tabSize', n);
+});
+document.getElementById('btn-validate').addEventListener('click', doValidate);
+
+// ---------------------------------------------------------------------------
+// Repair flow
+// ---------------------------------------------------------------------------
+function simpleLineDiff(a, b) {
+  const A = a.split('\n'), B = b.split('\n');
+  const n = A.length, m = B.length;
+  const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (A[i] === B[j]) { out.push({ t: 'ctx', line: A[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: 'del', line: A[i] }); i++; }
+    else { out.push({ t: 'add', line: B[j] }); j++; }
+  }
+  while (i < n) { out.push({ t: 'del', line: A[i++] }); }
+  while (j < m) { out.push({ t: 'add', line: B[j++] }); }
+  return out;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+let lastRebuiltText = '';
+
+async function openRepairModal() {
+  const modal = document.getElementById('repair-modal');
+  const summary = document.getElementById('recovery-summary');
+  const warningsEl = document.getElementById('recovery-warnings');
+  const diffEl = document.getElementById('recovery-diff');
+  summary.innerHTML = 'Analyzing…';
+  warningsEl.classList.add('hidden');
+  diffEl.innerHTML = '';
+  document.getElementById('chk-confirm-repair').checked = false;
+  document.getElementById('btn-repair-apply').disabled = true;
+  modal.classList.add('open');
+
+  const res = await postText('/api/profile/repair', cm.getValue());
+  const data = await res.json();
+  lastRebuiltText = data.rebuilt_text;
+
+  const r = data.recovery;
+  const confColor = { high: 'var(--accent)', medium: 'var(--accent2)', low: 'var(--danger)', none: 'var(--danger)' }[r.confidence] || 'var(--dim)';
+  summary.innerHTML = `
+    <div><b style="color:${confColor}">${r.confidence.toUpperCase()}</b>confidence</div>
+    <div><b>${r.recovered_entries}</b>recovered entries</div>
+    <div><b>${r.unresolved_entries}</b>unresolved entries</div>
+    <div><b>${data.validation.valid ? '✓ VALID' : '✗ still invalid'}</b>rebuilt result</div>
+  `;
+  if (r.warnings && r.warnings.length) {
+    warningsEl.classList.remove('hidden');
+    warningsEl.innerHTML = '<b>Warnings (nothing here was guessed silently):</b><br>' + r.warnings.map(escapeHtml).join('<br>');
+  }
+  if (!data.validation.valid) {
+    warningsEl.classList.remove('hidden');
+    warningsEl.innerHTML += '<br><br><b>The rebuilt file still fails validation:</b><br>' +
+      data.validation.errors.map((e) => escapeHtml(`${e.message} (${e.path})`)).join('<br>');
+  }
+
+  const diffRows = simpleLineDiff(data.original_text, data.rebuilt_text);
+  diffEl.innerHTML = diffRows.map((row) => {
+    const cls = row.t === 'add' ? 'add' : row.t === 'del' ? 'del' : 'ctx';
+    return `<div class="l ${cls}">${escapeHtml(row.line)}</div>`;
+  }).join('');
+
+  document.getElementById('btn-repair-apply').disabled = !data.validation.valid;
+}
+
+document.getElementById('btn-repair').addEventListener('click', openRepairModal);
+document.getElementById('btn-repair-cancel').addEventListener('click', () => {
+  document.getElementById('repair-modal').classList.remove('open');
+});
+document.getElementById('btn-repair-load').addEventListener('click', () => {
+  cm.setValue(lastRebuiltText);
+  markDirty();
+  document.getElementById('repair-modal').classList.remove('open');
+  doValidate();
+});
+document.getElementById('chk-confirm-repair').addEventListener('change', (e) => {
+  document.getElementById('btn-repair-apply').disabled = !e.target.checked;
+});
+document.getElementById('btn-repair-apply').addEventListener('click', async () => {
+  if (!document.getElementById('chk-confirm-repair').checked) return;
+  const res = await postJson('/api/profile/repair/apply', { text: lastRebuiltText, confirm: true });
+  const data = await res.json();
+  document.getElementById('repair-modal').classList.remove('open');
+  if (res.ok) {
+    cm.setValue(lastRebuiltText);
+    clearDirty(lastRebuiltText);
+    doValidate();
+    alert('profiles.json has been replaced with the recovered version.');
+  } else {
+    alert('Repair apply failed: ' + (data.error || 'unknown error'));
+  }
+});
+
+// If we arrived via the broken-profile banner's "Attempt Automatic Repair"
+// button, open the modal automatically once content has loaded.
+const wantsRepair = new URLSearchParams(window.location.search).get('repair') === '1';
+
+window.addEventListener('beforeunload', (e) => {
+  if (dirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
+loadFromServer().then(() => { if (wantsRepair) openRepairModal(); });
+
+// ── Theme toggle — identical mechanism to / and /profiles, so the
+// shared localStorage 'theme' key keeps all three pages in sync. ──────
+(function () {
+  const html = document.documentElement;
+  const btn = document.getElementById('btn-theme');
+
+  function getTheme() {
+    return localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  }
+
+  function applyTheme(theme) {
+    if (theme === 'dark') {
+      html.setAttribute('data-theme', 'dark');
+      if (btn) btn.innerHTML = '☾';
+    } else {
+      html.setAttribute('data-theme', 'light');
+      if (btn) btn.innerHTML = '☀';
+    }
+    localStorage.setItem('theme', theme);
+  }
+
+  applyTheme(getTheme());
+
+  if (btn) {
+    btn.onclick = () => {
+      const current = html.getAttribute('data-theme') || 'light';
+      applyTheme(current === 'dark' ? 'light' : 'dark');
+    };
+  }
+
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    if (!localStorage.getItem('theme')) {
+      applyTheme(e.matches ? 'dark' : 'light');
+    }
+  });
+})();
+</script>
+</body>
+</html>
