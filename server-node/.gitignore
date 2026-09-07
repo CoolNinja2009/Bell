@@ -16,3 +16,4 @@ state/update_state.json.tmp
 /backups/
 !defaults/
 server-node.zip
+*.zip
