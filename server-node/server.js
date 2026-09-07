@@ -50,6 +50,7 @@ const profileSettings = require('./lib/settings');
 const profileScheduler = require('./lib/profile-scheduler');
 const firmwareState = require('./lib/firmware-state');
 const firmwareMetadata = require('./lib/firmware-metadata');
+const profileRecovery = require('./lib/profile-recovery');
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -59,6 +60,7 @@ const SCHEDULE_FILE = path.join(__dirname, 'schedule.json'); // legacy — kept 
 const DEFAULT_PROFILES_FILE = path.join(__dirname, 'defaults', 'profiles.json');
 const DEFAULT_CALENDAR_FILE = path.join(__dirname, 'defaults', 'calendar.json');
 const PROFILES_TPL = path.join(__dirname, 'templates', 'profiles.html');
+const PROFILE_EDITOR_TPL = path.join(__dirname, 'templates', 'profile-editor.html');
 const PROFILE_REFRESH_INTERVAL_MS = 60000; // check every minute for midnight rollover
 const BEACON_PORT = 9999;
 const BEACON_INTERVAL_MS = 5000;
@@ -71,6 +73,7 @@ const SW_PATH = path.join(__dirname, 'sw.js');
 const ICON_192_PATH = path.join(__dirname, 'icon-192.png');
 const ICON_512_PATH = path.join(__dirname, 'icon-512.png');
 const BELL_SVG_PATH = path.join(__dirname, 'bell.svg');
+const VENDOR_DIR = path.join(__dirname, 'vendor');
 
 const CHANNEL_KEY_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,19}$/; // must start with a letter
 const MAX_CHANNELS = 24;
@@ -340,6 +343,12 @@ app.use(
 );
 app.use(express.json({ limit: '256kb' }));
 app.use(express.urlencoded({ extended: false, limit: '64kb' }));
+
+// Vendored, same-origin static assets (currently: CodeMirror for the JSON
+// editor). Served from disk rather than a CDN so the strict CSP above needs
+// no third-party script-src/style-src exceptions, and the dashboard keeps
+// working fully offline/on a LAN with no internet access.
+app.use('/vendor', express.static(VENDOR_DIR, { maxAge: '7d', index: false, dotfiles: 'ignore' }));
 
 class BoundedSessionStore extends session.Store {
   constructor(maxEntries = 1000) {
@@ -1057,6 +1066,7 @@ app.get(
     res.json({
       heartbeats: hb,
       server_uptime: Math.round((now - startTime) / 100) / 10,
+      profile_status: profiles.isStoreBroken() ? 'invalid' : 'valid',
     });
   })
 );
@@ -1458,6 +1468,189 @@ app.get(
 );
 
 // ---------------------------------------------------------------------------
+// profiles.json validation, editor, and repair
+// ─────────────────────────────────────────────────────────────────────────
+// GET  /api/profile/validate         → status of the on-disk profiles.json
+// POST /api/profile/validate         → validate arbitrary text, no write
+// GET  /api/profile/raw              → current on-disk text (broken or not)
+// POST /api/profile/save             → validate + atomically replace
+// POST /api/profile/repair           → propose a recovered rebuild (preview only)
+// POST /api/profile/repair/apply     → write a previously-previewed rebuild
+// GET  /api/profile/backup           → whether a .bak exists
+// POST /api/profile/backup/restore   → restore profiles.json from .bak
+// GET  /profile-editor                → the JSON editor page
+// ---------------------------------------------------------------------------
+function profileStatusPayload() {
+  const v = profiles.getValidationState();
+  return {
+    profile_status: v.valid ? 'valid' : 'invalid',
+    valid: v.valid,
+    syntax_valid: v.syntax_valid,
+    schema_valid: v.schema_valid,
+    application_valid: v.application_valid,
+    errors: v.errors,
+    source: v.source,
+    has_backup: profiles.hasBackup(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// System file health — settings.json / calendar.json / api_keys.json /
+// firmware_state.json don't have their own JSON-editor+repair pipeline
+// (they're simple, rarely hand-edited files), but a broken one still must
+// never fail silently: each module below refuses to write over a broken
+// file and logs the reason to the console the moment it's detected. This
+// endpoint aggregates that state so the dashboard can show *something*
+// went wrong and point at which file, rather than nothing at all.
+// ---------------------------------------------------------------------------
+app.get(
+  '/api/system/health',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    // Reading triggers each module's validation-aware load.
+    calendar.getAll();
+    profileSettings.getSettings();
+    apikeys.listKeys();
+    firmwareState.load();
+
+    const files = {
+      settings: { broken: profileSettings.isBroken(), error: profileSettings.getLastError() },
+      calendar: { broken: calendar.isBroken(), error: calendar.getLastError() },
+      api_keys: { broken: apikeys.isBroken(), error: apikeys.getLastError() },
+      firmware_state: { broken: firmwareState.isBroken(), error: firmwareState.getLastError() },
+    };
+    const anyBroken = Object.values(files).some((f) => f.broken);
+    res.set('Cache-Control', 'no-store').json({ healthy: !anyBroken, files });
+  })
+);
+
+app.get(
+  '/api/profile/validate',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    // Re-read from disk so this reflects reality even if nothing else has
+    // touched profiles.json since the last load (e.g. an external edit).
+    profiles.listIds();
+    res.set('Cache-Control', 'no-store').json(profileStatusPayload());
+  })
+);
+
+app.post(
+  '/api/profile/validate',
+  loginRequired,
+  express.text({ type: '*/*', limit: '2mb' }),
+  asyncRoute(async (req, res) => {
+    const text = typeof req.body === 'string' ? req.body
+      : (req.body && typeof req.body.text === 'string' ? req.body.text : JSON.stringify(req.body ?? ''));
+    const result = profiles.validateCandidateText(text);
+    res.json({
+      valid: result.valid,
+      syntax_valid: result.syntax_valid,
+      schema_valid: result.schema_valid,
+      application_valid: result.application_valid,
+      errors: result.errors,
+    });
+  })
+);
+
+app.get(
+  '/api/profile/raw',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    res.set('Cache-Control', 'no-store').json({
+      text: profiles.getCurrentRawText(),
+      ...profileStatusPayload(),
+    });
+  })
+);
+
+app.post(
+  '/api/profile/save',
+  loginRequired,
+  express.text({ type: '*/*', limit: '2mb' }),
+  asyncRoute(async (req, res) => {
+    const text = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+    if (text.length > 2 * 1024 * 1024) throw validationError('File too large');
+    const result = profiles.writeValidatedText(text, { reason: 'editor-save' });
+    profileScheduler.resolveAndApply();
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'profile_file_saved', note: `${Object.keys(result.parsed.profiles || {}).length} profile(s) via editor` });
+    pushLog('profiles.json saved via JSON editor');
+    res.json(profileStatusPayload());
+  })
+);
+
+app.post(
+  '/api/profile/repair',
+  loginRequired,
+  express.text({ type: '*/*', limit: '2mb' }),
+  asyncRoute(async (req, res) => {
+    const text = typeof req.body === 'string' && req.body.length > 0
+      ? req.body
+      : (profiles.getBrokenRawText() || profiles.getCurrentRawText());
+    const result = profileRecovery.attemptRepair(text);
+    res.json({
+      original_text: text,
+      rebuilt_text: result.rebuiltText,
+      recovery: result.recovery,
+      validation: {
+        valid: result.validation.valid,
+        syntax_valid: result.validation.syntax_valid,
+        schema_valid: result.validation.schema_valid,
+        application_valid: result.validation.application_valid,
+        errors: result.validation.errors,
+      },
+    });
+  })
+);
+
+app.post(
+  '/api/profile/repair/apply',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const text = req.body && typeof req.body.text === 'string' ? req.body.text : null;
+    if (!text) throw validationError('Missing "text" (the previewed rebuilt content) in request body');
+    if (req.body.confirm !== true) throw validationError('Repair apply requires { confirm: true } — this is a destructive, explicit action');
+    const result = profiles.writeValidatedText(text, { reason: 'automatic-repair' });
+    profileScheduler.resolveAndApply();
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'profile_repaired', note: `${Object.keys(result.parsed.profiles || {}).length} profile(s) via repair` });
+    pushLog('profiles.json replaced via Attempt Automatic Repair');
+    res.json(profileStatusPayload());
+  })
+);
+
+app.get(
+  '/api/profile/backup',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    res.json({ has_backup: profiles.hasBackup(), path: profiles.BACKUP_FILE });
+  })
+);
+
+app.post(
+  '/api/profile/backup/restore',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    const result = profiles.restoreBackup();
+    profileScheduler.resolveAndApply();
+    history.appendHistory({ ch: '*', trigger: 'edit', status: 'profile_backup_restored', note: `${Object.keys(result.parsed.profiles || {}).length} profile(s)` });
+    pushLog('profiles.json restored from backup');
+    res.json(profileStatusPayload());
+  })
+);
+
+app.get(
+  '/profile-editor',
+  loginRequired,
+  asyncRoute(async (req, res) => {
+    if (!fs.existsSync(PROFILE_EDITOR_TPL)) {
+      return res.status(404).send('Profile editor page not found');
+    }
+    const html = fs.readFileSync(PROFILE_EDITOR_TPL, 'utf8');
+    res.set('Cache-Control', 'no-store').type('html').send(html);
+  })
+);
+
+// ---------------------------------------------------------------------------
 // NEW — Account: change password without SSH access
 // ---------------------------------------------------------------------------
 app.post(
@@ -1608,67 +1801,139 @@ function seedMissingBuiltInCalendar() {
 
   for (const [id, profile] of Object.entries(defaultProfiles.profiles || {})) {
     if (!profiles.getProfile(id) && profile && profile.name && profile.channels) {
-      const created = profiles.createProfile(profile.name, profile.channels);
-      log(`[server] Restored missing built-in profile '${created.name}' (${created.id})`);
+      try {
+        const created = profiles.createProfile(profile.name, profile.channels);
+        log(`[server] Restored missing built-in profile '${created.name}' (${created.id})`);
+      } catch (err) {
+        logError(`restoring built-in profile '${id}'`, err);
+      }
     }
   }
 
-  const current = calendar.getAll();
+  // calendar.json may independently be broken even when profiles.json is
+  // fine — don't let that abort the loop or bubble up to bootstrap().
+  let current;
+  try {
+    current = calendar.getAll();
+  } catch (err) {
+    logError('reading calendar.json while seeding built-in defaults', err);
+    return;
+  }
   for (const [dow, profileId] of Object.entries(defaultCalendar.dow || {})) {
     if (current.dow[dow] === undefined && profiles.getProfile(profileId)) {
-      calendar.assignDow(dow, profileId);
-      log(`[server] Restored missing ${dow} profile assignment -> ${profileId}`);
+      try {
+        calendar.assignDow(dow, profileId);
+        log(`[server] Restored missing ${dow} profile assignment -> ${profileId}`);
+      } catch (err) {
+        logError(`restoring ${dow} calendar assignment`, err);
+      }
     }
   }
 }
 
 function bootstrap() {
-  // Migration: if old schedule.json exists but profiles.json doesn't,
-  // create a "Regular Working Day" profile from the existing schedule.
-  if (!fs.existsSync(profiles.PROFILES_FILE) && fs.existsSync(SCHEDULE_FILE)) {
-    try {
-      const oldSchedule = JSON.parse(fs.readFileSync(SCHEDULE_FILE, 'utf8'));
-      if (oldSchedule && typeof oldSchedule === 'object' && !Array.isArray(oldSchedule)) {
-        const created = profiles.createProfile('Regular Working Day', oldSchedule);
+  log('[PROFILE] Loading profiles.json');
+
+  // Validate FIRST, before anything below is allowed to touch the file.
+  // A broken profiles.json must never be "fixed" by silently seeding a
+  // fresh default over it — that would destroy whatever is recoverable.
+  profiles.listIds(); // triggers the validation-aware load
+  const broken = profiles.isStoreBroken();
+  const v = profiles.getValidationState();
+  log(`[PROFILE] JSON syntax: ${v.syntax_valid ? 'PASS' : 'FAIL'}`);
+  log(`[PROFILE] Schema validation: ${v.syntax_valid ? (v.schema_valid ? 'PASS' : 'FAIL') : 'SKIPPED'}`);
+  log(`[PROFILE] Application validation: ${v.schema_valid ? (v.application_valid ? 'PASS' : 'FAIL') : 'SKIPPED'}`);
+
+  if (broken) {
+    log('[PROFILE] profiles.json is INVALID — schedule activation blocked. ' +
+      'Startup will NOT auto-create or auto-migrate profiles while the file is broken, ' +
+      'to avoid overwriting recoverable data. Use the JSON Editor (Attempt Automatic Repair) to fix it.');
+    log('[PROFILE] Schedule activation: BLOCKED');
+  } else {
+    // Migration: if old schedule.json exists but profiles.json doesn't,
+    // create a "Regular Working Day" profile from the existing schedule.
+    if (!fs.existsSync(profiles.PROFILES_FILE) && fs.existsSync(SCHEDULE_FILE)) {
+      try {
+        const oldSchedule = JSON.parse(fs.readFileSync(SCHEDULE_FILE, 'utf8'));
+        if (oldSchedule && typeof oldSchedule === 'object' && !Array.isArray(oldSchedule)) {
+          const created = profiles.createProfile('Regular Working Day', oldSchedule);
+          profileSettings.setDefaultProfile(created.id);
+          log(`[server] Migrated schedule.json -> profile '${created.name}' (${created.id})`);
+        }
+      } catch (err) {
+        log(`[server] Migration skipped: ${err.message}`);
+      }
+    }
+
+    // Existing installations retain calendar.json/profiles.json, so they need
+    // an explicit non-destructive migration when built-in days are introduced.
+    seedMissingBuiltInCalendar();
+
+    // Ensure at least one profile exists (only reached when the file was
+    // syntactically/schematically/semantically valid — see the broken
+    // branch above, which returns without touching the store at all).
+    const ids = profiles.listIds();
+    if (ids.length === 0) {
+      const created = profiles.createProfile('Regular Working Day');
+      try {
         profileSettings.setDefaultProfile(created.id);
-        log(`[server] Migrated schedule.json -> profile '${created.name}' (${created.id})`);
+      } catch (err) {
+        logError('setting default_profile after creating the default profile', err);
+      }
+      log(`[server] Created default profile '${created.name}'`);
+    }
+
+    try {
+      if (!profileSettings.getSettings().default_profile && profiles.getProfile('regular-working-day')) {
+        profileSettings.setDefaultProfile('regular-working-day');
       }
     } catch (err) {
-      log(`[server] Migration skipped: ${err.message}`);
+      logError('setting default_profile to regular-working-day', err);
     }
+
+    // Resolve and apply the active profile for today
+    profileScheduler.resolveAndApply();
   }
 
-  // Existing installations retain calendar.json/profiles.json, so they need
-  // an explicit non-destructive migration when built-in days are introduced.
-  seedMissingBuiltInCalendar();
-
-  // Ensure at least one profile exists
-  const ids = profiles.listIds();
-  if (ids.length === 0) {
-    const created = profiles.createProfile('Regular Working Day');
-    profileSettings.setDefaultProfile(created.id);
-    log(`[server] Created default profile '${created.name}'`);
-  }
-
-  if (!profileSettings.getSettings().default_profile && profiles.getProfile('regular-working-day')) {
-    profileSettings.setDefaultProfile('regular-working-day');
-  }
-
-  // Resolve and apply the active profile for today
-  profileScheduler.resolveAndApply();
-
-  // Schedule midnight profile refresh — check every minute
+  // Schedule midnight profile refresh — check every minute. Runs even while
+  // broken: profiles.js re-reads and re-validates profiles.json from disk
+  // on every call, so a manual on-disk fix (or an editor Save) is picked up
+  // automatically without a server restart.
   let lastDay = profileScheduler.todayStr();
   setInterval(() => {
-    const today = profileScheduler.todayStr();
-    if (today !== lastDay) {
-      lastDay = today;
-      profileScheduler.resolveAndApply();
-      log(`[server] Midnight rollover — new active profile applied`);
+    try {
+      const wasBroken = profiles.isStoreBroken();
+      const today = profileScheduler.todayStr();
+      if (today !== lastDay) {
+        lastDay = today;
+        profileScheduler.resolveAndApply();
+        log(`[server] Midnight rollover — new active profile applied`);
+      } else {
+        // Cheap re-check so recovery is noticed without waiting for midnight.
+        profiles.listIds();
+      }
+      if (wasBroken && !profiles.isStoreBroken()) {
+        log('[PROFILE] profiles.json is valid again — resuming normal schedule activation');
+        profileScheduler.resolveAndApply();
+      } else if (!wasBroken && profiles.isStoreBroken()) {
+        logValidationChange();
+      }
+    } catch (err) {
+      // This timer runs unattended for the life of the process — never let
+      // one bad tick (e.g. a transient disk error) kill the whole server.
+      logError('[server] midnight-refresh tick', err);
     }
   }, PROFILE_REFRESH_INTERVAL_MS);
 
   auth.loadPasswordHash(); // creates password.json with default password notice, if needed
+}
+
+function logValidationChange() {
+  const v = profiles.getValidationState();
+  log('[PROFILE] profiles.json just became INVALID on disk — schedule activation blocked');
+  for (const e of v.errors) {
+    log(`[PROFILE]   ${e.severity.toUpperCase()} (${e.type}) ${e.path}: ${e.message}`);
+  }
 }
 
 // Never let an unexpected error silently crash into a corrupt half-state.
@@ -1683,7 +1948,15 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 
-bootstrap();
+// Startup must never crash-loop the whole process because of a corrupted
+// auxiliary file (settings.json, calendar.json, etc.) — profiles.json's
+// own corruption is already handled gracefully inside bootstrap() itself;
+// this is a final safety net for anything unexpected in the rest of it.
+try {
+  bootstrap();
+} catch (err) {
+  logError('bootstrap() failed — starting anyway with whatever initialized successfully', err);
+}
 startBeacon();
 
 const server = http.createServer(app);

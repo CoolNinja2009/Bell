@@ -22,19 +22,63 @@ function writeFileAtomic(filePath, contents) {
   fs.renameSync(tmp, filePath);
 }
 
+let lastGoodData = { keys: [] };
+let storeBroken = false;
+let lastError = null;
+
 function load() {
-  if (!fs.existsSync(KEYS_FILE)) return { keys: [] };
+  if (!fs.existsSync(KEYS_FILE)) {
+    storeBroken = false;
+    lastError = null;
+    lastGoodData = { keys: [] };
+    return lastGoodData;
+  }
   try {
     const data = JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
-    if (!Array.isArray(data.keys)) return { keys: [] };
+    if (!Array.isArray(data.keys)) throw new Error('api_keys.json must contain a "keys" array');
+    storeBroken = false;
+    lastError = null;
+    lastGoodData = data;
     return data;
-  } catch {
-    return { keys: [] };
+  } catch (err) {
+    // A broken api_keys.json must never be treated as "no keys issued" —
+    // createKey()/revokeKey() would then save() that empty view and
+    // permanently delete every previously issued key. Log it, serve the
+    // last known-good in-memory copy for read/verify continuity (so
+    // existing integrations keep working this process's lifetime), and
+    // block writes until the file is fixed.
+    if (!storeBroken || lastError !== err.message) {
+      console.error(`[APIKEYS] api_keys.json failed to load: ${err.message}`);
+      console.error('[APIKEYS] Serving last known-good in-memory keys (if any); creating/revoking keys is blocked until the file is fixed or removed.');
+    }
+    storeBroken = true;
+    lastError = err.message;
+    return lastGoodData;
   }
 }
 
 function save(data) {
+  if (storeBroken) {
+    const err = new Error(
+      'api_keys.json is currently broken on disk and cannot be safely modified. ' +
+      'Fix or remove the file, then try again.'
+    );
+    err.status = 409;
+    err.code = 'APIKEYS_STORE_BROKEN';
+    throw err;
+  }
   writeFileAtomic(KEYS_FILE, JSON.stringify(data, null, 2));
+  lastGoodData = data;
+}
+
+/** True when api_keys.json currently fails to load. */
+function isBroken() {
+  return storeBroken;
+}
+
+/** Human-readable reason for the current failure, or null if healthy. */
+function getLastError() {
+  return lastError;
 }
 
 function hashKey(raw) {
@@ -82,11 +126,20 @@ function verifyKey(candidate) {
     const entryBuf = Buffer.from(entry.hash, 'hex');
     if (entryBuf.length === candidateBuf.length && crypto.timingSafeEqual(entryBuf, candidateBuf)) {
       entry.last_used = new Date().toISOString();
-      save(data);
+      try {
+        save(data);
+      } catch (err) {
+        // A key that was already loaded successfully should still be
+        // allowed to authenticate even if we can't persist the last_used
+        // bookkeeping timestamp right now (e.g. the file was corrupted by
+        // something else between requests). Don't fail a real integration
+        // over a housekeeping write.
+        console.error(`[APIKEYS] Verified key but could not record last_used: ${err.message}`);
+      }
       return entry;
     }
   }
   return null;
 }
 
-module.exports = { KEYS_FILE, createKey, listKeys, revokeKey, verifyKey };
+module.exports = { KEYS_FILE, createKey, listKeys, revokeKey, verifyKey, isBroken, getLastError };

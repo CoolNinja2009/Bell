@@ -104,7 +104,16 @@ function resolveAndApply(now) {
   const previousProfileId = settings.getSettings().active_profile;
 
   if (profileId) {
-    settings.setActiveProfile(profileId);
+    try {
+      settings.setActiveProfile(profileId);
+    } catch (err) {
+      // settings.js already logged the root cause when it detected the
+      // broken file. resolveAndApply() is called extremely often — from
+      // HTTP routes, but also from raw setInterval timers and bootstrap()
+      // that aren't wrapped in a try/catch — so it must never throw just
+      // because settings.json couldn't be written to this cycle.
+      console.error(`[profile-scheduler] Could not persist active profile '${profileId}': ${err.message}`);
+    }
   }
 
   const info = { profileId, reason, appliedAt: new Date().toISOString() };

@@ -10,6 +10,7 @@ firmware_state.json
 state/update_state.json
 state/update_state.json.tmp
 /profiles.json
+/profiles.json.bak
 /settings.json
 /calendar.json
 /backups/
