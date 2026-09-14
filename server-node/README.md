@@ -197,7 +197,7 @@ server-node/
 | `HEARTBEAT_TTL_MS` | `120000` | Heartbeat staleness threshold (2 min) |
 | `COMMAND_TTL_MS` | `300000` | Pending command expiry (5 min) |
 | `MAX_LOG_ENTRIES` | `100` | Device log ring buffer size |
-| `MAX_CHANNELS` | `24` | Maximum relay channels |
+| `MAX_CHANNELS` | `24` | Maximum relay channels accepted by the server; the firmware currently supports only 2 |
 | `CHANNEL_KEY_RE` | `/^[a-zA-Z][a-zA-Z0-9_-]{0,19}$/` | Valid channel key pattern |
 | `PROFILE_REFRESH_INTERVAL_MS` | `60000` | Midnight rollover check interval |
 | `SCHEDULE_TIME_ZONE` | `Asia/Kolkata` | IANA timezone used for calendar dates and weekday profiles |
@@ -206,6 +206,27 @@ server-node/
 | `FIRMWARE_TTL_MS` | `1800000` | Firmware cache TTL (30 min) |
 
 All can be overridden via environment variables: `FIRMWARE_REPO`, `FIRMWARE_ASSET_NAME`.
+
+### Relay channel count
+
+The server supports up to **24 channel keys**, but the current firmware
+supports only **2 relay channels**, hardcoded as `ch1` and `ch2`. The server's
+`MAX_CHANNELS` value of `24` is only a validation ceiling; it does not add
+hardware channels to the ESP32. Profiles should therefore use only `ch1` and
+`ch2` for now.
+
+To add more channels later, update all of these areas together:
+
+1. Add the relay pin, channel definition, schedule parsing, and execution
+  logic in the firmware under `src/bell_core.h` and `src/bell_core.cpp`.
+2. Update the hardcoded channel count and relay safety handling in
+  `src/watchdog.cpp`.
+3. Raise `MAX_CHANNELS` in `server.js` if the new total exceeds the current
+  limit, and update dashboard/profile defaults under `templates/` and
+  `defaults/`.
+4. Update the hardware/channel documentation in the repository README.
+5. Build and upload the new firmware before adding the new channel key to any
+  profile or schedule.
 
 ### Session configuration
 
