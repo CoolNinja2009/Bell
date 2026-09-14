@@ -14,6 +14,27 @@ ESP32-based multi-channel relay controller with WiFi, NTP time sync, auto-updati
 | GND       | Common ground       |
 | 3.3V/5V   | Relay module power  |
 
+### Relay channel count
+
+The firmware currently supports **2 relay channels**, hardcoded as `ch1` and
+`ch2`. The server supports up to **24 channel keys**, but the firmware does
+not support channels `ch3` through `ch24` yet. This matches the two relay pins
+listed above. Do not add extra channel entries to a profile until the firmware
+has been updated to support them.
+
+To increase the channel count later:
+
+1. Add the new relay pin and channel definition in `src/bell_core.h` and
+  `src/bell_core.cpp`.
+2. Update schedule parsing and validation in `src/bell_core.cpp` so the new
+  channel is required and executed.
+3. Update the hardcoded channel count in `src/watchdog.cpp` and add watchdog
+  handling for the new relay pin.
+4. Update the server-side `MAX_CHANNELS` limit and dashboard/profile defaults
+  in `server-node/`.
+5. Update this table and rebuild/upload the firmware before using the new
+  channel.
+
 ### RGB Status LED (4-pin, common anode)
 
 The onboard RGB LED indicates system state at a glance. Common anode to 3.3V; each cathode driven via PWM through a current-limiting resistor (220Ω–1kΩ).
