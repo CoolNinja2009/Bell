@@ -6,9 +6,10 @@ schedule.json
 history.jsonl
 api_keys.json
 firmware_state.json
-*.log
-state/update_state.json
-state/update_state.json.tmp
+/logs/*
+!/logs/.gitkeep
+/state/*
+!/state/.gitkeep
 /profiles.json
 /profiles.json.bak
 /settings.json

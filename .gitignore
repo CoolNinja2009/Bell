@@ -1,13 +1,21 @@
-.pio
+.pio/
+
 # VS Code
 .vscode/
-.server-node/Server.zip
+
+# Ignore generated zip archives anywhere in the repo
+*.zip
+*.ZIP
+
+# Project-local/generated artifacts
 .circuit diagram.png
+
 # Defunct / legacy
 defunct/
 __pycache__/
 *.pyc
 *CHECKPOINT.md
+
 # BLE client
 esp32/ble_client/
 
