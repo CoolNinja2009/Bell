@@ -42,7 +42,7 @@ function load() {
     storeBroken = false;
     lastError = null;
     lastGoodData = emptyCalendar();
-    return lastGoodData;
+    return structuredClone(lastGoodData);
   }
   try {
     const data = JSON.parse(fs.readFileSync(CALENDAR_FILE, 'utf8'));
@@ -53,7 +53,7 @@ function load() {
     };
     storeBroken = false;
     lastError = null;
-    lastGoodData = clean;
+    lastGoodData = structuredClone(clean);
     return clean;
   } catch (err) {
     // A broken calendar.json must never be silently treated as "no
@@ -67,7 +67,7 @@ function load() {
     }
     storeBroken = true;
     lastError = err.message;
-    return lastGoodData;
+    return structuredClone(lastGoodData);
   }
 }
 
@@ -82,7 +82,7 @@ function save(data) {
     throw err;
   }
   writeFileAtomic(CALENDAR_FILE, JSON.stringify(data, null, 2));
-  lastGoodData = data;
+  lastGoodData = structuredClone(data);
 }
 
 /** True when calendar.json currently fails to load. */
