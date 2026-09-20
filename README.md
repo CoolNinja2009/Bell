@@ -1,6 +1,174 @@
 # Relay Controller
 
-ESP32-based multi-channel relay controller with WiFi, NTP time sync, auto-updating Node.js server, and a profile-driven web dashboard. **~11,000 lines** across 48 files (C++ firmware + Node.js backend + dashboard UI).
+A resilient ESP32-based relay controller for timed bell and automation workflows. It combines firmware-driven relay logic, Wi-Fi provisioning, optional RTC support, an auto-updating Node.js server, and a browser dashboard for schedule management.
+
+The controller keeps running from its stored schedule when the network or server is unavailable, while the dashboard provides profile editing, history, backups, and OTA firmware management.
+
+## Contents
+
+- [Overview](#overview)
+- [Quick Start](#quick-start)
+- [Repo Map](#repo-map)
+- [Folder Overview](#folder-overview)
+- [Troubleshooting](#troubleshooting)
+- [Circuit Diagram](#circuit-diagram)
+- [Hardware](#hardware)
+- [Wi-Fi Provisioning](#wi-fi-provisioning)
+- [Deployment](#deployment)
+- [OTA Firmware Updates](#ota-firmware-updates)
+- [Architecture](#architecture)
+- [Profiles](#profiles)
+
+## Overview
+
+- ESP32 firmware for relay execution, scheduling, watchdog safety, and OTA updates
+- Node.js dashboard server for profiles, calendars, history, backups, and device APIs
+- Wi-Fi setup mode for first-time configuration without hardcoded credentials
+- Automatic server discovery, NTP synchronization, and offline schedule fallback
+- GitHub-driven firmware updates with integrity checks and rollback protection
+
+## Quick Start
+
+### Requirements
+
+- Node.js 18+
+- Git
+- PlatformIO for ESP32 builds and uploads
+- Optional: PM2 for managed production startup
+- Optional: DS3231/DS3232 RTC module for offline timekeeping
+
+### 1. Start the server
+
+```bash
+cd server-node
+npm install
+npm start
+```
+
+Open `http://localhost:8080` and sign in with the initial password `admin`.
+Change the password immediately with the dashboard or:
+
+```bash
+node reset_password.js
+```
+
+### 2. Flash the firmware
+
+From the project root:
+
+```bash
+pio run
+pio run -t upload
+pio device monitor
+```
+
+### 3. Configure Wi-Fi
+
+On first boot, connect to:
+
+- SSID: `Bell_Setup`
+- Password: `12345678`
+- Setup page: `http://192.168.4.1`
+
+Choose the local Wi-Fi network, save it, and allow the ESP32 to reconnect to the server.
+
+### 4. Verify operation
+
+- Open the dashboard at `http://<server-ip>:8080`
+- Confirm the device heartbeat is active
+- Confirm the schedule is visible in the dashboard
+- Trigger a test relay from the dashboard and check the event history
+
+For production startup, use `start.bat` or `start.sh` from `server-node/`.
+
+## Repo Map
+
+```text
+Bell sys/
+├── README.md                 Project overview and operating guide
+├── platformio.ini            ESP32 build and upload configuration
+├── partitions_ota.csv        OTA partition layout
+├── build_metadata.py         Firmware build metadata
+├── post_upload.py            Post-upload factory partition handling
+├── Circuit Diagram.svg       Hardware wiring schematic
+├── src/                      ESP32 firmware source
+├── server-node/              Node.js backend and dashboard
+├── defunct/                  Legacy server copies, not active runtime code
+└── server(defunct)/          Older server copy retained for reference
+```
+
+## Folder Overview
+
+### `src/`
+
+ESP32 firmware for scheduling, relay activation, Wi-Fi, NTP, OTA updates, watchdog behavior, LED status, and local persistence.
+
+### `server-node/`
+
+Production backend and dashboard. It manages profiles, calendars, settings, device communication, history, backups, and firmware distribution.
+
+### `server-node/lib/`
+
+Core profile, calendar, schedule, history, API-key, firmware, validation, and persistence logic.
+
+### `server-node/services/`
+
+Operational helpers for GitHub access, PM2, dependency checks, health probes, and startup automation.
+
+### `server-node/templates/`
+
+Dashboard, login, profile manager, and profile editor pages.
+
+### `server-node/defaults/`
+
+Seed data used for fresh installations.
+
+### `server-node/backups/`, `logs/`, and `state/`
+
+Generated runtime data for backups, diagnostics, and update orchestration. These folders are not source code and are ignored by Git except for their `.gitkeep` markers.
+
+## Troubleshooting
+
+### The ESP32 will not connect to Wi-Fi
+
+- Confirm it is broadcasting `Bell_Setup` in setup mode
+- Check the Wi-Fi credentials and network availability
+- Confirm the server is reachable on the same LAN
+- Review the serial monitor for provisioning or connection errors
+
+### The device is offline in the dashboard
+
+- Confirm the server is running on port 8080
+- Confirm UDP port 9999 is available for server discovery
+- Check `server-node/logs/` for startup and health messages
+- The ESP32 will continue using its last saved schedule while offline
+
+### The schedule is not updating
+
+- Confirm the correct profile and calendar assignment are active
+- Check that the ESP32 is polling `/api/schedule`
+- Verify the device heartbeat and server health endpoint
+- Restart the server if it is stuck during startup or update recovery
+
+### OTA is not installing
+
+- Confirm the firmware source and artifact are valid in the dashboard
+- Check the device has a stable Wi-Fi connection
+- Review firmware metadata, server logs, and serial output
+- Confirm the OTA partition layout matches `partitions_ota.csv`
+
+### The relay does not trigger
+
+- Confirm the GPIO mapping and active-low/active-high setting
+- Check the active profile and current time zone
+- Verify the schedule contains the expected channel and time
+- Review dashboard history and device logs for the attempted run
+
+## Circuit Diagram
+
+The wiring diagram shows the ESP32 control layout, RGB status LED, optional RTC, provisioning button, and relay outputs.
+
+<img src="./Circuit%20Diagram.svg" alt="Relay Controller circuit diagram" width="100%" />
 
 ## Hardware
 
