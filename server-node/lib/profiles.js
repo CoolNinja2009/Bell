@@ -30,14 +30,12 @@
  */
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const { validateProfilesBuffer, validateProfilesText } = require('./profile-validator');
 
 const PROFILES_FILE = process.env.RELAY_PROFILES_FILE || path.join(__dirname, '..', 'profiles.json');
 const BACKUP_FILE = PROFILES_FILE + '.bak';
 const MAX_PROFILES = 50;
 const MAX_CHANNELS = 24;
-const ID_RE = /^[a-z][a-z0-9-]{0,39}$/;
 
 function writeFileAtomic(filePath, contents) {
   const tmp = filePath + '.tmp';
@@ -61,7 +59,33 @@ function slugify(name) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 40);
-  return s || 'profile';
+  if (!s) return 'profile';
+  return /^[a-z]/.test(s) ? s : `profile-${s}`.slice(0, 40);
+}
+
+/** Reserve room for the entire suffix, including multi-digit collisions. */
+function uniqueProfileId(existing, base, suffix = '') {
+  let tail = suffix;
+  let id = base.slice(0, 40 - tail.length) + tail;
+  let n = 1;
+  while (Object.hasOwn(existing, id)) {
+    tail = `${suffix}-${n++}`;
+    id = base.slice(0, 40 - tail.length) + tail;
+  }
+  return id;
+}
+
+function validateStore(data) {
+  const text = JSON.stringify(data, null, 2);
+  const result = validateProfilesText(text);
+  if (!result.valid) {
+    const err = new Error('Refusing to save: the provided content does not pass validation.');
+    err.status = 400;
+    err.code = 'PROFILE_VALIDATION_FAILED';
+    err.validation = result;
+    throw err;
+  }
+  return text;
 }
 
 function defaultProfileChannels() {
@@ -96,7 +120,7 @@ function load() {
     storeBroken = false;
     brokenRawText = null;
     lastGoodData = { profiles: {}, order: [] };
-    return lastGoodData;
+    return structuredClone(lastGoodData);
   }
 
   let buf;
@@ -112,7 +136,7 @@ function load() {
       }],
     };
     console.error(`[PROFILE] Failed to read ${PROFILES_FILE}: ${err.message}`);
-    return lastGoodData || { profiles: {}, order: [] };
+    return structuredClone(lastGoodData || { profiles: {}, order: [] });
   }
 
   const result = validateProfilesBuffer(buf);
@@ -124,12 +148,12 @@ function load() {
     logValidationFailure(result);
     // Serve the last known-good in-memory copy (if this process has one)
     // for *read* continuity only — never persisted, never silently healed.
-    return lastGoodData || { profiles: {}, order: [] };
+    return structuredClone(lastGoodData || { profiles: {}, order: [] });
   }
 
   storeBroken = false;
   brokenRawText = null;
-  lastGoodData = result.parsed;
+  lastGoodData = structuredClone(result.parsed);
   return result.parsed;
 }
 
@@ -143,8 +167,8 @@ function save(data) {
     err.code = 'PROFILE_STORE_BROKEN';
     throw err;
   }
-  writeFileAtomic(PROFILES_FILE, JSON.stringify(data, null, 2));
-  lastGoodData = data;
+  writeFileAtomic(PROFILES_FILE, validateStore(data));
+  lastGoodData = structuredClone(data);
   lastValidation = { valid: true, syntax_valid: true, schema_valid: true, application_valid: true, errors: [], source: 'file' };
 }
 
@@ -212,7 +236,7 @@ function writeValidatedText(text, { reason } = {}) {
   writeFileAtomic(PROFILES_FILE, text);
   storeBroken = false;
   brokenRawText = null;
-  lastGoodData = result.parsed;
+  lastGoodData = structuredClone(result.parsed);
   lastValidation = { ...result, source: 'file' };
   console.log(`[PROFILE] profiles.json replaced via ${reason || 'editor'} — validation: PASS`);
   return result;
@@ -236,14 +260,14 @@ function hasBackup() {
 /** Return profile IDs in display order. */
 function listIds() {
   const data = load();
-  return data.order.filter(id => data.profiles[id]);
+  return data.order.filter(id => Object.hasOwn(data.profiles, id));
 }
 
 /** List all profiles with summary (no channel details). */
 function listProfiles() {
   const data = load();
   return listIds().map(id => {
-    const p = data.profiles[id];
+    const p = Object.hasOwn(data.profiles, id) ? data.profiles[id] : null;
     const channelCount = p.channels ? Object.keys(p.channels).length : 0;
     return { id, name: p.name, channelCount, created: p.created, updated: p.updated };
   });
@@ -252,7 +276,7 @@ function listProfiles() {
 /** Get a single profile by ID (full channel data). */
 function getProfile(id) {
   const data = load();
-  const p = data.profiles[id];
+  const p = Object.hasOwn(data.profiles, id) ? data.profiles[id] : null;
   if (!p) return null;
   return { id, name: p.name, channels: p.channels, created: p.created, updated: p.updated };
 }
@@ -260,15 +284,9 @@ function getProfile(id) {
 /** Create a new profile. Returns { id, name } or throws. */
 function createProfile(name, channels) {
   const data = load();
-  if (data.order.length >= MAX_PROFILES) throw Object.assign(new Error(`Max ${MAX_PROFILES} profiles`), { status: 400 });
+  if (Object.keys(data.profiles).length >= MAX_PROFILES) throw Object.assign(new Error(`Max ${MAX_PROFILES} profiles`), { status: 400 });
 
-  let baseId = slugify(name);
-  let id = baseId;
-  let n = 1;
-  while (data.profiles[id]) {
-    id = baseId + '-' + (n++);
-    if (id.length > 40) id = baseId.slice(0, 36) + '-' + (n - 1);
-  }
+  const id = uniqueProfileId(data.profiles, slugify(name));
 
   const now = nowIso();
   data.profiles[id] = {
@@ -285,7 +303,7 @@ function createProfile(name, channels) {
 /** Rename a profile. */
 function renameProfile(id, newName) {
   const data = load();
-  const p = data.profiles[id];
+  const p = Object.hasOwn(data.profiles, id) ? data.profiles[id] : null;
   if (!p) throw Object.assign(new Error('Profile not found'), { status: 404 });
   p.name = (newName || 'Profile').toString().trim().slice(0, 60) || 'Profile';
   p.updated = nowIso();
@@ -296,17 +314,11 @@ function renameProfile(id, newName) {
 /** Duplicate a profile. Returns new profile { id, name }. */
 function duplicateProfile(id) {
   const data = load();
-  const p = data.profiles[id];
+  const p = Object.hasOwn(data.profiles, id) ? data.profiles[id] : null;
   if (!p) throw Object.assign(new Error('Profile not found'), { status: 404 });
-  if (data.order.length >= MAX_PROFILES) throw Object.assign(new Error(`Max ${MAX_PROFILES} profiles`), { status: 400 });
+  if (Object.keys(data.profiles).length >= MAX_PROFILES) throw Object.assign(new Error(`Max ${MAX_PROFILES} profiles`), { status: 400 });
 
-  let newId = id + '-copy';
-  if (newId.length > 40) newId = id.slice(0, 35) + '-copy';
-  let n = 1;
-  while (data.profiles[newId]) {
-    newId = id + '-copy-' + (n++);
-    if (newId.length > 40) newId = id.slice(0, 34) + '-copy-' + (n - 1);
-  }
+  const newId = uniqueProfileId(data.profiles, id, '-copy');
 
   const cloned = JSON.parse(JSON.stringify(p));
   cloned.name = (cloned.name + ' (Copy)').slice(0, 60);
@@ -321,8 +333,8 @@ function duplicateProfile(id) {
 /** Delete a profile by ID. Refuses to delete the last profile. */
 function deleteProfile(id) {
   const data = load();
-  if (!data.profiles[id]) throw Object.assign(new Error('Profile not found'), { status: 404 });
-  if (data.order.filter(i => data.profiles[i]).length <= 1) {
+  if (!Object.hasOwn(data.profiles, id)) throw Object.assign(new Error('Profile not found'), { status: 404 });
+  if (data.order.filter(i => Object.hasOwn(data.profiles, i)).length <= 1) {
     throw Object.assign(new Error('Cannot delete the last profile'), { status: 400 });
   }
   delete data.profiles[id];
@@ -335,7 +347,7 @@ function deleteProfile(id) {
  *  full { ch1: {...}, ch2: {...} } object in ESP32 format. */
 function saveChannels(id, channels) {
   const data = load();
-  const p = data.profiles[id];
+  const p = Object.hasOwn(data.profiles, id) ? data.profiles[id] : null;
   if (!p) throw Object.assign(new Error('Profile not found'), { status: 404 });
   // shallow-validate channel count
   const keys = Object.keys(channels);
@@ -366,12 +378,13 @@ function importProfiles(bundle) {
   const data = load();
   const incoming = bundle.profiles;
   const incomingOrder = Array.isArray(bundle.order) ? bundle.order : Object.keys(incoming);
+  validateStore({ profiles: incoming, order: incomingOrder });
   let imported = 0;
   for (const id of incomingOrder) {
     const p = incoming[id];
     if (!p || !p.name || !p.channels) continue;
-    if (data.order.length >= MAX_PROFILES && !data.profiles[id]) break;
-    if (data.profiles[id]) {
+    if (Object.keys(data.profiles).length >= MAX_PROFILES && !Object.hasOwn(data.profiles, id)) break;
+    if (Object.hasOwn(data.profiles, id)) {
       // merge: keep existing ID but update channels/name
       data.profiles[id].name = p.name;
       data.profiles[id].channels = p.channels;

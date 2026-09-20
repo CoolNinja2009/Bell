@@ -164,3 +164,110 @@ test('profile-scheduler.js: resolveAndApply() never throws when settings.json is
 
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+
+test('calendar.js: rejected writes preserve the last-known-good assignments', (t) => {
+  const dir = tmpDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const calendar = freshModule('../lib/calendar', 'RELAY_CALENDAR_FILE', dir, 'calendar.json');
+  calendar.assignDow('monday', 'original');
+  calendar.assignDate('2026-12-25', 'original');
+  const original = structuredClone(calendar.getAll());
+  fs.writeFileSync(calendar.CALENDAR_FILE, '{broken');
+  assert.throws(() => calendar.assignDow('monday', 'rejected'), /broken/i);
+  assert.throws(() => calendar.assignDate('2026-12-25', null), /broken/i);
+  assert.throws(() => calendar.removeProfileAssignments('original'), /broken/i);
+  assert.deepEqual(calendar.getAll(), original);
+  assert.equal(fs.readFileSync(calendar.CALENDAR_FILE, 'utf8'), '{broken');
+});
+
+test('settings.js: rejected writes preserve the last-known-good settings', (t) => {
+  const dir = tmpDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const settings = freshModule('../lib/settings', 'RELAY_SETTINGS_FILE', dir, 'settings.json');
+  settings.setDefaultProfile('original');
+  settings.setOverride('original', null);
+  const original = structuredClone(settings.getSettings());
+  fs.writeFileSync(settings.SETTINGS_FILE, '{broken');
+  assert.throws(() => settings.setDefaultProfile('rejected'), /broken/i);
+  assert.throws(() => settings.setOverride('rejected', null), /broken/i);
+  assert.throws(() => settings.clearOverride(), /broken/i);
+  assert.deepEqual(settings.getSettings(), original);
+  assert.equal(fs.readFileSync(settings.SETTINGS_FILE, 'utf8'), '{broken');
+});
+
+test('apikeys.js: failed creation/revocation leaves cached keys and authentication unchanged', () => {
+  delete require.cache[require.resolve('../lib/apikeys')];
+  const keys = require('../lib/apikeys');
+  const original = fs.existsSync(keys.KEYS_FILE) ? fs.readFileSync(keys.KEYS_FILE) : null;
+  try {
+    fs.writeFileSync(keys.KEYS_FILE, '{"keys":[]}');
+    const created = keys.createKey('Original');
+    const before = keys.listKeys();
+    fs.writeFileSync(keys.KEYS_FILE, '{broken');
+    assert.throws(() => keys.createKey('Rejected'), /broken/i);
+    assert.throws(() => keys.revokeKey(created.id), /broken/i);
+    assert.deepEqual(keys.listKeys(), before);
+    assert.equal(keys.verifyKey(created.key).id, created.id);
+    assert.equal(fs.readFileSync(keys.KEYS_FILE, 'utf8'), '{broken');
+  } finally {
+    if (original !== null) fs.writeFileSync(keys.KEYS_FILE, original);
+    else fs.rmSync(keys.KEYS_FILE, { force: true });
+    delete require.cache[require.resolve('../lib/apikeys')];
+  }
+});
+
+function schedulerFixture(t) {
+  const dir = tmpDir();
+  const modules = ['profiles', 'settings', 'calendar', 'profile-scheduler'];
+  const env = {};
+  for (const name of ['PROFILES', 'SETTINGS', 'CALENDAR']) {
+    const key = `RELAY_${name}_FILE`;
+    env[key] = process.env[key];
+    process.env[key] = path.join(dir, `${name.toLowerCase()}.json`);
+  }
+  for (const name of modules) delete require.cache[require.resolve(`../lib/${name}`)];
+  t.after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(env)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    for (const name of modules) delete require.cache[require.resolve(`../lib/${name}`)];
+  });
+  return Object.fromEntries(modules.map(name => [name, require(`../lib/${name}`)]));
+}
+
+test('profile-scheduler.js: persistence failure does not select a stale schedule', (t) => {
+  const { profiles, settings, 'profile-scheduler': scheduler } = schedulerFixture(t);
+  const old = profiles.createProfile('Old', { ch1: { enabled: false, pulse_ms: 1000, schedule: [], skip_dates: [] } });
+  const next = profiles.createProfile('Next');
+  settings.setActiveProfile(old.id);
+  settings.setDefaultProfile(next.id);
+  fs.mkdirSync(settings.SETTINGS_FILE + '.tmp'); // force an atomic-write failure
+  assert.deepEqual(scheduler.getActiveSchedule(), profiles.getProfile(next.id).channels);
+  assert.equal(scheduler.getActiveInfo().profileId, next.id);
+  assert.equal(settings.getSettings().active_profile, old.id, 'failed persistence must not mutate the settings cache');
+});
+
+test('profile-scheduler.js: corrupt settings still permit last-good schedule resolution', (t) => {
+  const { profiles, settings, 'profile-scheduler': scheduler } = schedulerFixture(t);
+  const old = profiles.createProfile('Old');
+  const next = profiles.createProfile('Next');
+  settings.setActiveProfile(old.id);
+  settings.setDefaultProfile(next.id);
+  fs.writeFileSync(settings.SETTINGS_FILE, '{broken');
+  assert.equal(scheduler.getActiveInfo().profileId, next.id);
+  assert.equal(settings.getSettings().active_profile, old.id);
+  assert.equal(fs.readFileSync(settings.SETTINGS_FILE, 'utf8'), '{broken');
+});
+
+test('profile-scheduler.js: an empty profile store clears the persisted active ID', (t) => {
+  const { profiles, settings, 'profile-scheduler': scheduler } = schedulerFixture(t);
+  const profile = profiles.createProfile('Original');
+  settings.setActiveProfile(profile.id);
+  profiles.writeValidatedText('{"profiles":{},"order":[]}');
+  assert.equal(scheduler.getActiveSchedule(), null);
+  assert.equal(settings.getSettings().active_profile, null);
+  assert.equal(scheduler.getActiveInfo().profileId, null);
+});

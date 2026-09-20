@@ -37,7 +37,7 @@ function load() {
     storeBroken = false;
     lastError = null;
     lastGoodData = defaults();
-    return lastGoodData;
+    return structuredClone(lastGoodData);
   }
   try {
     const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
@@ -52,7 +52,7 @@ function load() {
     };
     storeBroken = false;
     lastError = null;
-    lastGoodData = clean;
+    lastGoodData = structuredClone(clean);
     return clean;
   } catch (err) {
     // Critical: setActiveProfile() is called automatically by the scheduler
@@ -67,7 +67,7 @@ function load() {
     }
     storeBroken = true;
     lastError = err.message;
-    return lastGoodData;
+    return structuredClone(lastGoodData);
   }
 }
 
@@ -82,7 +82,7 @@ function save(data) {
     throw err;
   }
   writeFileAtomic(SETTINGS_FILE, JSON.stringify(data, null, 2));
-  lastGoodData = data;
+  lastGoodData = structuredClone(data);
 }
 
 /** True when settings.json currently fails to load. */

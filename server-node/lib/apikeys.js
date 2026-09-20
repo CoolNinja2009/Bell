@@ -31,14 +31,14 @@ function load() {
     storeBroken = false;
     lastError = null;
     lastGoodData = { keys: [] };
-    return lastGoodData;
+    return structuredClone(lastGoodData);
   }
   try {
     const data = JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
     if (!Array.isArray(data.keys)) throw new Error('api_keys.json must contain a "keys" array');
     storeBroken = false;
     lastError = null;
-    lastGoodData = data;
+    lastGoodData = structuredClone(data);
     return data;
   } catch (err) {
     // A broken api_keys.json must never be treated as "no keys issued" —
@@ -53,7 +53,7 @@ function load() {
     }
     storeBroken = true;
     lastError = err.message;
-    return lastGoodData;
+    return structuredClone(lastGoodData);
   }
 }
 
@@ -68,7 +68,7 @@ function save(data) {
     throw err;
   }
   writeFileAtomic(KEYS_FILE, JSON.stringify(data, null, 2));
-  lastGoodData = data;
+  lastGoodData = structuredClone(data);
 }
 
 /** True when api_keys.json currently fails to load. */
