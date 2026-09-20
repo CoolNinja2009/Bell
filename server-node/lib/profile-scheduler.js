@@ -103,17 +103,15 @@ function resolveAndApply(now) {
   const { profileId, reason } = resolveActiveProfileId(now);
   const previousProfileId = settings.getSettings().active_profile;
 
-  if (profileId) {
-    try {
-      settings.setActiveProfile(profileId);
-    } catch (err) {
-      // settings.js already logged the root cause when it detected the
-      // broken file. resolveAndApply() is called extremely often — from
-      // HTTP routes, but also from raw setInterval timers and bootstrap()
-      // that aren't wrapped in a try/catch — so it must never throw just
-      // because settings.json couldn't be written to this cycle.
-      console.error(`[profile-scheduler] Could not persist active profile '${profileId}': ${err.message}`);
-    }
+  try {
+    settings.setActiveProfile(profileId);
+  } catch (err) {
+    // settings.js already logged the root cause when it detected the
+    // broken file. resolveAndApply() is called extremely often — from
+    // HTTP routes, but also from raw setInterval timers and bootstrap()
+    // that aren't wrapped in a try/catch — so it must never throw just
+    // because settings.json couldn't be written to this cycle.
+    console.error(`[profile-scheduler] Could not persist active profile '${profileId}': ${err.message}`);
   }
 
   const info = { profileId, reason, appliedAt: new Date().toISOString() };
@@ -128,10 +126,8 @@ function resolveAndApply(now) {
  * profile. Returns the exact { ch1: {...}, ch2: {...} } format or null.
  */
 function getActiveSchedule() {
-  resolveAndApply();
-
-  const s = settings.getSettings();
-  const profileId = s.active_profile;
+  // Persistence is best-effort; use the current resolution, not stale disk state.
+  const { profileId } = resolveAndApply();
 
   if (!profileId) return null;
 
@@ -145,10 +141,10 @@ function getActiveSchedule() {
  * Get info about the currently active profile for display purposes.
  */
 function getActiveInfo() {
-  const resolved = resolveAndApply();
-  const s = settings.getSettings();
-  const profileId = s.active_profile;
   const now = new Date();
+  const resolved = resolveAndApply(now);
+  const s = settings.getSettings();
+  const { profileId } = resolved;
 
   if (!profileId) return {
     profileId: null,

@@ -362,3 +362,75 @@ test('profiles.js: a healthy file loads normally and mutations work', () => {
 
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+
+function profileFixture(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bell-profiles-test-'));
+  const previous = process.env.RELAY_PROFILES_FILE;
+  t.after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    if (previous === undefined) delete process.env.RELAY_PROFILES_FILE;
+    else process.env.RELAY_PROFILES_FILE = previous;
+    delete require.cache[require.resolve('../lib/profiles')];
+  });
+  return freshProfilesModule(dir);
+}
+
+test('profiles.js: numeric names and long duplicate IDs always produce valid stores', (t) => {
+  const profiles = profileFixture(t);
+  for (const name of ['2026 Schedule', '123', '!!!', 'a'.repeat(40)]) {
+    const created = profiles.createProfile(name);
+    assert.match(created.id, /^[a-z][a-z0-9-]{0,39}$/);
+    for (let i = 0; i < 12; i++) {
+      const copy = profiles.duplicateProfile(created.id);
+      assert.match(copy.id, /^[a-z][a-z0-9-]{0,39}$/);
+    }
+    assert.equal(validateProfilesText(profiles.getCurrentRawText()).valid, true);
+    // Keep each group below the 50-profile limit.
+    fs.unlinkSync(profiles.PROFILES_FILE);
+  }
+});
+
+test('profiles.js: inherited properties are not profiles, but constructor can be a real ID', (t) => {
+  const profiles = profileFixture(t);
+  profiles.createProfile('Existing');
+  for (const id of ['constructor', 'toString', '__proto__']) {
+    assert.equal(profiles.getProfile(id), null);
+    assert.throws(() => profiles.renameProfile(id, 'Rejected'), { status: 404 });
+    assert.throws(() => profiles.duplicateProfile(id), { status: 404 });
+    assert.throws(() => profiles.deleteProfile(id), { status: 404 });
+    assert.throws(() => profiles.saveChannels(id, {}), { status: 404 });
+  }
+  assert.equal(profiles.createProfile('constructor').id, 'constructor');
+  assert.equal(profiles.getProfile('constructor').name, 'constructor');
+});
+
+test('profiles.js: invalid channel updates and imports leave disk and fallback unchanged', (t) => {
+  const profiles = profileFixture(t);
+  const created = profiles.createProfile('Original');
+  const original = profiles.getCurrentRawText();
+  const channels = profiles.getProfile(created.id).channels;
+  channels.ch1.schedule = ['25:99'];
+  assert.throws(() => profiles.saveChannels(created.id, channels), { status: 400 });
+  for (const id of ['2026-invalid', '__proto__']) {
+    const incoming = JSON.parse(`{"${id}":{"name":"Bad","channels":{}}}`);
+    assert.throws(() => profiles.importProfiles({ profiles: incoming, order: [id] }), { status: 400 });
+  }
+  assert.equal(profiles.getCurrentRawText(), original);
+  fs.writeFileSync(profiles.PROFILES_FILE, '{broken');
+  assert.deepEqual(profiles.getProfile(created.id).channels, JSON.parse(original).profiles[created.id].channels);
+});
+
+test('profiles.js: rejected mutations never alter last-known-good profiles', (t) => {
+  const profiles = profileFixture(t);
+  const created = profiles.createProfile('Original');
+  const original = profiles.exportAll();
+  fs.writeFileSync(profiles.PROFILES_FILE, '{broken');
+  assert.throws(() => profiles.renameProfile(created.id, 'Rejected'), /broken/i);
+  assert.throws(() => profiles.createProfile('Rejected'), /broken/i);
+  assert.throws(() => profiles.duplicateProfile(created.id), /broken/i);
+  const fallback = profiles.exportAll();
+  assert.deepEqual(fallback.profiles, original.profiles);
+  assert.deepEqual(fallback.order, original.order);
+  assert.equal(profiles.getCurrentRawText(), '{broken');
+});
