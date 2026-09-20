@@ -2,7 +2,7 @@
 
 Node.js / Express backend for the ESP32 Relay Controller. Serves the dashboard, manages profiles/calendars/schedules, brokers ESP32 communication, caches OTA firmware, and self-updates from GitHub.
 
-**1,198 lines** of server code + **960 lines** of bootstrap orchestrator. Node.js v24+, zero database — all state is flat JSON files.
+**1,981 lines** of server code + **971 lines** of bootstrap orchestrator. Node.js v24+, zero database — all state is flat JSON files.
 
 ---
 
@@ -15,10 +15,13 @@ Node.js / Express backend for the ESP32 Relay Controller. Serves the dashboard, 
 - [API Reference](#api-reference)
   - [Public Endpoints (ESP32)](#public-endpoints-esp32)
   - [Dashboard Endpoints (login required)](#dashboard-endpoints-login-required)
+  - [Firmware Management](#firmware-management)
+  - [Profile Editor & System Health](#profile-editor--system-health)
   - [API Key Endpoints](#api-key-endpoints)
 - [State Files](#state-files)
 - [Auth & Security](#auth--security)
 - [Profiles & Scheduling](#profiles--scheduling)
+- [Profile Editor & Repair](#profile-editor--repair)
 - [OTA Firmware Serving](#ota-firmware-serving)
 - [Bootstrap & Self-Update](#bootstrap--self-update)
 - [UDP Beacon](#udp-beacon)
@@ -129,9 +132,9 @@ stop.bat       # Windows
 
 ```
 server-node/
-├── server.js              Main Express app (1,198 lines)
-├── bootstrap.js           Startup orchestrator (960 lines)
-├── auth.js                Password + session secret (79 lines)
+├── server.js              Main Express app (1,981 lines)
+├── bootstrap.js           Startup orchestrator (971 lines)
+├── auth.js                Password + session secret (110 lines)
 ├── ecosystem.config.js    PM2 process definition
 ├── package.json
 │
@@ -139,15 +142,17 @@ server-node/
 │   └── index.js           Bootstrap configuration (80 lines)
 │
 ├── lib/
-│   ├── profiles.js        Profile CRUD + import/export (222 lines)
-│   ├── calendar.js         Date/DOW → profile assignments (80 lines)
-│   ├── settings.js         Active/default/override settings (105 lines)
-│   ├── profile-scheduler.js Daily active-profile resolution (128 lines)
-│   ├── history.js          JSON-Lines event log (115 lines)
-│   ├── apikeys.js          API key management (92 lines)
-│   ├── scheduler.js        In-process job scheduler (69 lines)
-│   ├── updater.js          Self-update engine (287 lines)
-│   └── config.js           Updater-specific config (re-exports from config/)
+│   ├── profiles.js           Profile CRUD + import/export, validated writes (423 lines)
+│   ├── profile-schema.js     JSON Schema for profiles.json, used by ajv (127 lines)
+│   ├── profile-validator.js  Syntax → schema → business-rule validation pipeline (452 lines)
+│   ├── profile-recovery.js   Best-effort repair/rebuild of a broken profiles.json (319 lines)
+│   ├── calendar.js           Date/DOW → profile assignments (169 lines)
+│   ├── settings.js           Active/default/override settings (194 lines)
+│   ├── profile-scheduler.js  Daily active-profile resolution (182 lines)
+│   ├── history.js            JSON-Lines event log (145 lines)
+│   ├── apikeys.js            API key management (145 lines)
+│   ├── firmware-state.js     Auto-update / source / force-bypass state (126 lines)
+│   └── firmware-metadata.js  Reads BELL_BUILD stamp + OTA protocol from a .bin (61 lines)
 │
 ├── services/
 │   ├── deps.js            npm dependency detection (82 lines)
@@ -161,9 +166,10 @@ server-node/
 │   └── state.js           Bootstrap state persistence (70 lines)
 │
 ├── templates/
-│   ├── index.html         Dashboard SPA (1,712 lines)
-│   ├── profiles.html      Profile manager page (1,484 lines)
-│   └── login.html         Login page (133 lines)
+│   ├── index.html          Dashboard SPA (2,924 lines)
+│   ├── profiles.html       Profile manager page (2,032 lines)
+│   ├── profile-editor.html Raw JSON editor: validate/save/repair/restore (629 lines)
+│   └── login.html          Login page (238 lines)
 │
 ├── defaults/              Fresh-install default state
 │   ├── settings.json
@@ -353,6 +359,34 @@ Firmware binary with HTTP Range support for interrupted-download resume.
 - `ETag` set to firmware version
 - `Cache-Control: public, max-age=3600`
 
+#### `GET /api/firmware/control`
+
+Lightweight poll target for the device to check whether the dashboard wants it to do something (recheck, force-flash, toggle auto-update) without pulling the full `/api/firmware` payload.
+
+**Response:** `{ "auto_update": true, "control_id": 4, "request_id": 7 }`
+
+`control_id` increments whenever `auto_update` changes; `request_id` increments whenever a manual "Check now" is requested from the dashboard. The device compares these against the last values it saw to decide whether to act.
+
+#### `POST /api/firmware/device-status`
+
+Device reports its current firmware identity and the outcome of its last OTA attempt.
+
+**Body:**
+```json
+{
+  "control_id": 4,
+  "request_id": 7,
+  "auto_update": true,
+  "firmware_version": "2026.0809.a1b2c3d",
+  "compiled_at": "2026-08-09T05:10:56Z",
+  "ota_protocol": 2,
+  "ota_status": "success",
+  "ota_detail": "flashed and rebooted"
+}
+```
+
+Strictly validated (field types/lengths/ranges) and rejected with `400` otherwise. Powers the "last seen firmware" info shown in the dashboard's Firmware panel.
+
 #### `GET /health`
 
 Health check for PM2 and monitoring.
@@ -377,6 +411,9 @@ Serves the dashboard SPA (`templates/index.html`). `Cache-Control: no-store`.
 
 #### `GET /profiles`
 Serves the profile manager page (`templates/profiles.html`). `Cache-Control: no-store`.
+
+#### `GET /profile-editor`
+Serves the raw JSON profile editor (`templates/profile-editor.html`) — see [Profile Editor & System Health](#profile-editor--system-health). `Cache-Control: no-store`.
 
 #### `POST /api/schedule`
 
@@ -470,6 +507,58 @@ Change the dashboard password.
 **Body:** `{ "current": "old-password", "next": "new-password" }`
 
 Minimum 10 characters. bcrypt with 12 rounds.
+
+---
+
+### Firmware Management
+
+Dashboard-side controls for the Firmware Manager described in [OTA Firmware Serving](#ota-firmware-serving). All require login.
+
+#### `GET /api/firmware`
+
+Everything the Firmware panel needs in one call: current settings, the currently-active build, whether the saved selection actually matches what would be served, and the list of GitHub releases to choose from.
+
+```json
+{
+  "repo": "CoolNinja2009/Bell",
+  "asset_name": "firmware.bin",
+  "max_size": 4194304,
+  "state": { "auto_update": true, "source": "latest", "release_tag": null, "custom": null, "force": null },
+  "active": { "version": "2026.0809.a1b2c3d", "sha256": "...", "size": 961536, "compiled_at": "2026-08-09T05:10:56Z", "ota_protocol": 2, "min_ota_protocol": 1, "source": "latest" },
+  "selection_in_sync": true,
+  "releases": [ { "tag_name": "v2026.0809", "...": "..." } ]
+}
+```
+
+#### `PUT /api/firmware/settings`
+
+Toggle auto-update.
+
+**Body:** `{ "auto_update": false }`
+
+#### `PUT /api/firmware/source`
+
+Pin the server to GitHub's latest release, a specific release tag, or trigger a force-flash bypass.
+
+**Body (latest):** `{ "source": "latest" }`
+**Body (pinned release):** `{ "source": "release", "tag": "v2026.0809", "force": false }`
+
+Setting `force: true` bumps a SHA-bound force request that lets the device flash this exact artifact even if its `BELL_BUILD` timestamp isn't newer — SHA-256 verification and rollback protection still apply. Downloads and caches the release asset if not already cached.
+
+#### `POST /api/firmware/check`
+
+Force an immediate re-check against GitHub (bypasses the 30-minute cache) and bump `request_id` so the device re-polls `/api/firmware/control` and acts on it.
+
+#### `POST /api/firmware/custom`
+
+Upload a locally-built firmware binary (`application/octet-stream`, raw body, up to `max_size` from `GET /api/firmware`).
+
+- First byte must be `0xE9` (valid ESP32 image magic) and body ≥ 4096 bytes.
+- Requires an embedded `BELL_BUILD` compilation timestamp unless the `X-Firmware-Force: true` header is set.
+- Version string is derived from the build timestamp (`custom-YYYYMMDDTHHMMSSZ`) or, if forced without one, `forced-custom-<ms>`.
+- Saved to `.firmware_cache/custom/` under a unique filename; sets `source: "custom"` in firmware state.
+
+**Response:** `201` with `{ state, custom, forced }`.
 
 ---
 
@@ -600,6 +689,73 @@ Assign a profile to a day of week. Valid DOWs: `sunday`–`saturday`. Set `profi
 #### `DELETE /api/calendar/:type/:key`
 
 Remove a calendar assignment. `type` = `"date"` or `"dow"`.
+
+---
+
+### Profile Editor & System Health
+
+Backing endpoints for the raw JSON editor at `GET /profile-editor` — see [Profile Editor & Repair](#profile-editor--repair) for the full validate → save → repair → restore flow. All require login.
+
+#### `GET /api/system/health`
+
+Aggregate broken/healthy status for the "simple" JSON stores that don't have their own editor+repair pipeline (`settings.json`, `calendar.json`, `api_keys.json`, `firmware_state.json`). Each module refuses to write over a file it can't parse and reports why here instead of failing silently.
+
+```json
+{
+  "healthy": true,
+  "files": {
+    "settings": { "broken": false, "error": null },
+    "calendar": { "broken": false, "error": null },
+    "api_keys": { "broken": false, "error": null },
+    "firmware_state": { "broken": false, "error": null }
+  }
+}
+```
+
+#### `GET /api/profile/validate`
+
+Re-reads `profiles.json` from disk and returns its validation status — useful for catching an external hand-edit made outside the dashboard.
+
+#### `POST /api/profile/validate`
+
+Validate arbitrary candidate text (e.g. what's currently in the editor) without writing anything.
+
+**Body:** raw text (any content-type) or `{ "text": "..." }`.
+
+**Response (all three stages reported independently):**
+```json
+{ "valid": false, "syntax_valid": true, "schema_valid": false, "application_valid": null, "errors": [ { "path": "$.profiles.mon.channels.ch1.schedule[2].time", "message": "must match pattern \"^([01]\\\\d|2[0-3]):[0-5]\\\\d$\"" } ] }
+```
+
+#### `GET /api/profile/raw`
+
+The current on-disk `profiles.json` text as-is — even if it's currently broken — plus its validation status. This is what populates the editor on load.
+
+#### `POST /api/profile/save`
+
+Validate the given text through the full pipeline and, only if it passes, atomically replace `profiles.json`. Re-resolves the active profile afterward. Rejects anything over 2MB.
+
+#### `POST /api/profile/repair`
+
+Best-effort, preview-only rebuild of a broken `profiles.json` (or arbitrary text you pass in). Never invents a bell time that wasn't in the source; fields that are schema-required but unrecoverable (`enabled`, `pulse_ms`) get a disclosed safe default rather than a silent guess. **Does not write anything** — returns the proposed rebuild plus a recovery report for the dashboard to diff/preview.
+
+```json
+{ "original_text": "...", "rebuilt_text": "...", "recovery": { "profiles_recovered": 2, "warnings": [...] }, "validation": { "valid": true, "...": "..." } }
+```
+
+#### `POST /api/profile/repair/apply`
+
+Write a previously-previewed rebuild. Requires explicit confirmation since this is destructive.
+
+**Body:** `{ "text": "<rebuilt_text from the /repair preview>", "confirm": true }`
+
+#### `GET /api/profile/backup`
+
+Whether a `.bak` snapshot of `profiles.json` exists (written automatically before risky writes) and its path.
+
+#### `POST /api/profile/backup/restore`
+
+Restore `profiles.json` from the `.bak` snapshot and re-resolve the active profile.
 
 ---
 
@@ -779,6 +935,35 @@ A `setInterval` checks every 60 seconds whether the date changed. If so, re-reso
 ### Override Expiry
 
 Overrides with an `until` date auto-expire. The expiry is checked on every resolution cycle (every minute + on midnight rollover). No persistent timer needed — it's a date comparison.
+
+---
+
+## Profile Editor & Repair
+
+`profiles.json` is hand-editable JSON, which means it's the one state file most likely to end up broken by a typo, a bad merge, or an external edit. Every write to it — from the dashboard, the API, import, or the raw editor — goes through one shared pipeline (`lib/profile-validator.js`) so there is exactly one place that decides whether a `profiles.json` is trustworthy:
+
+```
+Raw text
+  → encoding check (valid UTF-8?)
+  → JSON syntax check (strict JSON.parse, diagnosed with jsonc-parser)
+  → JSON Schema validation (ajv, lib/profile-schema.js)
+  → business-rule validation (things a schema can't conveniently say)
+  → { valid, syntax_valid, schema_valid, application_valid, errors }
+```
+
+`lib/profiles.js` never writes to disk without this passing first (`validateStore()` runs before `save()`), and its in-memory "last known good" copy is deep-cloned (`structuredClone`) on every read/write so an external mutation of that cache can't corrupt what gets served if a later write fails.
+
+### If it's already broken
+
+The raw editor at `GET /profile-editor` gives three ways out, in increasing order of how much trust they place in automation:
+
+1. **Fix it by hand** — `GET /api/profile/raw` loads the current (possibly broken) text into the editor; `POST /api/profile/validate` checks it live as you type; `POST /api/profile/save` only writes once it's valid.
+2. **Attempt Automatic Repair** — `POST /api/profile/repair` does a best-effort rebuild: it extracts whatever usable schedule data it can find and never invents a bell time that wasn't in the source. Anything it can't recover (a missing `enabled` or `pulse_ms`) gets a disclosed, safe default rather than a silent guess. This is preview-only — nothing is written until you review the diff and call `POST /api/profile/repair/apply` with `confirm: true`.
+3. **Restore from backup** — `POST /api/profile/backup/restore` rolls back to the automatic `.bak` snapshot taken before the last risky write (`GET /api/profile/backup` tells you if one exists).
+
+### System health
+
+`settings.json`, `calendar.json`, `api_keys.json`, and `firmware_state.json` are simpler files that don't warrant their own editor/repair UI, but the same "never silently write over something broken" rule applies to each of them individually. `GET /api/system/health` aggregates their status so the dashboard can surface *something's wrong, and here's which file* instead of failing quietly.
 
 ---
 
