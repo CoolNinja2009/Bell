@@ -22,7 +22,6 @@
 #include "led_indicator.h"
 #include "ota_update.h"
 #include "storage.h"
-#include "watchdog.h"
 #include "bell_logger.h"
 #include <esp_ota_ops.h>
 
@@ -37,9 +36,6 @@ void setup() {
 
     // 3. Network — WiFi, NTP, server discovery
     network_sync_init();
-
-    // 3b. Watchdog — independent relay safety net (reads NVS, checks GPIO)
-    watchdog_init();
 
     // 4. OTA — version tracking + update engine (idle until triggered)
     ota_init();
@@ -62,7 +58,6 @@ void setup() {
 void loop() {
     // Bell Core ticks first — highest priority, never blocked by network I/O
     bell_core_tick();
-    watchdog_heartbeat();  // signal watchdog: bell_core is alive
 
     // Network sync runs on its own FreeRTOS task (core 0) — no tick needed here
 

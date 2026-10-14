@@ -28,11 +28,9 @@ To increase the channel count later:
   `src/bell_core.cpp`.
 2. Update schedule parsing and validation in `src/bell_core.cpp` so the new
   channel is required and executed.
-3. Update the hardcoded channel count in `src/watchdog.cpp` and add watchdog
-  handling for the new relay pin.
-4. Update the server-side `MAX_CHANNELS` limit and dashboard/profile defaults
+3. Update the server-side `MAX_CHANNELS` limit and dashboard/profile defaults
   in `server-node/`.
-5. Update this table and rebuild/upload the firmware before using the new
+4. Update this table and rebuild/upload the firmware before using the new
   channel.
 
 ### RGB Status LED (4-pin, common anode)
@@ -105,8 +103,6 @@ Relays fire **only** on confirmed schedule times or explicit "Run Now" commands:
 - **Command discard on server loss** — when the server goes offline, pending manual commands are discarded immediately. No relay fires from a server that's no longer reachable.
 - **Immediate NVS fallback** — when the beacon times out (20s), `g_server_seen` flips to `false` on the next 50ms tick. All HTTP operations stop instantly. No multi-second timeouts jamming the scheduler. The Bell Core runs from NVS on core 1, unblocked.
 - **Bell Core independence** — the relay/schedule subsystem never touches WiFi or HTTP. It runs from NVS-persisted schedules and an optional RTC. Bells ring on time even if the network module crashes or the server is down for days.
-- **Independent watchdog** (optional, `-D WATCHDOG_ENABLED`) — separate FreeRTOS task at priority 3. Normal mode: SAFETY OFF only for stuck relays. Takeover mode (bell_core stalled >10s): force-drives relays from NVS schedule.
-
 ## Deployment
 
 ### Every boot
@@ -547,7 +543,7 @@ API-key auth: send `X-API-Key` header on endpoints marked as API-key compatible 
 | `src/network_sync.h` | Beacon timeout, poll intervals, NTP servers |
 | `src/led_indicator.h` | LED GPIO pins (R=25, G=33, B=32 by default) |
 | `src/wifi_provision.h` | AP SSID/password, connection timeout, BOOT button hold duration, reconnect interval |
-| `src/main.cpp` | Initialisation order, watchdog hook |
+| `src/main.cpp` | Initialisation order |
 | `platformio.ini` | Board type, upload port, build flags, feature toggles |
 
 ```
