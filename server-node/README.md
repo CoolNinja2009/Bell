@@ -225,13 +225,11 @@ To add more channels later, update all of these areas together:
 
 1. Add the relay pin, channel definition, schedule parsing, and execution
   logic in the firmware under `src/bell_core.h` and `src/bell_core.cpp`.
-2. Update the hardcoded channel count and relay safety handling in
-  `src/watchdog.cpp`.
-3. Raise `MAX_CHANNELS` in `server.js` if the new total exceeds the current
+2. Raise `MAX_CHANNELS` in `server.js` if the new total exceeds the current
   limit, and update dashboard/profile defaults under `templates/` and
   `defaults/`.
-4. Update the hardware/channel documentation in the repository README.
-5. Build and upload the new firmware before adding the new channel key to any
+3. Update the hardware/channel documentation in the repository README.
+4. Build and upload the new firmware before adding the new channel key to any
   profile or schedule.
 
 ### Session configuration
