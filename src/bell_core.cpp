@@ -437,9 +437,9 @@ static bool tick_channel(Channel &ch, const time_t now) {
                     bell_serial.println(logmsg);
                 log_to_buffer_locked(logmsg);
             }
-            if (time_is_valid() && ch.next_fire > 0) {
-                recompute_next_fire(ch, now + 1);
-            }
+            // next_fire is advanced when a scheduled bell fires, not here.
+            // A slot that came due during this pulse (e.g. a manual ring just
+            // before a scheduled bell) stays armed and fires on the next tick.
         }
         return true;
     }
@@ -460,6 +460,9 @@ static bool tick_channel(Channel &ch, const time_t now) {
         ch.last_fire_idx = ch.next_fire_idx;
         trigger_channel_now(ch, ch.cfg.schedule_pulse_ms[ch.next_fire_idx],
                             primary_channel_key(ch), "schedule");
+        // Consume this slot now so the pulse-off path never has to guess
+        // which slots were already rung.
+        recompute_next_fire(ch, now + 1);
         return true;
     }
     return false;
@@ -837,10 +840,12 @@ void bell_core_tick() {
     }
 
     // ── Hourly schedule recompute ───────────────────────────────
+    // Leave a channel alone while its bell is due (not yet rung, or waiting
+    // for a manual pulse to finish) — recomputing would skip that slot.
     if (s_schedules_seeded
         && elapsed_since(g_last_schedule_refresh) >= SCHEDULE_REFRESH_MS) {
-        recompute_next_fire(g_ch1, now);
-        recompute_next_fire(g_ch2, now);
+        if (g_ch1.next_fire == 0 || g_ch1.next_fire > now) recompute_next_fire(g_ch1, now);
+        if (g_ch2.next_fire == 0 || g_ch2.next_fire > now) recompute_next_fire(g_ch2, now);
         g_last_schedule_refresh = now_ms;
     }
 
