@@ -196,6 +196,41 @@ static void rtc_print_i2c_diagnostics() {
     }
 }
 
+// The RTC holds local wall-clock time (rtc_sync_from_system() writes
+// localtime_r()), so rtc_seed_system_clock() and the scheduler's localtime_r()
+// need the local offset from the first tick. configTime() in
+// network_sync_init() sets TZ only after this seed, leaving the clock off by
+// GMT_OFFSET_SEC until NTP syncs, and never runs in WiFi setup mode, where
+// bells run without NTP. This applies the same TZ string
+// configTime(GMT_OFFSET_SEC, DAYLIGHT_SEC, ...) builds (setTimeZone() in the
+// core's esp32-hal-time.c), so starting NTP later does not change it.
+static void apply_local_timezone() {
+    const long west_s = -GMT_OFFSET_SEC;  // POSIX TZ counts seconds west of UTC
+    char std_name[17];
+    char dst_name[17] = "DST";
+    if (west_s % 3600) {
+        snprintf(std_name, sizeof(std_name), "UTC%ld:%02u:%02u", west_s / 3600,
+                 static_cast<unsigned>(abs((west_s % 3600) / 60)),
+                 static_cast<unsigned>(abs(west_s % 60)));
+    } else {
+        snprintf(std_name, sizeof(std_name), "UTC%ld", west_s / 3600);
+    }
+    if (DAYLIGHT_SEC != 3600) {
+        const long dst_s = west_s - DAYLIGHT_SEC;
+        if (dst_s % 3600) {
+            snprintf(dst_name, sizeof(dst_name), "DST%ld:%02u:%02u", dst_s / 3600,
+                     static_cast<unsigned>(abs((dst_s % 3600) / 60)),
+                     static_cast<unsigned>(abs(dst_s % 60)));
+        } else {
+            snprintf(dst_name, sizeof(dst_name), "DST%ld", dst_s / 3600);
+        }
+    }
+    char tz[33];
+    snprintf(tz, sizeof(tz), "%s%s", std_name, dst_name);
+    setenv("TZ", tz, 1);
+    tzset();
+}
+
 static bool rtc_seed_system_clock() {
     if (!g_rtc_present) return false;
     DateTime now = g_rtc.now();
@@ -714,6 +749,7 @@ void bell_core_init() {
     }
 
     // --- 5. RTC detection ---
+    apply_local_timezone();  // before rtc_seed_system_clock() — the RTC holds local time
     Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
     Wire.setTimeOut(50);
     Wire.setClock(100000);

@@ -1,6 +1,6 @@
 # Relay Controller
 
-ESP32-based multi-channel relay controller with WiFi, NTP time sync, auto-updating Node.js server, and a profile-driven web dashboard. **~11,000 lines** across 48 files (C++ firmware + Node.js backend + dashboard UI).
+ESP32-based multi-channel relay controller with WiFi, NTP time sync, auto-updating Node.js server, and a profile-driven web dashboard. **~16,000 lines** across 48 files (C++ firmware + Node.js backend + dashboard UI).
 
 ## Hardware
 
@@ -71,7 +71,7 @@ Relays trigger on **LOW** by default (`RELAY_ACTIVE_HIGH = false` in `src/bell_c
 
 ### Optional: RTC module (DS1307/DS3231/DS3232)
 
-Keeps real time running even when the schedule server, WiFi, or internet is down. Auto-detected at boot — nothing to configure if not present.
+Keeps real time running even when the schedule server, WiFi, or internet is down. Auto-detected at boot — nothing to configure if not present. It also matters in WiFi setup mode (see below), where NTP does not run and the RTC is the firmware's only way to set the clock. The RTC stores **local** time (see [Time zone](#time-zone)).
 
 ```
 ESP32          RTC Module
@@ -96,6 +96,17 @@ Connect your phone/laptop to `Bell_Setup`, open `http://192.168.4.1`, scan for y
 
 **Server discovery:** The ESP32 finds the server via UDP beacon (port 9999). No hardcoded IP, no DNS fallback — the server broadcasts its presence, the ESP32 picks it up. When the beacon stops for 20 seconds, the ESP32 immediately logs `!!! SERVER CONNECTION LOST — running from NVS !!!` and stops all HTTP operations. Bells continue from the NVS-stored schedule.
 
+### Resetting WiFi
+
+Hold the **BOOT** button (GPIO 0) for 5 seconds. The serial monitor prints `WiFi Reset Successful`, the saved WiFi credentials are erased (schedules, RTC and OTA state are untouched), and the ESP32 restarts into setup mode. Holding BOOT for 5 seconds while the setup portal is open restarts the ESP32 without saving anything.
+
+### Bells keep ringing in setup mode
+
+The setup portal runs on its own FreeRTOS task on core 0, so the Bell Core on core 1 is never blocked while the `Bell_Setup` access point is up. The relays keep following the schedule stored in NVS (a device that has never received one uses the built-in fallback times in `src/bell_core.h`), and the LED breathes white (`SETUP_MODE`). Two limits apply while the device is in setup mode:
+
+- **No NTP.** The ESP32 is only an access point, so nothing syncs its clock from the internet. The optional RTC module is the firmware's only way to set the clock, and the scheduler fires only once the system clock is valid. Fit an RTC if bells must keep ringing while WiFi is being reconfigured.
+- **No server contact.** The device sends no heartbeats or log lines and does not poll for schedule changes or Run Now commands, so the dashboard shows its channels offline (after about 10 seconds without a heartbeat) until it is back on WiFi.
+
 ### Relay safety guarantees
 
 Relays fire **only** on confirmed schedule times or explicit "Run Now" commands:
@@ -103,6 +114,8 @@ Relays fire **only** on confirmed schedule times or explicit "Run Now" commands:
 - **Command discard on server loss** — when the server goes offline, pending manual commands are discarded immediately. No relay fires from a server that's no longer reachable.
 - **Immediate NVS fallback** — when the beacon times out (20s), `g_server_seen` flips to `false` on the next 50ms tick. All HTTP operations stop instantly. No multi-second timeouts jamming the scheduler. The Bell Core runs from NVS on core 1, unblocked.
 - **Bell Core independence** — the relay/schedule subsystem never touches WiFi or HTTP. It runs from NVS-persisted schedules and an optional RTC. Bells ring on time even if the network module crashes or the server is down for days.
+- **Bells run during WiFi setup** — the setup portal has its own core 0 task instead of blocking `setup()`, so `loop()` keeps ticking the Bell Core. See [Bells keep ringing in setup mode](#bells-keep-ringing-in-setup-mode).
+
 ## Deployment
 
 ### Every boot
@@ -226,6 +239,8 @@ constexpr long DAYLIGHT_SEC   = 0;       // set to 3600 for DST
 
 The firmware timezone is set in `src/bell_core.h` (POSIX seconds-east-of-UTC).
 
+The offset is applied as soon as the Bell Core starts, before the RTC is read, so the schedule follows local time even when NTP is unreachable or the device is in WiFi setup mode. The RTC stores **local** time in this zone; the firmware rewrites it after the first NTP sync and hourly afterwards. If you change the offset, the RTC still holds the old zone's local time until the next NTP sync corrects it, so bring the device online once after flashing.
+
 
 ## OTA Firmware Updates
 
@@ -322,15 +337,17 @@ OTA slot. If you ever see `ota_0` or `ota_1` here, something's wrong.
 After flashing, the serial monitor shows:
 
 ```
-=== RELAY CONTROLLER BOOT ===
-No WiFi configured.
+=== BELL CORE BOOT ===
+...
+Bell Core ready.
 Entering Setup Mode...
+AP Started
 SSID: Bell_Setup
 Password: 12345678
 Open: http://192.168.4.1
 ```
 
-Connect to `Bell_Setup`, open `http://192.168.4.1`, configure WiFi, and save.
+Connect to `Bell_Setup`, open `http://192.168.4.1`, configure WiFi, and save. Other boot messages (OTA, storage) can appear between these lines because the portal runs on its own task. The portal tries the credentials you enter (up to 15 seconds) before saving them: a wrong password or an unreachable network is reported on the page and nothing is stored.
 
 ### 4. Verify
 
@@ -385,6 +402,16 @@ Open `http://<server-ip>:8080` in a browser. Default password is **`admin`** —
 ```
 
 The Profile Editor (`/profile-editor`) isn't shown as its own box above — it sits alongside the Profile Manager and writes through the same `profiles.json`, but goes through a validate → repair → restore pipeline first. See `server-node/README.md` for the full flow.
+
+### Firmware tasks
+
+| Context | Runs | When |
+|---------|------|------|
+| `loop()` (core 1) | Bell Core tick (relays, schedule), OTA state machine, LED | Always |
+| `netSync` task (core 0) | WiFi watchdog, UDP beacon, schedule and command polling, heartbeats, log upload, BOOT-button reset | WiFi credentials are saved |
+| `wifiSetup` task (core 0) | `Bell_Setup` access point and web portal; restarts the ESP32 once credentials are saved | No WiFi credentials saved (first boot or BOOT-button reset); started instead of `netSync` |
+
+Schedule, command and heartbeat network I/O never runs on core 1, so a slow or unreachable server cannot delay the Bell Core.
 
 ### Storage files
 
@@ -548,13 +575,16 @@ API-key auth: send `X-API-Key` header on endpoints marked as API-key compatible 
 
 ```
 src/
-├── main.cpp            Minimal glue: init bell_core → init network_sync
-├── bell_core.h/cpp     Relay control, schedule execution, RTC, NVS persistence
-├── network_sync.h/cpp  WiFi, HTTP, schedule download, heartbeats, server discovery
+├── main.cpp            Minimal glue: init LED → bell_core → network_sync → OTA → storage
+├── bell_core.h/cpp     Relay control, schedule execution, RTC, local time zone, NVS persistence
+├── network_sync.h/cpp  WiFi, HTTP, schedule download, heartbeats, server discovery;
+│                       starts the setup-portal task when no WiFi is saved
 ├── led_indicator.h/cpp RGB LED status indicator (standalone, no network deps)
 ├── ota_update.h/cpp    OTA firmware update engine (download, verify, apply)
 ├── storage.h/cpp       LittleFS storage for logs and persistent state
-└── wifi_provision.h    WiFi provisioning portal (AP mode, web config)
+├── bell_logger.h/cpp   Mirrors Serial output into a ring buffer for the dashboard's Serial Monitor
+├── debug_config.h      Compile-time diagnostic toggles
+└── wifi_provision.h    WiFi provisioning portal (AP mode, web config) and BOOT-button reset
 ```
 
 **Bell Core** never touches WiFi — it's the highest-priority subsystem. If the network module crashes, bells continue ringing from NVS-persisted schedules. **LED Indicator** is similarly independent — it reflects state but never affects relay operation.
@@ -563,8 +593,7 @@ src/
 ## Features
 
 - **Wi‑Fi provisioning** — configure WiFi from your phone on first boot, no hardcoded credentials
-- **Server provisioning** — optionally set a static server IP/port in the setup portal
-- **Three-tier server resolution** — UDP beacon → provisioned IP → hardcoded fallback
+- **Non-blocking WiFi setup** — the `Bell_Setup` portal runs on its own core 0 task, so bells keep ringing while the device is being (re)configured
 - **mDNS auto-discovery** — bootstrap configures avahi-daemon on Linux for `http://<hostname>.local` access
 - **RGB status LED** — 11 system states with color-coded breathing/blink patterns covering boot, sync, error, and OTA phases
 - **20s server-loss detection** — UDP beacon timeout detects offline server within 4 missed beacons
@@ -576,7 +605,7 @@ src/
 - **Manual override** — temporarily switch profiles with optional auto-expiry
 - **Variable bell timings** — per-entry pulse durations in schedule arrays; ESP32 parses directly, no config
 - **Bulk schedule entry** — paste or generate repeating time sequences; single-digit hours accepted (`8:00` = `08:00`)
-- **Multi-channel** — any number of relay channels (up to 24), not just ch1/ch2
+- **Multi-channel server** — the server manages up to 24 channel keys; the current firmware drives two relays (`ch1`, `ch2`)
 - **Channel on/off** — disable a channel to grey it out and lock editing; save and toggle remain functional
 - **Manual trigger** — "Run Now" queues an immediate relay pulse
 - **Live editing** — dashboard changes reach ESP32 in ≤5 seconds

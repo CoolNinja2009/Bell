@@ -75,8 +75,9 @@ static uint32_t  g_last_command_poll   = 0;
 static TaskHandle_t g_net_task = nullptr;
 static constexpr uint32_t NET_TASK_PERIOD_MS = 50;   // 20 Hz tick cadence
 
-// Forward declaration — used by network_sync_init before full definition
+// Forward declarations — used by network_sync_init before full definition
 static void network_sync_task_fn(void *param);
+static void setup_portal_task_fn(void *param);
 static uint32_t  g_last_heartbeat      = 0;
 static uint32_t  g_last_hash_poll      = 0;
 
@@ -416,8 +417,24 @@ void network_sync_init() {
     char pass[64] = {0};
 
     if (!loadCredentials(ssid, sizeof(ssid), pass, sizeof(pass))) {
-        // No saved credentials — first-time provisioning
-        startSetupMode();  // never returns
+        // No saved credentials (first boot, or BOOT held 5s). The setup
+        // portal never returns — it restarts once credentials are saved — so
+        // it gets its own core 0 task and setup() returns: loop() keeps
+        // ticking the Bell Core on core 1 while the AP is up.
+        led_request_state(LedState::SETUP_MODE);
+        BaseType_t rc = xTaskCreatePinnedToCore(
+            setup_portal_task_fn,      // entry point
+            "wifiSetup",               // debug name
+            10240,                     // stack (bytes) — same budget as netSync, which is not started
+            nullptr,                   // no parameter
+            1,                         // priority (same as Arduino loop)
+            nullptr,                   // handle not needed
+            0                          // core 0 — protocol core, away from Arduino loop on core 1
+        );
+        if (rc != pdPASS) {
+            bell_serial.println(F("FATAL: setup portal task creation failed"));
+        }
+        return;
     }
 
 #if WIFI_PRINT_CREDENTIALS_ON_BOOT
@@ -463,6 +480,13 @@ void network_sync_init() {
     }
 
     bell_serial.println(F("Network Sync ready (task on core 0)."));
+}
+
+// ── FreeRTOS task: WiFi setup portal on core 0 (only when no credentials) ──
+static void setup_portal_task_fn(void *param) {
+    (void)param;
+    startSetupMode();      // never returns — restarts once credentials are saved
+    vTaskDelete(nullptr);  // a FreeRTOS task must never return
 }
 
 // ── FreeRTOS task: runs on core 0, never blocks the Bell Core on core 1 ──

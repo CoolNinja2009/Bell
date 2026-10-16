@@ -7,9 +7,10 @@
  *
  * Dependencies:  WiFi.h + WebServer.h (both ESP32 core — no extra libs)
  *
- * Integration:   #include this, then call in setup():
- *     checkBootButtonReset();
- *     if (!connectSavedWiFi()) startSetupMode();
+ * Integration:   network_sync_init() calls checkBootButtonReset() and, when
+ *     no credentials are saved, runs startSetupMode() on its own core 0
+ *     task. Never call startSetupMode() from setup()/loop(): it never
+ *     returns, and on core 1 it would stop the Bell Core.
  *
  * NVS namespace:  "wifi_prov"  (keys "ssid", "pass")
  * AP:             Bell_Setup / 12345678  @  192.168.4.1
@@ -474,6 +475,7 @@ setTimeout(scanNetworks, 600);
 //  6.  START SETUP MODE
 //      Creates AP "Bell_Setup", runs a web server, and blocks until the user
 //      submits credentials.  Then saves them and restarts.
+//      Never returns — run it on a dedicated task (see network_sync_init()).
 // ============================================================================
 static void startSetupMode() {
     bell_serial.println(F("Entering Setup Mode..."));

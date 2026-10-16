@@ -1087,7 +1087,17 @@ The server broadcasts a UDP beacon every 5 seconds on port 9999 to `255.255.255.
 
 **Payload:** `RELAY_CTRL:8080\n`
 
-The ESP32 parses this to get the server's IP and port. If the beacon isn't heard for 20 seconds (4 missed beacons), the ESP32 falls back to the provisioned IP or hardcoded fallback.
+The ESP32 parses this to get the server's IP and port. Discovery is beacon-only: there is no configured or hardcoded server address to fall back on. If the beacon isn't heard for 20 seconds (4 missed beacons), the ESP32 treats the server as gone. It logs `!!! SERVER CONNECTION LOST — running from NVS !!!`, stops polling, discards any Run Now commands it had already received, and keeps ringing from the schedule saved in its NVS. When the beacon returns it fetches the active schedule again immediately.
+
+### Device in Wi-Fi setup mode
+
+A new ESP32, or one whose Wi-Fi was reset by holding its BOOT button for 5 seconds, has no saved Wi-Fi credentials. It then runs its own `Bell_Setup` access point instead of joining your network, so from the server's side it looks like a powered-off device:
+
+- it hears no beacons, polls nothing, and sends no heartbeats or log lines;
+- the dashboard's heartbeat indicators read offline once the last ping is 10 seconds old (the server forgets the entry entirely after `HEARTBEAT_TTL_MS`, 2 minutes), and the Wi-Fi Serial Monitor stays silent;
+- schedule changes and Run Now commands cannot reach it until it is back on Wi-Fi.
+
+The bells themselves keep running: the setup portal has its own core 0 task, so the Bell Core keeps executing the schedule stored in the device's NVS. That needs a valid clock, which without NTP only the optional RTC module can provide. See Wi-Fi Provisioning in the [root README](../README.md) for the setup steps.
 
 ---
 
@@ -1258,7 +1268,7 @@ If no profiles exist at all (fresh install):
 4. Login with password `admin`
 5. Change password immediately (Settings → Change Password)
 6. Add your channels and schedules
-7. The ESP32 will auto-discover the server via UDP beacon
+7. The ESP32 will auto-discover the server via UDP beacon once it is on your Wi-Fi (a new or reset ESP32 first needs the `Bell_Setup` portal; see the [root README](../README.md))
 
 ---
 

@@ -41,7 +41,9 @@ constexpr uint32_t SNTP_SYNC_INTERVAL_MS = 900000;
 
 /** Initialise WiFi, NTP, beacon listener, and spawn the network I/O
  *  task on core 0. Must be called AFTER bell_core_init().
- *  The task runs independently — no tick function needed in loop(). */
+ *  The task runs independently — no tick function needed in loop().
+ *  With no saved WiFi credentials it spawns the setup portal task on
+ *  core 0 instead and returns, so the Bell Core keeps running. */
 void network_sync_init();
 
 /** Current server base URL "http://<ip>:<port>", or nullptr if offline.
