@@ -176,12 +176,20 @@ static bool fetch_schedule() {
     // an unchanged schedule from being re-fetched/re-applied/re-logged on
     // every full poll. If the pre-check itself fails (network hiccup),
     // fall through and let the retry loop below sort it out.
+    //
+    // The hash read here is remembered: if the schedule is edited while the
+    // body is downloading, the hash read afterwards belongs to a NEWER
+    // schedule than the body in hand. Applying that pair would make the
+    // controller believe it is in sync with a schedule it never received, and
+    // it would never fetch the real one (hashes would match) until the next
+    // edit. The loop below therefore refuses a body whose hash moved.
+    char pre_hash[9] = {0};
+    const bool have_pre_hash = fetch_hash_only(pre_hash);
     {
         char applied_hash[9] = {0};
         bell_core_copy_schedule_hash(applied_hash, sizeof(applied_hash));
-        char server_hash[9] = {0};
-        if (fetch_hash_only(server_hash) && g_server_config_loaded &&
-            strlen(applied_hash) == 8 && strcmp(server_hash, applied_hash) == 0) {
+        if (have_pre_hash && g_server_config_loaded &&
+            strlen(applied_hash) == 8 && strcmp(pre_hash, applied_hash) == 0) {
             return true;  // unchanged — nothing to fetch, nothing to log
         }
     }
@@ -224,6 +232,13 @@ static bool fetch_schedule() {
         }
         if (hash_unchanged) return true;
         if (strlen(server_hash) != 8) return false;
+
+        // Body and hash must describe the same schedule version (see above).
+        if (have_pre_hash && strcmp(pre_hash, server_hash) != 0) {
+            memcpy(pre_hash, server_hash, sizeof(pre_hash));
+            DBGLN(F("NET: schedule changed while downloading — refetching"));
+            continue;
+        }
 
         // Validate JSON structure before handing to Bell Core
 #pragma GCC diagnostic push

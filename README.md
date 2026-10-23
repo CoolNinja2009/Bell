@@ -459,19 +459,22 @@ Temporarily switch to any profile regardless of calendar. Optionally set an auto
 - **Channel on/off toggle** — turn a channel off to grey it out and lock all controls. Toggle it back on to restore editing. Save still works in either state.
 - **Run Now** — queue an immediate relay trigger for any channel
 - **Variable bell timings** — each schedule entry can have its own pulse duration. In the schedule array, plain `"HH:MM"` strings use the channel default; `{"time":"HH:MM","pulse_ms":N}` objects override per-entry. The ESP32 parses this directly from JSON and stores it in NVS — zero config needed on the device.
-- **Bulk add** — two tools under each channel's schedule (click "+ Bulk add"):
+- **Bulk add** — two tools under each channel's schedule (open "Bulk add & import"):
   - **Paste** — paste multiple times at once, one per line (`H:MM` or `H:MM pulse_ms`). Single-digit hours accepted (e.g. `8:00` = `08:00`). Skips duplicates, validates, sorts.
   - **Range** — generate a repeating sequence ("every 45 min from 08:00 to 15:00"). Optional pulse applies to all generated entries. Great for period bells.
 - **Inline editing** — click any schedule time tag to edit it in-place
-- **Add Channel** — dynamically add new relay channels (up to 24)
+- **Fixed channels** — the hardware has exactly two relay channels (`ch1`, `ch2`); the dashboard no longer offers to add or delete channels because the server and firmware would reject them
+- **Next-bell panel** — live clock in the school timezone and, per channel, a countdown to the next bell with a "bells rung today" meter
+- **Unsaved-changes bar** — edits are held until you press **Save changes** (or Ctrl/Cmd+S); **Discard** reverts. Edits are never saved into a different profile if the active profile changes while you edit
+- **Run Now is two-step** — the first press arms the button, a second press within a few seconds rings the bell, so a stray click cannot ring the whole school
 - **History & analytics** — filterable event table, 14-day runs-per-day chart, CSV export
 - **Device log** — raw ESP32 log messages in real time
-- **Heartbeat status** — per-channel online/offline indicators
+- **Controller status** — online / partial / offline, based on the controller's heartbeats (offline after 15 s without one)
 - **Profile switcher** — quick profile override from the schedule page
-- **Settings modal** — change password, manage API keys
-- **Backup / Restore** — download or upload a full JSON snapshot
+- **Settings modal** — change password, manage API keys, backup / restore
+- **Backup / Restore** — download or upload a full JSON snapshot (in Settings)
 - **Dark mode** — auto-detected from system preference, manually togglable
-- **Installable PWA** — add to home screen on Android/iOS/desktop for a native app experience, with offline support via service worker
+- **Installable PWA** — add to home screen on Android/iOS/desktop. The service worker deliberately caches nothing (schedules and API data are live and authenticated); it only shows a clear "can't reach the server" page when offline
 ### Monitoring and workspace
 
 - **ESP32 Serial Monitor** - Wi-Fi mirrored firmware `Serial` output, delivered

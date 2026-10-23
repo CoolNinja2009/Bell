@@ -35,7 +35,8 @@ contracts change.
 | `platformio.ini` | PlatformIO target, libraries, build metadata hooks, and upload settings. |
 | `partitions_ota.csv` | ESP32 partition layout, including OTA slots. |
 | `server-node/server.js` | Express API, dashboard delivery, schedule/profile operations, device communication, and firmware serving. |
-| `server-node/templates/` | Dashboard, login, and profile-editor HTML. |
+| `server-node/templates/` | Dashboard, profiles, login, and profile-editor HTML. |
+| `server-node/assets/` | Shared UI served at `/assets`: `ui.css` (design system for every page) and `channel-card.js` (channel editor used by both the dashboard and the profile manager). |
 | `server-node/lib/` | Profile/calendar/settings persistence and validation, scheduling, history, and firmware metadata/state helpers. |
 | `server-node/services/` | Bootstrap support for dependencies, Git, GitHub, health checks, and PM2. |
 | `server-node/config/index.js` | Bootstrap configuration. |

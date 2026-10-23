@@ -1009,14 +1009,16 @@ int32_t bell_core_next_fire_s() {
     bell_core_lock();
     if (g_ch1.next_fire > 0 && g_ch1.cfg.enabled) {
         time_t raw = g_ch1.next_fire - now;
-        if (raw >= 0 && raw <= INT32_MAX) {
+        if (raw < 0) raw = 0;  // overdue (e.g. waiting out a manual pulse) is the MOST imminent bell
+        if (raw <= INT32_MAX) {
             int32_t d = (int32_t)raw;
             if (d < best) best = d;
         }
     }
     if (g_ch2.next_fire > 0 && g_ch2.cfg.enabled) {
         time_t raw = g_ch2.next_fire - now;
-        if (raw >= 0 && raw <= INT32_MAX) {
+        if (raw < 0) raw = 0;  // overdue (e.g. waiting out a manual pulse) is the MOST imminent bell
+        if (raw <= INT32_MAX) {
             int32_t d = (int32_t)raw;
             if (d < best) best = d;
         }
