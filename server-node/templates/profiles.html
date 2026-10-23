@@ -1,1067 +1,89 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <link rel="icon" type="image/svg+xml" href="/bell.svg">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a0f16" media="(prefers-color-scheme: dark)">
 <title>Profiles — Relay Controller</title>
-<style>
-  /* ── Design Tokens ─────────────────────── */
-  :root {
-    --bg:       #f8fafc;
-    --panel:    #ffffff;
-    --panel2:   #f1f5f9;
-    --border:   #e2e8f0;
-    --text:     #0f172a;
-    --dim:      #64748b;
-    --accent:   #10b981;
-    --accent2:  #f59e0b;
-    --accent3:  #3b82f6;
-    --danger:   #ef4444;
-    --on:       #10b981;
-    --off:      #cbd5e1;
-    --radius:   10px;
-    --glass:    rgba(255, 255, 255, 0.9);
-    --shadow:   0 4px 12px rgba(0, 0, 0, 0.08);
-  }
-
-  [data-theme="dark"] {
-    --bg:       #0a0f16;
-    --panel:    #111921;
-    --panel2:   #0d1419;
-    --border:   #1e2936;
-    --text:     #e2e8f0;
-    --dim:      #64748b;
-    --accent:   #10b981;
-    --accent2:  #f59e0b;
-    --accent3:  #3b82f6;
-    --danger:   #ef4444;
-    --on:       #10b981;
-    --off:      #334155;
-    --glass:    rgba(17, 25, 33, 0.9);
-    --shadow:   0 4px 12px rgba(0, 0, 0, 0.4);
-  }
-
-  [data-theme="light"] {
-    --bg:       #f8fafc;
-    --panel:    #ffffff;
-    --panel2:   #f1f5f9;
-    --border:   #e2e8f0;
-    --text:     #0f172a;
-    --dim:      #64748b;
-    --accent:   #10b981;
-    --accent2:  #f59e0b;
-    --accent3:  #3b82f6;
-    --danger:   #ef4444;
-    --on:       #10b981;
-    --off:      #cbd5e1;
-    --radius:   10px;
-    --glass:    rgba(255, 255, 255, 0.9);
-    --shadow:   0 4px 12px rgba(0, 0, 0, 0.08);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme]) {
-      --bg:       #0a0f16;
-      --panel:    #111921;
-      --panel2:   #0d1419;
-      --border:   #1e2936;
-      --text:     #e2e8f0;
-      --dim:      #64748b;
-      --accent:   #10b981;
-      --accent2:  #f59e0b;
-      --accent3:  #3b82f6;
-      --danger:   #ef4444;
-      --on:       #10b981;
-      --off:      #334155;
-      --glass:    rgba(17, 25, 33, 0.9);
-      --shadow:   0 4px 12px rgba(0, 0, 0, 0.4);
-    }
-  }
-
-  /* ── Base ──────────────────────────────── */
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    padding: 24px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-    transition: background 0.2s, color 0.2s;
-  }
-
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    background: radial-gradient(ellipse at 50% 0%, rgba(16, 185, 129, 0.08) 0%, transparent 50%);
-    pointer-events: none;
-    z-index: -1;
-  }
-
-  a { color: inherit; text-decoration: none; }
-
-  /* ── Header ────────────────────────────── */
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 20px;
-    flex-wrap: wrap;
-    gap: 16px;
-    padding: 20px 24px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-  }
-
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .logo-icon {
-    width: 36px;
-    height: 36px;
-    background: var(--accent3);
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
-
-  .logo-icon svg { width: 20px; height: 20px; }
-
-  .logo-text h1 {
-    font-size: 1.125rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    line-height: 1.2;
-    color: var(--text);
-  }
-
-  .logo-text .subtitle {
-    font-size: 0.75rem;
-    color: var(--dim);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 600;
-    margin-top: 2px;
-  }
-
-  .status-bar {
-    display: flex;
-    gap: 8px;
-    font-size: 0.875rem;
-    color: var(--dim);
-    font-weight: 500;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-
-  .status-pill {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: var(--panel2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    transition: all 0.2s;
-    min-height: 32px;
-  }
-
-  .status-pill:hover {
-    border-color: var(--accent);
-    color: var(--text);
-  }
-
-  /* ── Nav ────────────────────────────────── */
-  .nav-tabs {
-    display: flex;
-    gap: 4px;
-    margin-bottom: 20px;
-    padding: 4px;
-    background: var(--panel2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    width: fit-content;
-  }
-
-  .nav-tab {
-    padding: 8px 16px;
-    border-radius: 6px;
-    background: transparent;
-    border: none;
-    color: var(--dim);
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    text-decoration: none;
-    transition: all 0.2s;
-    min-height: 36px;
-    display: inline-flex;
-    align-items: center;
-  }
-
-  .nav-tab:hover { color: var(--text); background: rgba(16, 185, 129, 0.05); }
-
-  .nav-tab.active {
-    background: var(--panel);
-    color: var(--accent);
-    box-shadow: var(--shadow);
-  }
-
-  /* ── Layout ────────────────────────────── */
-  .layout {
-    display: grid;
-    grid-template-columns: 260px 1fr;
-    gap: 20px;
-  }
-
-  .sidebar {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 20px;
-    height: fit-content;
-    position: sticky;
-    top: 24px;
-    box-shadow: var(--shadow);
-  }
-
-  .sidebar h3 {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--dim);
-    margin-bottom: 12px;
-    font-weight: 600;
-  }
-
-  .profile-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-bottom: 16px;
-  }
-
-  .profile-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 12px;
-    border-radius: var(--radius);
-    cursor: pointer;
-    font-size: 0.875rem;
-    font-weight: 500;
-    transition: all 0.2s;
-    border: 1px solid transparent;
-    min-height: 44px;
-  }
-
-  .profile-item:hover {
-    background: rgba(16, 185, 129, 0.05);
-    border-color: var(--border);
-  }
-
-  .profile-item.selected {
-    background: rgba(16, 185, 129, 0.1);
-    border-color: rgba(16, 185, 129, 0.3);
-    color: var(--accent);
-  }
-
-  .profile-item .ch-count {
-    font-size: 0.75rem;
-    padding: 4px 8px;
-    background: var(--panel2);
-    border-radius: 6px;
-    color: var(--dim);
-    font-weight: 600;
-  }
-
-  .profile-item.selected .ch-count {
-    background: rgba(16, 185, 129, 0.15);
-    color: var(--accent);
-  }
-
-  .sidebar-actions {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .sidebar-actions button {
-    width: 100%;
-    text-align: left;
-  }
-
-  .sidebar-divider {
-    border: none;
-    border-top: 1px solid var(--border);
-    margin: 12px 0;
-  }
-
-  .main-content { min-width: 0; }
-
-  /* ── Section ───────────────────────────── */
-  .section {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 24px;
-    margin-bottom: 20px;
-    box-shadow: var(--shadow);
-  }
-
-  .section h2 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    margin-bottom: 4px;
-    letter-spacing: -0.01em;
-  }
-
-  .section .sub {
-    color: var(--dim);
-    font-size: 0.875rem;
-    margin-bottom: 20px;
-  }
-
-  /* ── Buttons ───────────────────────────── */
-  .btn {
-    padding: 10px 16px;
-    border-radius: var(--radius);
-    border: none;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-family: inherit;
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-  }
-
-  .btn:hover { transform: translateY(-1px); }
-  .btn:active { transform: translateY(0); }
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    transform: none;
-  }
-
-  .btn-save {
-    background: var(--accent);
-    color: #ffffff;
-  }
-
-  .btn-save:hover { background: #0ea071; }
-
-  .btn-run {
-    background: var(--accent2);
-    color: #ffffff;
-  }
-
-  .btn-run:hover { background: #d97706; }
-
-  .btn-add {
-    background: rgba(16, 185, 129, 0.1);
-    color: var(--accent);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-  }
-
-  .btn-add:hover {
-    background: rgba(16, 185, 129, 0.15);
-    border-color: var(--accent);
-  }
-
-  .btn-ghost {
-    background: var(--panel2);
-    color: var(--text);
-    border: 1px solid var(--border);
-  }
-
-  .btn-ghost:hover {
-    background: var(--panel);
-    border-color: var(--accent);
-  }
-
-  .btn-danger {
-    background: rgba(239, 68, 68, 0.1);
-    color: var(--danger);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-  }
-
-  .btn-danger:hover {
-    background: rgba(239, 68, 68, 0.15);
-    border-color: var(--danger);
-  }
-
-  .btn-row {
-    display: flex;
-    gap: 8px;
-    margin-top: 16px;
-    flex-wrap: wrap;
-  }
-
-  .btn-row .btn { flex: 1; }
-
-  .btn-sm {
-    padding: 6px 12px;
-    font-size: 0.875rem;
-    border-radius: 6px;
-    min-height: 32px;
-  }
-
-  /* ── Active profile banner ─────────────── */
-  .active-banner {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 16px 20px;
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-    border-radius: var(--radius);
-    margin-bottom: 20px;
-    flex-wrap: wrap;
-  }
-
-  .active-banner .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--on);
-    flex-shrink: 0;
-    animation: pulse-dot 2s infinite;
-  }
-
-  .active-banner .dot.override {
-    background: var(--accent2);
-  }
-
-  @keyframes pulse-dot {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.6; }
-  }
-
-  .active-banner .info {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .active-banner .info .name {
-    font-weight: 600;
-    font-size: 1rem;
-    color: var(--accent);
-  }
-
-  .active-banner .info .reason {
-    font-size: 0.875rem;
-    color: var(--dim);
-    margin-top: 2px;
-  }
-
-  /* ── Channel cards ─────────────────────── */
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
-    gap: 20px;
-  }
-
-  .channel {
-    background: var(--panel2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0;
-    overflow: hidden;
-    transition: all 0.2s;
-    position: relative;
-  }
-
-  .channel:hover {
-    border-color: var(--accent3);
-    transform: translateY(-2px);
-  }
-
-  .ch-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 20px 24px;
-    background: rgba(59, 130, 246, 0.03);
-    border-bottom: 1px solid var(--border);
-    gap: 12px;
-  }
-
-  .ch-header h3 {
-    font-size: 1rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-  }
-
-  .ch-key-tag {
-    display: inline-block;
-    padding: 4px 8px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
-    font-size: 0.75rem;
-    color: var(--dim);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 600;
-  }
-
-  .ch-body { padding: 20px 24px; }
-
-  /* ── Toggle ────────────────────────────── */
-  .toggle {
-    position: relative;
-    width: 48px;
-    height: 28px;
-    border-radius: 14px;
-    background: var(--off);
-    cursor: pointer;
-    transition: all 0.2s;
-    border: none;
-    outline: none;
-    flex-shrink: 0;
-  }
-
-  .toggle:hover { opacity: 0.9; }
-
-  .toggle.active {
-    background: var(--accent);
-  }
-
-  .toggle::after {
-    content: "";
-    position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    background: #fff;
-    transition: transform 0.2s;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-  }
-
-  .toggle.active::after { transform: translateX(20px); }
-
-  /* ── Fields ────────────────────────────── */
-  .field { margin-top: 16px; }
-
-  .field:first-child { margin-top: 0; }
-
-  .field label {
-    display: block;
-    font-size: 0.75rem;
-    color: var(--dim);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 600;
-    margin-bottom: 8px;
-  }
-
-  .field input[type="number"],
-  .field input[type="date"],
-  .field input[type="time"],
-  .field input[type="text"] {
-    width: 100%;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 10px 12px;
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-    font-family: inherit;
-    transition: all 0.2s;
-    min-height: 40px;
-  }
-
-  .field input:hover { border-color: var(--accent); }
-
-  .field input:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
-  }
-
-  /* ── Tags ───────────────────────────────── */
-  .tag-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 12px;
-  }
-
-  .tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-    border-radius: 6px;
-    padding: 6px 12px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
-    color: var(--accent);
-    transition: all 0.2s;
-    min-height: 32px;
-  }
-
-  .tag:hover {
-    border-color: var(--accent);
-    background: rgba(16, 185, 129, 0.15);
-  }
-
-  .tag button {
-    background: none;
-    border: none;
-    color: var(--danger);
-    cursor: pointer;
-    font-size: 1rem;
-    line-height: 1;
-    padding: 0;
-    transition: all 0.2s;
-    font-family: inherit;
-    min-width: 16px;
-    min-height: 16px;
-  }
-
-  .tag button:hover { transform: scale(1.1); }
-
-  .tag[data-list="schedule"] { cursor: pointer; }
-
-  .tag.editing {
-    gap: 6px;
-    padding: 4px 8px;
-    background: rgba(16, 185, 129, 0.15);
-    border-color: var(--accent);
-  }
-
-  .tag.editing input {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 4px 8px;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    font-family: inherit;
-    min-height: 28px;
-  }
-
-  .tag.editing input:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-
-  .tag.editor-actions {
-    display: flex;
-    gap: 4px;
-    flex-shrink: 0;
-  }
-
-  .tag.editor-actions button {
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--text);
-    cursor: pointer;
-    padding: 4px 8px;
-    border-radius: 6px;
-    font-size: 0.75rem;
-    font-family: inherit;
-    min-height: 28px;
-  }
-
-  .tag.editor-actions button:hover { border-color: var(--accent); }
-
-  .tag.editor-actions .edit-save {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-
-  .tag.editor-actions .edit-cancel { color: var(--dim); }
-
-  .add-row {
-    display: flex;
-    gap: 8px;
-    margin-top: 12px;
-  }
-
-  .add-row input {
-    flex: 1;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 10px 12px;
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-    font-family: inherit;
-    min-height: 40px;
-  }
-
-  .add-row input:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-
-  /* ── Calendar ──────────────────────────── */
-  .cal-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.875rem;
-  }
-
-  .cal-table th {
-    text-align: left;
-    color: var(--dim);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-size: 0.75rem;
-    padding: 12px;
-    border-bottom: 2px solid var(--border);
-    background: var(--panel2);
-  }
-
-  .cal-table td {
-    padding: 12px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .cal-table tbody tr {
-    transition: background 0.2s;
-  }
-
-  .cal-table tbody tr:hover td {
-    background: rgba(16, 185, 129, 0.05);
-  }
-
-  .cal-form {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 16px;
-    flex-wrap: wrap;
-    align-items: flex-end;
-  }
-
-  .cal-form select, .cal-form input {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 10px 12px;
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-    font-family: inherit;
-    min-height: 40px;
-  }
-
-  .cal-form select:focus, .cal-form input:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
-  }
-
-  .cal-tabs {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 16px;
-  }
-
-  .cal-tab {
-    padding: 8px 16px;
-    border-radius: 6px;
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--dim);
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    font-family: inherit;
-    transition: all 0.2s;
-    min-height: 36px;
-  }
-
-  .cal-tab:hover {
-    border-color: var(--accent);
-    color: var(--text);
-  }
-
-  .cal-tab.active {
-    background: rgba(16, 185, 129, 0.1);
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-
-  .empty-hint {
-    color: var(--dim);
-    font-size: 0.875rem;
-    padding: 20px;
-    text-align: center;
-  }
-
-  /* ── Override controls ─────────────────── */
-  .override-row {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-
-  .override-row select, .override-row input {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 10px 12px;
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-    font-family: inherit;
-    min-height: 40px;
-  }
-
-  .override-row select:focus, .override-row input:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
-  }
-
-  /* ── Toast ──────────────────────────────── */
-  .toast {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    background: var(--panel);
-    border: 1px solid var(--accent);
-    color: var(--accent);
-    padding: 12px 20px;
-    border-radius: var(--radius);
-    font-weight: 600;
-    font-size: 0.875rem;
-    opacity: 0;
-    transform: translateY(16px);
-    transition: all 0.2s;
-    pointer-events: none;
-    z-index: 200;
-    box-shadow: var(--shadow);
-    max-width: 400px;
-  }
-
-  .toast.show {
-    opacity: 1;
-    transform: translateY(0);
-  }
-
-  .toast.error {
-    border-color: var(--danger);
-    color: var(--danger);
-  }
-
-  .hidden { display: none !important; }
-
-  /* ── Responsive ─────────────────────────── */
-  @media (max-width: 1024px) {
-    .layout {
-      grid-template-columns: 240px 1fr;
-      gap: 16px;
-    }
-  }
-
-  @media (max-width: 768px) {
-    body {
-      padding: 16px;
-      padding-bottom: 60px;
-    }
-
-    header {
-      padding: 16px;
-      gap: 12px;
-    }
-
-    .nav-tabs {
-      width: 100%;
-    }
-
-    .nav-tab {
-      flex: 1;
-      text-align: center;
-      padding: 8px 12px;
-    }
-
-    .layout {
-      grid-template-columns: 1fr;
-      gap: 16px;
-    }
-
-    .sidebar {
-      position: static;
-    }
-
-    .grid {
-      grid-template-columns: 1fr;
-      gap: 16px;
-    }
-
-    .section {
-      padding: 20px;
-    }
-
-    .ch-body {
-      padding: 16px;
-    }
-
-    .toast {
-      bottom: 16px;
-      right: 16px;
-      left: 16px;
-      max-width: none;
-    }
-  }
-
-  @media (max-width: 480px) {
-    body {
-      padding: 12px;
-      padding-bottom: 60px;
-    }
-
-    header {
-      padding: 12px;
-    }
-
-    .section {
-      padding: 16px;
-    }
-
-    .ch-body {
-      padding: 12px;
-    }
-
-    .sidebar {
-      padding: 16px;
-    }
-  }
-
-  /* ── Footer ─────────────────────────────── */
-  .site-footer {
-    text-align: center;
-    padding: 32px 16px 20px;
-    font-size: 0.75rem;
-    color: var(--dim);
-    letter-spacing: 0.02em;
-    opacity: 0.6;
-    transition: opacity 0.3s;
-  }
-
-  .site-footer:hover {
-    opacity: 1;
-  }
-
-  .site-footer p {
-    margin: 0 0 8px;
-  }
-
-  .footer-links {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 8px 16px;
-  }
-
-  .footer-links a {
-    color: inherit;
-  }
-</style>
+<link rel="icon" type="image/svg+xml" href="/bell.svg">
+<link rel="manifest" href="/manifest.json">
+<script>
+  // Apply the saved/system theme before first paint (no light/dark flash).
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('theme'); } catch (e) {}
+    if (t !== 'light' && t !== 'dark') t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
+<link rel="stylesheet" href="/assets/ui.css">
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
 
-<header>
-  <div class="logo">
-    <div class="logo-icon">
-      <svg viewBox="0 0 24 24" fill="none" stroke="#001020" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="3" width="7" height="7" rx="1.5"/>
-        <rect x="14" y="3" width="7" height="7" rx="1.5"/>
-        <rect x="3" y="14" width="7" height="7" rx="1.5"/>
-        <rect x="14" y="14" width="7" height="7" rx="1.5"/>
-        <line x1="6.5" y1="6.5" x2="17.5" y2="17.5"/>
-        <line x1="17.5" y1="6.5" x2="6.5" y2="17.5"/>
-      </svg>
-    </div>
-    <div class="logo-text">
-      <h1>Relay Controller</h1>
-      <div class="subtitle">Profile Manager</div>
-    </div>
-  </div>
-  <div class="status-bar">
-    <button class="status-pill icon-btn" id="btn-theme" title="Toggle light/dark mode">☀</button>
-    <a class="status-pill" href="/">Schedule</a>
-    <a class="status-pill" href="/logout">Log out</a>
+<div class="shell">
+<header class="app-header">
+  <a class="brand" href="/" aria-label="Relay Controller — dashboard">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    </span>
+    <span>
+      <span class="brand-name">Relay Controller</span>
+      <span class="subtitle">Profile manager</span>
+    </span>
+  </a>
+  <nav class="nav-tabs" aria-label="Main">
+    <a class="nav-tab" href="/">Dashboard</a>
+    <a class="nav-tab active" href="/profiles" aria-current="page">Profiles</a>
+    <a class="nav-tab" href="/profile-editor">JSON editor</a>
+  </nav>
+  <div class="header-actions">
+    <button type="button" class="icon-btn" id="btn-theme" aria-label="Switch theme" title="Switch theme"></button>
+    <a class="icon-btn" href="/logout" aria-label="Log out" title="Log out">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+    </a>
   </div>
 </header>
 
-<!-- ── Broken profile.json banner (server-side JSON validation) ───── -->
-<style>
-  .profile-broken-banner{background:rgba(239,68,68,.12);border:1px solid var(--danger);border-radius:10px;margin:16px 0;padding:12px 16px}
-  .profile-broken-banner-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-  .profile-broken-icon{font-size:22px;color:var(--danger)}
-  .profile-broken-text{flex:1;min-width:220px;color:var(--danger)}
-  .profile-broken-text strong{display:block;font-size:14px;letter-spacing:.02em}
-  .profile-broken-text span{font-size:12px;opacity:.85}
-  .profile-broken-actions{display:flex;gap:8px;flex-wrap:wrap}
-  .btn-broken{background:var(--danger);color:#fff;border:none;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer;text-decoration:none;font-family:inherit}
-  .btn-broken:hover{opacity:.85}
-  .profile-broken-details{margin-top:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:pre-wrap;max-height:220px;overflow:auto;background:rgba(0,0,0,.15);border-radius:6px;padding:8px;color:inherit}
-</style>
-<div id="profile-broken-banner" class="profile-broken-banner" style="display:none">
+<!-- ── Broken profiles.json banner (server-side JSON validation) ───── -->
+<div id="profile-broken-banner" class="profile-broken-banner" style="display:none" role="alert">
   <div class="profile-broken-banner-row">
-    <span class="profile-broken-icon">⚠</span>
+    <span class="profile-broken-icon" aria-hidden="true">⚠</span>
     <div class="profile-broken-text">
-      <strong>⚠ BROKEN PROFILE.JSON DETECTED</strong>
+      <strong>BROKEN PROFILES.JSON DETECTED</strong>
       <span id="profile-broken-summary"></span>
     </div>
     <div class="profile-broken-actions">
-      <a class="btn-broken" href="/profile-editor">Open JSON Editor</a>
-      <button type="button" class="btn-broken" id="btn-broken-repair">🔧 Attempt Automatic Repair</button>
-      <button type="button" class="btn-broken" id="btn-broken-revalidate">Reload / Revalidate</button>
-      <button type="button" class="btn-broken" id="btn-broken-details">View Validation Details</button>
+      <a class="btn-broken" href="/profile-editor">Open JSON editor</a>
+      <button type="button" class="btn-broken" id="btn-broken-repair">Attempt automatic repair</button>
+      <button type="button" class="btn-broken" id="btn-broken-revalidate">Reload / revalidate</button>
+      <button type="button" class="btn-broken" id="btn-broken-details">View validation details</button>
     </div>
   </div>
   <div id="profile-broken-details" class="profile-broken-details" style="display:none"></div>
 </div>
 
 <!-- ── System file health banner (settings/calendar/api_keys/firmware_state) -->
-<div id="system-health-banner" class="profile-broken-banner" style="display:none">
+<div id="system-health-banner" class="profile-broken-banner" style="display:none" role="alert">
   <div class="profile-broken-banner-row">
-    <span class="profile-broken-icon">⚠</span>
+    <span class="profile-broken-icon" aria-hidden="true">⚠</span>
     <div class="profile-broken-text">
-      <strong>⚠ SYSTEM FILE ERROR</strong>
+      <strong>SYSTEM FILE ERROR</strong>
       <span id="system-health-summary"></span>
     </div>
     <div class="profile-broken-actions">
-      <button type="button" class="btn-broken" id="btn-health-revalidate">Reload / Revalidate</button>
-      <button type="button" class="btn-broken" id="btn-health-details">View Details</button>
+      <button type="button" class="btn-broken" id="btn-health-revalidate">Reload / revalidate</button>
+      <button type="button" class="btn-broken" id="btn-health-details">View details</button>
     </div>
   </div>
   <div id="system-health-details" class="profile-broken-details" style="display:none"></div>
 </div>
 
-<div class="nav-tabs">
-  <a class="nav-tab" href="/">Schedule</a>
-  <a class="nav-tab active" href="/profiles">Profiles</a>
-  <a class="nav-tab" href="/profile-editor">JSON Editor</a>
-</div>
+<main id="main" tabindex="-1">
+<h1 class="sr-only">Profiles</h1>
 
-<!-- ── Active profile banner ──────────────────────────────────── -->
 <div class="active-banner" id="active-banner">
   <div class="dot" id="active-dot"></div>
   <div class="info">
@@ -1072,19 +94,24 @@
 </div>
 
 <!-- ── Override section ───────────────────────────────────────── -->
-<div class="section">
-  <h2>Manual Override</h2>
-  <div class="sub">Temporarily activate any profile regardless of calendar assignments.</div>
+<details class="section fold" id="override-details">
+  <summary><span><span class="fold-title">Manual override</span><span class="fold-sub">Run a different profile right now &mdash; exam day, early closing, special event</span></span></summary>
+  <div class="fold-body">
   <div class="override-row">
-    <select id="override-profile">
-      <option value="">— Select profile —</option>
-    </select>
-    <input type="date" id="override-until" title="Auto-expire on this date (optional)" style="width:160px;">
-    <button class="btn btn-run" id="btn-override">Apply Override</button>
-    <button class="btn btn-ghost" id="btn-clear-override-bottom" style="display:none;">Clear Override</button>
+    <div class="field-inline">
+      <label for="override-profile">Profile to run</label>
+      <select id="override-profile"><option value="">— Select profile —</option></select>
+    </div>
+    <div class="field-inline" style="flex:0 1 190px">
+      <label for="override-until">Ends on (optional)</label>
+      <input type="date" id="override-until" aria-describedby="override-until-hint">
+    </div>
+    <button type="button" class="btn btn-run" id="btn-override">Apply override</button>
+    <button type="button" class="btn btn-ghost" id="btn-clear-override-bottom" style="display:none;">Clear override</button>
   </div>
-</div>
-
+  <div class="hint" id="override-until-hint">With an end date, normal scheduling resumes at the <em>start</em> of that date &mdash; pick the day after the last day you want covered. Leave it empty to keep the override until you clear it.</div>
+  </div>
+</details>
 <div class="layout">
   <!-- ── Sidebar ──────────────────────────────── -->
   <div class="sidebar">
@@ -1093,15 +120,15 @@
       <div class="empty-hint">No profiles yet.</div>
     </div>
     <div class="sidebar-actions">
-      <button class="btn btn-add" id="btn-create">+ Create Profile</button>
-      <button class="btn btn-ghost btn-sm" id="btn-duplicate" disabled>Duplicate</button>
-      <button class="btn btn-ghost btn-sm" id="btn-rename" disabled>Rename</button>
-      <button class="btn btn-danger btn-sm" id="btn-delete" disabled>Delete</button>
+      <button type="button" class="btn btn-add" id="btn-create">+ New profile</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-duplicate" disabled>Duplicate</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-rename" disabled>Rename</button>
+      <button type="button" class="btn btn-ghost btn-sm wide" id="btn-set-default" disabled>Make default</button>
+      <button type="button" class="btn btn-danger btn-sm wide" id="btn-delete" disabled>Delete profile</button>
       <hr class="sidebar-divider">
-      <button class="btn btn-ghost btn-sm" id="btn-export">Export All</button>
-      <button class="btn btn-ghost btn-sm" id="btn-import">Import</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-export">Export all</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-import">Import</button>
       <input type="file" id="import-file" accept="application/json" class="hidden">
-      <button class="btn btn-ghost btn-sm" id="btn-set-default" disabled>Set as Default</button>
     </div>
   </div>
 
@@ -1113,69 +140,76 @@
 
 <!-- ── Calendar section ───────────────────────────────────────── -->
 <div class="section" style="margin-top:22px;">
-  <h2>Calendar Assignments</h2>
-  <div class="sub">Assign profiles to specific dates or days of the week. Higher priority than the default profile.</div>
+  <h2>Calendar</h2>
+  <div class="sub">Decide which profile runs on which day. Priority: manual override &rarr; specific date &rarr; weekly pattern &rarr; default profile.</div>
 
-  <div class="cal-tabs">
-    <button class="cal-tab active" data-cal-tab="dates">Specific Dates</button>
-    <button class="cal-tab" data-cal-tab="dow">Days of Week</button>
+  <div class="cal-tabs" role="tablist" aria-label="Calendar view">
+    <button type="button" class="cal-tab active" role="tab" aria-selected="true" data-cal-tab="dow">Weekly pattern</button>
+    <button type="button" class="cal-tab" role="tab" aria-selected="false" data-cal-tab="dates">Specific dates</button>
   </div>
 
-  <div id="cal-panel-dates">
-    <div class="cal-form">
-      <input type="date" id="cal-date" style="width:170px;">
-      <select id="cal-date-profile">
-        <option value="">— Select profile —</option>
-      </select>
-      <button class="btn btn-add" id="btn-cal-date">Assign Date</button>
-    </div>
-    <table class="cal-table">
-      <thead><tr><th>Date</th><th>Profile</th><th></th></tr></thead>
-      <tbody id="cal-dates-body"><tr><td colspan="3" class="empty-hint">No date-specific assignments.</td></tr></tbody>
-    </table>
+  <div id="cal-panel-dow">
+    <div class="week-grid" id="week-grid"></div>
   </div>
 
-  <div id="cal-panel-dow" class="hidden">
+  <div id="cal-panel-dates" class="hidden">
     <div class="cal-form">
-      <select id="cal-dow">
-        <option value="sunday">Sunday</option>
-        <option value="monday">Monday</option>
-        <option value="tuesday">Tuesday</option>
-        <option value="wednesday">Wednesday</option>
-        <option value="thursday">Thursday</option>
-        <option value="friday">Friday</option>
-        <option value="saturday">Saturday</option>
-      </select>
-      <select id="cal-dow-profile">
-        <option value="">— Select profile —</option>
-      </select>
-      <button class="btn btn-add" id="btn-cal-dow">Assign Day</button>
+      <div class="field-inline" style="flex:0 1 190px"><label for="cal-date">Date</label><input type="date" id="cal-date"></div>
+      <div class="field-inline"><label for="cal-date-profile">Profile</label><select id="cal-date-profile"><option value="">— Select profile —</option></select></div>
+      <button type="button" class="btn btn-add" id="btn-cal-date">Assign date</button>
     </div>
-    <table class="cal-table">
-      <thead><tr><th>Day</th><th>Profile</th><th></th></tr></thead>
-      <tbody id="cal-dow-body"><tr><td colspan="3" class="empty-hint">No day-of-week assignments.</td></tr></tbody>
-    </table>
+    <div class="table-wrap">
+      <table class="cal-table">
+        <thead><tr><th scope="col">Date</th><th scope="col">Profile</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+        <tbody id="cal-dates-body"><tr><td colspan="3" class="empty-hint">No date-specific assignments yet.</td></tr></tbody>
+      </table>
+    </div>
   </div>
 </div>
+</main>
 
-<div class="toast" id="toast"></div>
+<footer class="site-footer">
+  <p>Built from silicon to server. &mdash; Chinmayakeshav</p>
+  <div class="footer-links">
+    <a href="https://github.com/CoolNinja2009" target="_blank" rel="noopener noreferrer">GitHub</a>
+    <a href="https://github.com/CoolNinja2009?tab=repositories" target="_blank" rel="noopener noreferrer">Projects</a>
+    <span>ESP32 + Node.js</span>
+    <a href="https://www.gnu.org/licenses/gpl-3.0.en.html" target="_blank" rel="noopener noreferrer">GPL-3.0 License</a>
+  </div>
+</footer>
+</div><!-- /.shell -->
 
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="/assets/channel-card.js"></script>
 <script>
-// ── Helpers ────────────────────────────────────────────────────────
-const $ = (s, el=document) => el.querySelector(s);
-const $$ = (s, el=document) => [...el.querySelectorAll(s)];
+'use strict';
 
-let profileList = [];
-let selectedProfileId = null;
-let selectedProfileData = null;
-let allProfilesMap = {}; // id -> name for lookups
-let calendarData = null;
+// ── Helpers ────────────────────────────────────────────────────────────
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const { escapeHtml } = BellChannelCard.helpers;
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+
+const ICON = {
+  sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
+  moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
+};
 
 async function api(method, path, body) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  const opts = { method, headers: { 'Content-Type': 'application/json' }, cache: 'no-store' };
   if (body !== undefined) opts.body = JSON.stringify(body);
-  const res = await fetch(path, opts);
-  if (res.status === 401) { window.location.href = '/login'; throw new Error('Session expired'); }
+  let res;
+  try {
+    res = await fetch(path, opts);
+  } catch (e) {
+    throw new Error('Cannot reach the server');
+  }
+  if (res.status === 401) {
+    window.location.href = '/login?next=' + encodeURIComponent(location.pathname);
+    throw new Error('Session expired');
+  }
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
     try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
@@ -1184,542 +218,256 @@ async function api(method, path, body) {
   return res.json();
 }
 
+let toastTimer;
 function toast(msg, isErr) {
   const el = $('#toast');
   el.textContent = msg;
-  el.className = 'toast' + (isErr ? ' error' : '') + ' show';
-  clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove('show'), 2400);
+  el.className = 'toast show' + (isErr ? ' error' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), isErr ? 5500 : 2800);
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+// ── State ──────────────────────────────────────────────────────────────
+let profileList = [];
+let selectedProfileId = null;
+let selectedProfileData = null;     // working copy
+let profileSavedJson = '';          // JSON of its channels as last loaded/saved
+let allProfilesMap = {};
+let calendarData = null;
+let defaultProfileId = null;
+let activeInfo = null;
+let lastActiveKey = '';
+let firstEditorRender = true;
+let overrideAutoOpened = false;
+const toolsOpen = new Set();
 
-function fmtScheduleEntry(e) {
-  if (typeof e === 'string') return e;
-  if (e && typeof e === 'object' && e.time) {
-    return e.pulse_ms ? `${e.time} (${e.pulse_ms}ms)` : e.time;
-  }
-  return String(e);
-}
+const isDirty = () => !!selectedProfileData && JSON.stringify(selectedProfileData.channels) !== profileSavedJson;
+const confirmDiscard = () => !isDirty() || confirm('You have unsaved changes to this profile. Discard them?');
+window.addEventListener('beforeunload', (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
 
-// ── Load everything ────────────────────────────────────────────────
+const EMPTY_EDITOR = '<div class="section"><div class="empty-hint" style="padding:48px 16px">Select a profile on the left to edit its bell times.</div></div>';
+
+// ── Load everything ────────────────────────────────────────────────────
 async function loadAll() {
-  await loadProfilesList();  // must finish first — calendar rendering needs allProfilesMap
+  await loadProfilesList(); // first — calendar rendering needs the name lookup
   await Promise.all([loadActiveInfo(), loadCalendar()]);
 }
 
 async function loadProfilesList() {
   try {
-    profileList = await api('GET', '/api/profiles?_=' + Date.now());
-    allProfilesMap = {};
-    for (const p of profileList) allProfilesMap[p.id] = p.name;
+    const [list, settings] = await Promise.all([api('GET', '/api/profiles'), api('GET', '/api/settings').catch(() => null)]);
+    profileList = list;
+    defaultProfileId = settings ? settings.default_profile || null : null;
+    allProfilesMap = Object.fromEntries(list.map((p) => [p.id, p.name]));
     renderProfileList();
     populateProfileSelects();
+    renderWeekGrid();
   } catch (e) { toast('Failed to load profiles: ' + e.message, true); }
+}
+
+function reasonText(info) {
+  const r = info.reason || '';
+  if (r === 'manual_override') return 'Manual override active' + (info.overrideUntil ? ` — ends ${String(info.overrideUntil).slice(0, 10)}` : '');
+  if (r.startsWith('calendar_date:')) return `Chosen by calendar date ${r.split(':')[1]}`;
+  if (r.startsWith('calendar_dow:')) return `Chosen by weekly pattern (${cap(r.split(':')[1])})`;
+  if (r === 'default') return 'Default profile';
+  if (r === 'fallback_first') return 'Fallback (first profile)';
+  return r;
 }
 
 async function loadActiveInfo() {
   try {
-    const info = await api('GET', '/api/profiles/active?_=' + Date.now());
-    const dot = $('#active-dot');
-    dot.className = 'dot' + (info.override ? ' override' : '');
+    const info = await api('GET', '/api/profiles/active');
+    activeInfo = info;
+    $('#active-dot').className = 'dot' + (info.override ? ' override' : '');
     $('#active-name').textContent = info.name || '(none)';
-    const reasonMap = {
-      manual_override: 'Manual override active',
-      default: 'Default profile',
-      fallback_first: 'Fallback (first profile)',
-    };
-    let reason = '';
-    if (info.reason && info.reason.startsWith('calendar_date:')) reason = 'Calendar date: ' + info.reason.split(':')[1];
-    else if (info.reason && info.reason.startsWith('calendar_dow:')) reason = 'Day of week: ' + info.reason.split(':')[1];
-    else reason = reasonMap[info.reason] || info.reason || '';
-    if (info.override && info.overrideUntil) reason += ' (expires ' + info.overrideUntil.slice(0,10) + ')';
-    $('#active-reason').textContent = reason;
-    // Show/hide override clear buttons
+    $('#active-reason').textContent = reasonText(info);
+    if (info.override && !overrideAutoOpened) { overrideAutoOpened = true; $('#override-details').open = true; }
     const showClear = !!info.override;
     $('#btn-clear-override').style.display = showClear ? '' : 'none';
     $('#btn-clear-override-bottom').style.display = showClear ? '' : 'none';
+    const key = `${info.profileId}|${info.date}`;
+    if (key !== lastActiveKey) {
+      lastActiveKey = key;
+      renderProfileList();
+      renderWeekGrid();
+      renderCalendarTables();
+    }
   } catch (e) { /* non-fatal */ }
 }
 
 async function loadCalendar() {
   try {
-    calendarData = await api('GET', '/api/calendar?_=' + Date.now());
+    calendarData = await api('GET', '/api/calendar');
     renderCalendarTables();
+    renderWeekGrid();
   } catch (e) { /* non-fatal */ }
 }
 
-// ── Render profile sidebar ─────────────────────────────────────────
+// ── Sidebar ────────────────────────────────────────────────────────────
 function renderProfileList() {
   const list = $('#profile-list');
+  list.setAttribute('role', 'listbox');
+  list.setAttribute('aria-label', 'Profiles');
   if (!profileList.length) {
     list.innerHTML = '<div class="empty-hint">No profiles yet.</div>';
-    return;
+  } else {
+    const liveId = activeInfo ? activeInfo.profileId : null;
+    list.innerHTML = profileList.map((p) => `
+      <div class="profile-item${p.id === selectedProfileId ? ' selected' : ''}" role="option" tabindex="0" aria-selected="${p.id === selectedProfileId}" data-id="${escapeHtml(p.id)}">
+        <span class="p-name">${escapeHtml(p.name)}</span>
+        <span class="p-badges">${p.id === liveId ? '<span class="badge live" title="Running now">Live</span>' : ''}${p.id === defaultProfileId ? '<span class="badge default" title="Used when nothing else applies">Default</span>' : ''}</span>
+      </div>`).join('');
+    $$('.profile-item', list).forEach((el) => {
+      el.onclick = () => selectProfile(el.dataset.id);
+      el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectProfile(el.dataset.id); } };
+    });
   }
-  list.innerHTML = profileList.map(p => `
-    <div class="profile-item${p.id === selectedProfileId ? ' selected' : ''}" data-id="${p.id}">
-      <span>${escapeHtml(p.name)}</span>
-      <span class="ch-count">${p.channelCount} ch</span>
-    </div>
-  `).join('');
-
-  list.querySelectorAll('.profile-item').forEach(el => {
-    el.onclick = () => selectProfile(el.dataset.id);
-  });
-
-  // Update sidebar buttons
-  const hasSelection = !!selectedProfileId;
-  $('#btn-duplicate').disabled = !hasSelection;
-  $('#btn-rename').disabled = !hasSelection;
-  $('#btn-delete').disabled = !hasSelection || profileList.length <= 1;
-  $('#btn-set-default').disabled = !hasSelection;
+  const has = !!selectedProfileId;
+  $('#btn-duplicate').disabled = !has;
+  $('#btn-rename').disabled = !has;
+  $('#btn-delete').disabled = !has || profileList.length <= 1;
+  $('#btn-set-default').disabled = !has || selectedProfileId === defaultProfileId;
 }
 
 function populateProfileSelects() {
-  const opts = profileList.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
-  const selects = ['#override-profile', '#cal-date-profile', '#cal-dow-profile'];
-  for (const sel of selects) {
+  const opts = profileList.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
+  for (const sel of ['#override-profile', '#cal-date-profile']) {
     const el = $(sel);
     if (!el) continue;
+    const keep = el.value;
     el.innerHTML = '<option value="">— Select profile —</option>' + opts;
+    if (keep && allProfilesMap[keep]) el.value = keep;
   }
 }
 
-// ── Select profile ─────────────────────────────────────────────────
+// ── Profile editor ─────────────────────────────────────────────────────
 async function selectProfile(id) {
-  selectedProfileId = id;
+  if (id === selectedProfileId && selectedProfileData) return;
+  if (!confirmDiscard()) return;
   try {
-    selectedProfileData = await api('GET', `/api/profiles/${encodeURIComponent(id)}?_=${Date.now()}`);
+    const data = await api('GET', `/api/profiles/${encodeURIComponent(id)}`);
+    BellChannelCard.normalize(data.channels);
+    selectedProfileId = id;
+    selectedProfileData = data;
+    profileSavedJson = JSON.stringify(data.channels);
+    firstEditorRender = true;
     renderProfileEditor();
-    renderProfileList(); // re-render for selection highlight
+    renderProfileList();
   } catch (e) {
     toast('Failed to load profile: ' + e.message, true);
-    selectedProfileId = null;
-    selectedProfileData = null;
   }
 }
 
-// ── Render profile editor ──────────────────────────────────────────
-function renderProfileEditor() {
-  if (!selectedProfileData) {
-    $('#main-content').innerHTML = '<div class="empty-hint" style="padding:40px;text-align:center;">Select a profile from the sidebar to edit its schedule.</div>';
-    return;
-  }
+function updateDirtyUI() {
+  const dirty = isDirty();
+  const hint = $('#dirty-hint');
+  if (!hint) return;
+  hint.textContent = dirty ? 'Unsaved changes' : '';
+  hint.style.color = dirty ? 'var(--accent2-ink)' : '';
+  hint.style.fontWeight = dirty ? '650' : '';
+  $('#btn-revert-channels').disabled = !dirty;
+  $('#btn-save-channels').disabled = !dirty;
+}
+
+function renderProfileEditor(focus) {
+  const host = $('#main-content');
+  if (!selectedProfileData) { host.innerHTML = EMPTY_EDITOR; return; }
   const p = selectedProfileData;
-  const channels = p.channels || {};
+  const live = activeInfo && activeInfo.profileId === selectedProfileId;
+  host.innerHTML = `
+    <section class="section">
+      <h2 id="profile-title"></h2>
+      <div class="sub" id="profile-sub"></div>
+      <div class="grid" id="profile-channels"></div>
+      <div class="btn-row" style="margin-top:20px;align-items:center">
+        <button type="button" class="btn btn-save" id="btn-save-channels">Save profile</button>
+        <button type="button" class="btn btn-ghost" id="btn-revert-channels">Revert</button>
+        <span class="hint" id="dirty-hint" style="margin:0 0 0 4px" role="status"></span>
+      </div>
+    </section>`;
+  $('#profile-title').textContent = p.name;
+  $('#profile-sub').textContent = `${live ? 'Running now — saved changes reach the controller within seconds. ' : ''}Last updated ${p.updated ? new Date(p.updated).toLocaleString() : 'never'}.`;
 
-  let html = `
-    <div class="section">
-      <h2>${escapeHtml(p.name)}</h2>
-      <div class="sub">${Object.keys(channels).length} channel(s) · Updated ${new Date(p.updated).toLocaleString()}</div>
-  `;
+  const ctx = {
+    headingLevel: 3,
+    toolsOpen,
+    canRing: false,
+    toast,
+    rerender: (f) => renderProfileEditor(f),
+    changed: () => updateDirtyUI(),
+  };
+  Object.entries(p.channels || {}).forEach(([key, ch], index) => {
+    $('#profile-channels').appendChild(BellChannelCard.build(key, ch, { ...ctx, index, animate: firstEditorRender }));
+  });
+  firstEditorRender = false;
+  updateDirtyUI();
 
-  html += '<div class="grid">';
-  for (const [key, ch] of Object.entries(channels)) {
-    html += renderChannelCard(key, ch);
-  }
-  html += '</div>';
-
-  // Add channel button
-  html += `
-    <div style="margin-top:16px;">
-      <button class="btn btn-add" id="btn-add-channel">+ Add Channel</button>
-    </div>
-    <div class="btn-row" style="margin-top:16px;">
-      <button class="btn btn-save" id="btn-save-channels">Save Profile</button>
-    </div>
-  `;
-
-  html += '</div>'; // close section
-
-  $('#main-content').innerHTML = html;
-
-  // Wire up channel card events
-  for (const [key, ch] of Object.entries(channels)) {
-    wireChannelCard(key, ch);
-  }
-
-  // Add channel
-  $('#btn-add-channel').onclick = async () => {
-    const key = prompt('Channel key (letters/numbers, must start with a letter, e.g. "ch3" or "bell"):');
-    if (!key) return;
-    if (!/^[a-zA-Z][a-zA-Z0-9_-]{0,19}$/.test(key)) { toast('Invalid key format', true); return; }
-    if (p.channels[key]) { toast(`Channel '${key}' already exists`, true); return; }
-    const label = prompt('Display label (optional):', key.toUpperCase()) || key.toUpperCase();
-    p.channels[key] = { enabled: false, pulse_ms: 2000, schedule: [], skip_dates: [], label };
+  $('#btn-save-channels').onclick = saveProfile;
+  $('#btn-revert-channels').onclick = () => {
+    selectedProfileData.channels = JSON.parse(profileSavedJson);
     renderProfileEditor();
-    toast(`Channel '${key}' added — Save to persist`);
+    toast('Changes reverted');
   };
-
-  $('#btn-save-channels').onclick = async () => {
-    try {
-      await api('PUT', `/api/profiles/${encodeURIComponent(selectedProfileId)}`, { channels: p.channels });
-      selectedProfileData = await api('GET', `/api/profiles/${encodeURIComponent(selectedProfileId)}?_=${Date.now()}`);
-      toast('Profile saved');
-      await loadProfilesList();
-      renderProfileEditor(); // re-render with fresh data
-    } catch (e) { toast('Save failed: ' + e.message, true); }
-  };
+  if (focus) {
+    const target = $(`.channel[data-key="${CSS.escape(focus.key)}"] ${focus.sel}`);
+    if (target) target.focus();
+  }
 }
 
-function renderChannelCard(key, ch) {
-  const label = ch.label || key.toUpperCase();
-  return `
-    <div class="channel" data-key="${key}">
-      <div class="ch-header">
-        <div style="flex:1;min-width:0;">
-          <h3 contenteditable="true" spellcheck="false" data-field="label">${escapeHtml(label)}</h3>
-          <span class="ch-key-tag">${escapeHtml(key)}</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px;">
-          <button class="toggle${ch.enabled ? ' active' : ''}" data-action="toggle" title="Enable/disable schedule"></button>
-          <button class="btn btn-danger btn-sm" data-action="delete-ch" title="Delete channel">&times;</button>
-        </div>
-      </div>
-      <div class="ch-body">
-      <div class="field">
-        <label>Pulse Duration (ms)</label>
-        <input type="number" value="${ch.pulse_ms}" min="100" step="100" data-field="pulse_ms">
-      </div>
-      <div class="field">
-        <label>Schedule (HH:MM)</label>
-        <div class="tag-list" data-list="schedule">
-          ${(ch.schedule||[]).map(t => {
-            const label = fmtScheduleEntry(t);
-            const val = typeof t === 'string' ? t : (t && t.time || '');
-            return `<span class="tag" data-list="schedule" data-val="${escapeHtml(val)}">${escapeHtml(label)}<button data-remove="schedule" data-val="${escapeHtml(val)}">&times;</button></span>`;
-          }).join('')}
-        </div>
-        <div class="add-row">
-          <input type="time" data-input="schedule" placeholder="HH:MM" style="width:130px;">
-          <input type="number" data-input="schedule_pulse" placeholder="ms" min="100" step="100" style="width:70px;" title="Optional pulse duration (uses channel default if empty)">
-          <button class="btn btn-add" data-add="schedule">+ Add</button>
-        </div>
-        <div style="margin-top:6px;">
-          <a href="#" class="bulk-toggle" data-action="toggle-bulk" style="font-size:0.78rem;color:var(--accent);opacity:0.7;text-decoration:none;">+ Bulk add</a>
-        </div>
-        <div class="bulk-section" style="display:none;margin-top:8px;padding:10px 12px;background:var(--panel2);border-radius:6px;border:1px solid var(--border);">
-          <div style="display:flex;gap:2px;margin-bottom:8px;">
-            <button class="bulk-tab active" data-tab="paste" style="flex:1;padding:5px 0;background:none;border:none;border-bottom:2px solid var(--accent);color:var(--accent);font-size:0.75rem;cursor:pointer;">Paste</button>
-            <button class="bulk-tab" data-tab="range" style="flex:1;padding:5px 0;background:none;border:none;border-bottom:2px solid transparent;color:var(--dim);font-size:0.75rem;cursor:pointer;">Range</button>
-          </div>
-          <div class="bulk-panel" data-panel="paste">
-            <textarea data-input="bulk_paste" rows="3" placeholder="One per line: HH:MM [pulse_ms]&#10;08:00&#10;09:00 5000&#10;10:30" style="width:100%;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);font:0.8rem monospace;padding:6px 8px;resize:vertical;box-sizing:border-box;"></textarea>
-            <button class="btn btn-add" data-action="bulk-add" style="margin-top:6px;width:100%;">Add All</button>
-          </div>
-          <div class="bulk-panel" data-panel="range" style="display:none;">
-            <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
-              <input type="time" data-input="range_from" style="width:105px;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:0.8rem;">
-              <span style="color:var(--dim);font-size:0.75rem;">to</span>
-              <input type="time" data-input="range_to" style="width:105px;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:0.8rem;">
-              <span style="color:var(--dim);font-size:0.75rem;">every</span>
-              <input type="number" data-input="range_step" placeholder="min" min="1" max="1440" style="width:55px;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:0.8rem;">
-              <input type="number" data-input="range_pulse" placeholder="ms" min="100" step="100" style="width:60px;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:0.8rem;" title="Optional pulse (ms)">
-            </div>
-            <button class="btn btn-add" data-action="range-gen" style="margin-top:6px;width:100%;">Generate</button>
-          </div>
-        </div>
-      </div>
-      <div class="field">
-        <label>Skip Dates (YYYY-MM-DD)</label>
-        <div class="tag-list" data-list="skip_dates">
-          ${(ch.skip_dates||[]).map(d => `<span class="tag">${escapeHtml(d)}<button data-remove="skip_dates" data-val="${escapeHtml(d)}">&times;</button></span>`).join('')}
-        </div>
-        <div class="add-row">
-          <input type="date" data-input="skip_dates">
-          <button class="btn btn-add" data-add="skip_dates">+ Add</button>
-        </div>
-      </div>
-      </div>
-    </div>
-  `;
+async function saveProfile() {
+  const btn = $('#btn-save-channels');
+  btn.disabled = true;
+  btn.classList.add('is-pending');
+  try {
+    await api('PUT', `/api/profiles/${encodeURIComponent(selectedProfileId)}`, { channels: selectedProfileData.channels });
+    const fresh = await api('GET', `/api/profiles/${encodeURIComponent(selectedProfileId)}`);
+    BellChannelCard.normalize(fresh.channels);
+    selectedProfileData = fresh;
+    profileSavedJson = JSON.stringify(fresh.channels);
+    renderProfileEditor();
+    toast('Profile saved');
+    loadProfilesList();
+  } catch (e) {
+    btn.classList.remove('is-pending');
+    updateDirtyUI();
+    toast('Save failed: ' + e.message, true);
+  }
 }
 
-function wireChannelCard(key, ch) {
-  const card = $(`.channel[data-key="${key}"]`);
-  if (!card) return;
-
-  // Label edit
-  const labelEl = card.querySelector('[data-field="label"]');
-  if (labelEl) {
-    labelEl.addEventListener('blur', () => {
-      ch.label = labelEl.textContent.trim().slice(0, 40) || key.toUpperCase();
-    });
-    labelEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); labelEl.blur(); } });
-  }
-
-  // Toggle
-  const toggleBtn = card.querySelector('[data-action="toggle"]');
-  if (toggleBtn) {
-    toggleBtn.onclick = () => {
-      ch.enabled = !ch.enabled;
-      renderProfileEditor();
-    };
-  }
-
-  // Delete channel
-  const delBtn = card.querySelector('[data-action="delete-ch"]');
-  if (delBtn) {
-    delBtn.onclick = () => {
-      const channels = selectedProfileData.channels;
-      if (Object.keys(channels).length <= 1) { toast('At least one channel must remain', true); return; }
-      if (!confirm(`Delete channel '${key}'?`)) return;
-      delete channels[key];
-      renderProfileEditor();
-      toast(`Channel '${key}' removed — Save to persist`);
-    };
-  }
-
-  // Pulse ms
-  const pulseEl = card.querySelector('[data-field="pulse_ms"]');
-  if (pulseEl) {
-    pulseEl.onchange = e => { ch.pulse_ms = Math.max(100, parseInt(e.target.value) || 2000); };
-  }
-
-  // Add schedule/skip_date
-  card.querySelectorAll('[data-add]').forEach(btn => {
-    btn.onclick = () => {
-      const list = btn.dataset.add;
-      const inp = card.querySelector(`[data-input="${list}"]`);
-      const val = inp.value.trim();
-      if (!val) return;
-      if (list === 'schedule') {
-        if (!/^\d{2}:\d{2}$/.test(val)) { toast('Format: HH:MM', true); return; }
-        const [h,m] = val.split(':').map(Number);
-        if (h<0||h>23||m<0||m>59) { toast('Invalid time', true); return; }
-      }
-      if (list === 'schedule') {
-        const pulseInp = card.querySelector('[data-input="schedule_pulse"]');
-        const pulseVal = pulseInp ? parseInt(pulseInp.value) : 0;
-        const entry = (pulseVal >= 100) ? { time: val, pulse_ms: pulseVal } : val;
-        const dupCheck = ch[list].some(v => (typeof v === 'string' ? v : (v && v.time || '')) === val);
-        if (dupCheck) { toast('Duplicate', true); return; }
-        ch[list].push(entry);
-        ch[list].sort((a,b) => {
-          const at = typeof a === 'string' ? a : (a && a.time || '');
-          const bt = typeof b === 'string' ? b : (b && b.time || '');
-          return at.localeCompare(bt);
-        });
-        inp.value = '';
-        if (pulseInp) pulseInp.value = '';
-        renderProfileEditor();
-      } else {
-        if (list === 'skip_dates') {
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) { toast('Format: YYYY-MM-DD', true); return; }
-        }
-        if (ch[list].includes(val)) { toast('Duplicate', true); return; }
-        ch[list].push(val);
-        ch[list].sort().reverse();
-        inp.value = '';
-        renderProfileEditor();
-      }
-    };
-  });
-
-  // Remove schedule/skip_date
-  card.querySelectorAll('[data-remove]').forEach(btn => {
-    btn.onclick = () => {
-      const list = btn.dataset.remove;
-      const val = btn.dataset.val;
-      ch[list] = ch[list].filter(v => {
-        const ev = typeof v === 'string' ? v : (v && v.time || '');
-        return ev !== val;
-      });
-      renderProfileEditor();
-    };
-  });
-
-  // Click schedule tag to edit inline
-  card.querySelectorAll('.tag[data-list="schedule"]').forEach(tag => {
-    tag.addEventListener('click', (e) => {
-      if (e.target.closest('[data-remove]') || tag.classList.contains('editing')) return;
-      const oldTime = tag.dataset.val;
-      const idx = (ch.schedule||[]).findIndex(v =>
-        (typeof v === 'string' ? v : (v && v.time || '')) === oldTime
-      );
-      if (idx === -1) return;
-      const entry = ch.schedule[idx];
-      const entryTime = typeof entry === 'string' ? entry : (entry && entry.time || '');
-      const entryPulse = (entry && typeof entry === 'object' && entry.pulse_ms) ? entry.pulse_ms : '';
-
-      tag.classList.add('editing');
-      tag.innerHTML = `
-        <input type="time" value="${entryTime}" class="edit-time" style="width:108px;">
-        <input type="number" value="${entryPulse}" class="edit-pulse" placeholder="ms" min="100" step="100" style="width:62px;" title="Pulse duration (ms)">
-        <span class="editor-actions">
-          <button class="edit-save">Save</button>
-          <button class="edit-cancel">Cancel</button>
-        </span>
-      `;
-
-      const saveBtn = tag.querySelector('.edit-save');
-      const cancelBtn = tag.querySelector('.edit-cancel');
-      const timeInp = tag.querySelector('.edit-time');
-      const pulseInp = tag.querySelector('.edit-pulse');
-
-      cancelBtn.onclick = (e2) => { e2.stopPropagation(); renderProfileEditor(); };
-
-      const doSave = () => {
-        const newTime = timeInp.value.trim();
-        if (!/^\d{2}:\d{2}$/.test(newTime)) { toast('Format: HH:MM', true); return; }
-        const [h,m] = newTime.split(':').map(Number);
-        if (h<0||h>23||m<0||m>59) { toast('Invalid time', true); return; }
-        const dup = (ch.schedule||[]).some((v, i2) => {
-          if (i2 === idx) return false;
-          return (typeof v === 'string' ? v : (v && v.time || '')) === newTime;
-        });
-        if (dup) { toast('Duplicate time', true); return; }
-        const newPulse = parseInt(pulseInp.value) || 0;
-        ch.schedule[idx] = (newPulse >= 100) ? { time: newTime, pulse_ms: newPulse } : newTime;
-        ch.schedule.sort((a,b) => {
-          const at = typeof a === 'string' ? a : (a && a.time || '');
-          const bt = typeof b === 'string' ? b : (b && b.time || '');
-          return at.localeCompare(bt);
-        });
-        renderProfileEditor();
-      };
-
-      saveBtn.onclick = (e2) => { e2.stopPropagation(); doSave(); };
-      timeInp.addEventListener('keydown', (e2) => { if (e2.key === 'Enter') doSave(); });
-      pulseInp.addEventListener('keydown', (e2) => { if (e2.key === 'Enter') doSave(); });
-
-      timeInp.focus();
-    });
-  });
-
-  // Bulk add
-  card.querySelector('[data-action="toggle-bulk"]').onclick = e => {
-    e.preventDefault();
-    const section = card.querySelector('.bulk-section');
-    const toggle = card.querySelector('[data-action="toggle-bulk"]');
-    if (section.style.display === 'none') {
-      section.style.display = 'block';
-      toggle.textContent = '- Hide bulk';
-    } else {
-      section.style.display = 'none';
-      toggle.textContent = '+ Bulk add';
-    }
-  };
-
-  card.querySelectorAll('.bulk-tab').forEach(tab => {
-    tab.onclick = () => {
-      card.querySelectorAll('.bulk-tab').forEach(t => {
-        t.classList.remove('active');
-        t.style.borderBottomColor = 'transparent';
-        t.style.color = 'var(--dim)';
-      });
-      tab.classList.add('active');
-      tab.style.borderBottomColor = 'var(--accent)';
-      tab.style.color = 'var(--accent)';
-      card.querySelectorAll('.bulk-panel').forEach(p => {
-        p.style.display = p.dataset.panel === tab.dataset.tab ? 'block' : 'none';
-      });
-    };
-  });
-
-  const addScheduleEntries = (entries) => {
-    let added = 0;
-    for (const e of entries) {
-      const dup = ch.schedule.some(v =>
-        (typeof v === 'string' ? v : (v && v.time || '')) === e.time
-      );
-      if (dup) continue;
-      const entry = (e.pulse_ms && e.pulse_ms >= 100)
-        ? { time: e.time, pulse_ms: e.pulse_ms }
-        : e.time;
-      ch.schedule.push(entry);
-      added++;
-    }
-    if (added > 0) {
-      ch.schedule.sort((a, b) => {
-        const at = typeof a === 'string' ? a : (a && a.time || '');
-        const bt = typeof b === 'string' ? b : (b && b.time || '');
-        return at.localeCompare(bt);
-      });
-    }
-    return added;
-  };
-
-  card.querySelector('[data-action="bulk-add"]').onclick = () => {
-    const ta = card.querySelector('[data-input="bulk_paste"]');
-    const raw = ta.value.trim();
-    if (!raw) return;
-    const entries = [];
-    for (let line of raw.split('\n')) {
-      line = line.trim();
-      if (!line || line.startsWith('#')) continue;
-      const parts = line.split(/\s+/);
-      const timeStr = parts[0];
-      if (!/^\d{2}:\d{2}$/.test(timeStr)) continue;
-      const [h, m] = timeStr.split(':').map(Number);
-      if (h < 0 || h > 23 || m < 0 || m > 59) continue;
-      const pulseMs = parts[1] ? parseInt(parts[1]) : 0;
-      entries.push({ time: timeStr, pulse_ms: pulseMs >= 100 ? pulseMs : 0 });
-    }
-    if (entries.length === 0) { toast('No valid entries found'); return; }
-    const added = addScheduleEntries(entries);
-    ta.value = '';
-    renderProfileEditor();
-    toast(`Added ${added} of ${entries.length} entries`);
-  };
-
-  card.querySelector('[data-action="range-gen"]').onclick = () => {
-    const from = card.querySelector('[data-input="range_from"]').value;
-    const to = card.querySelector('[data-input="range_to"]').value;
-    const step = parseInt(card.querySelector('[data-input="range_step"]').value) || 0;
-    const pulseInp = card.querySelector('[data-input="range_pulse"]');
-    const pulseMs = pulseInp ? (parseInt(pulseInp.value) || 0) : 0;
-    if (!from || !to) { toast('Set From and To times', true); return; }
-    if (!step || step < 1 || step > 1440) { toast('Step must be 1-1440 minutes', true); return; }
-    const [fh, fm] = from.split(':').map(Number);
-    const [th, tm] = to.split(':').map(Number);
-    const fromMin = fh * 60 + fm;
-    const toMin = th * 60 + tm;
-    if (fromMin >= toMin) { toast('From must be before To', true); return; }
-    const entries = [];
-    for (let m = fromMin; m <= toMin; m += step) {
-      const hh = String(Math.floor(m / 60)).padStart(2, '0');
-      const mm = String(m % 60).padStart(2, '0');
-      entries.push({ time: hh + ':' + mm, pulse_ms: pulseMs >= 100 ? pulseMs : 0 });
-    }
-    const added = addScheduleEntries(entries);
-    if (pulseInp) pulseInp.value = '';
-    renderProfileEditor();
-    toast(`Generated ${added} entries`);
-  };
-}
-
-// ── Profile CRUD actions ───────────────────────────────────────────
+// ── Profile actions ────────────────────────────────────────────────────
 $('#btn-create').onclick = async () => {
+  if (!confirmDiscard()) return;
   const name = prompt('Profile name:', 'New Profile');
-  if (!name) return;
+  if (!name || !name.trim()) return;
   try {
     const created = await api('POST', '/api/profiles', { name: name.trim() });
     await loadProfilesList();
+    selectedProfileData = null; // already confirmed discard
     await selectProfile(created.id);
-    toast(`Profile '${created.name}' created`);
+    toast(`Profile “${created.name}” created`);
   } catch (e) { toast('Create failed: ' + e.message, true); }
 };
 
 $('#btn-duplicate').onclick = async () => {
-  if (!selectedProfileId) return;
+  if (!selectedProfileId || !confirmDiscard()) return;
   try {
     const dup = await api('POST', `/api/profiles/${encodeURIComponent(selectedProfileId)}/duplicate`);
     await loadProfilesList();
+    selectedProfileData = null;
     await selectProfile(dup.id);
-    toast(`Duplicated as '${dup.name}'`);
+    toast(`Duplicated as “${dup.name}”`);
   } catch (e) { toast('Duplicate failed: ' + e.message, true); }
 };
 
 $('#btn-rename').onclick = async () => {
   if (!selectedProfileId) return;
-  const p = allProfilesMap[selectedProfileId] || selectedProfileId;
-  const newName = prompt('New name:', p);
-  if (!newName) return;
+  const newName = prompt('New name:', allProfilesMap[selectedProfileId] || '');
+  if (!newName || !newName.trim()) return;
   try {
     await api('PUT', `/api/profiles/${encodeURIComponent(selectedProfileId)}`, { name: newName.trim() });
+    selectedProfileData.name = newName.trim();
+    $('#profile-title').textContent = newName.trim();
     await loadProfilesList();
     toast('Renamed');
   } catch (e) { toast('Rename failed: ' + e.message, true); }
@@ -1727,15 +475,17 @@ $('#btn-rename').onclick = async () => {
 
 $('#btn-delete').onclick = async () => {
   if (!selectedProfileId) return;
-  const p = allProfilesMap[selectedProfileId] || selectedProfileId;
-  if (!confirm(`Delete profile '${p}'? This cannot be undone.`)) return;
+  const name = allProfilesMap[selectedProfileId] || selectedProfileId;
+  const live = activeInfo && activeInfo.profileId === selectedProfileId;
+  if (!confirm(`Delete profile “${name}”?${live ? '\n\nIt is running right now — the controller will switch to another profile.' : ''}\n\nThis cannot be undone.`)) return;
   try {
     await api('DELETE', `/api/profiles/${encodeURIComponent(selectedProfileId)}`);
     selectedProfileId = null;
     selectedProfileData = null;
+    profileSavedJson = '';
     await loadAll();
-    $('#main-content').innerHTML = '<div class="empty-hint" style="padding:40px;text-align:center;">Select a profile from the sidebar to edit its schedule.</div>';
-    toast(`Profile '${p}' deleted`);
+    renderProfileEditor();
+    toast(`Profile “${name}” deleted`);
   } catch (e) { toast('Delete failed: ' + e.message, true); }
 };
 
@@ -1744,44 +494,42 @@ $('#btn-set-default').onclick = async () => {
   try {
     await api('PUT', '/api/settings', { default_profile: selectedProfileId });
     toast('Default profile updated');
+    await loadProfilesList();
     await loadActiveInfo();
   } catch (e) { toast('Failed: ' + e.message, true); }
 };
 
-// Import/Export
 $('#btn-export').onclick = () => { window.location.href = '/api/profiles/export/all'; };
 $('#btn-import').onclick = () => $('#import-file').click();
 $('#import-file').onchange = async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   try {
-    const text = await file.text();
-    const data = JSON.parse(text);
-    if (!confirm('Import will merge profiles from this file. Continue?')) return;
+    const data = JSON.parse(await file.text());
+    if (!confirmDiscard()) return;
+    if (!confirm('Import will merge the profiles from this file into the existing ones. Continue?')) return;
     const r = await api('POST', '/api/profiles/import', data);
     toast(`Imported ${r.imported} profile(s)`);
-    await loadAll();
     selectedProfileId = null;
     selectedProfileData = null;
-    $('#main-content').innerHTML = '<div class="empty-hint" style="padding:40px;text-align:center;">Select a profile from the sidebar to edit its schedule.</div>';
+    profileSavedJson = '';
+    await loadAll();
+    renderProfileEditor();
   } catch (e2) { toast('Import failed: ' + e2.message, true); }
   finally { e.target.value = ''; }
 };
 
-// ── Override ───────────────────────────────────────────────────────
+// ── Override ───────────────────────────────────────────────────────────
 $('#btn-override').onclick = async () => {
   const profileId = $('#override-profile').value;
   const until = $('#override-until').value || null;
-  if (!profileId) { toast('Select a profile', true); return; }
+  if (!profileId) { toast('Choose a profile first', true); return; }
   try {
     await api('POST', '/api/profiles/override', { profileId, until });
     await loadActiveInfo();
     toast('Override applied');
   } catch (e) { toast('Override failed: ' + e.message, true); }
 };
-
-$('#btn-clear-override').onclick = clearOverride;
-$('#btn-clear-override-bottom').onclick = clearOverride;
 
 async function clearOverride() {
   try {
@@ -1790,149 +538,127 @@ async function clearOverride() {
     toast('Override cleared — automatic profile selection resumed');
   } catch (e) { toast('Failed: ' + e.message, true); }
 }
+$('#btn-clear-override').onclick = clearOverride;
+$('#btn-clear-override-bottom').onclick = clearOverride;
 
-// ── Calendar ───────────────────────────────────────────────────────
+// ── Calendar ───────────────────────────────────────────────────────────
 function renderCalendarTables() {
   if (!calendarData) return;
-  // Dates table
-  const dates = calendarData.dates || {};
-  const datesBody = $('#cal-dates-body');
-  const dateEntries = Object.entries(dates).sort((a,b) => b[0].localeCompare(a[0]));
-  if (!dateEntries.length) {
-    datesBody.innerHTML = '<tr><td colspan="3" class="empty-hint">No date-specific assignments.</td></tr>';
+  const today = activeInfo && activeInfo.date ? activeInfo.date : new Date().toISOString().slice(0, 10);
+  const entries = Object.entries(calendarData.dates || {}).sort((a, b) => a[0].localeCompare(b[0]));
+  const upcoming = entries.filter(([d]) => d >= today);
+  const past = entries.filter(([d]) => d < today).reverse();
+  const body = $('#cal-dates-body');
+  if (!entries.length) {
+    body.innerHTML = '<tr><td colspan="3" class="empty-hint">No date-specific assignments yet.</td></tr>';
   } else {
-    datesBody.innerHTML = dateEntries.map(([date, pid]) => `
-      <tr>
-        <td>${date}</td>
+    const row = ([date, pid], isPast) => {
+      const dt = new Date(date + 'T00:00:00');
+      const weekday = Number.isNaN(dt.getTime()) ? '' : dt.toLocaleDateString(undefined, { weekday: 'short' });
+      return `<tr${isPast ? ' class="past"' : ''}>
+        <td>${escapeHtml(date)} <span style="color:var(--dim)">${escapeHtml(weekday)}</span>${date === today ? ' <span class="badge live">Today</span>' : ''}</td>
         <td>${escapeHtml(allProfilesMap[pid] || pid)}</td>
-        <td><button class="btn btn-danger btn-sm" data-cal-remove="date" data-key="${date}">Remove</button></td>
-      </tr>
-    `).join('');
+        <td style="text-align:right"><button type="button" class="btn btn-danger btn-sm" data-cal-remove="date" data-key="${escapeHtml(date)}" aria-label="Remove assignment for ${escapeHtml(date)}">Remove</button></td>
+      </tr>`;
+    };
+    body.innerHTML = upcoming.map((e) => row(e, false)).join('') + past.map((e) => row(e, true)).join('');
   }
-
-  // DOW table
-  const dow = calendarData.dow || {};
-  const dowBody = $('#cal-dow-body');
-  const dowEntries = Object.entries(dow).sort((a,b) => {
-    const order = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
-    return order.indexOf(a[0]) - order.indexOf(b[0]);
-  });
-  if (!dowEntries.length) {
-    dowBody.innerHTML = '<tr><td colspan="3" class="empty-hint">No day-of-week assignments.</td></tr>';
-  } else {
-    dowBody.innerHTML = dowEntries.map(([day, pid]) => `
-      <tr>
-        <td style="text-transform:capitalize;">${day}</td>
-        <td>${escapeHtml(allProfilesMap[pid] || pid)}</td>
-        <td><button class="btn btn-danger btn-sm" data-cal-remove="dow" data-key="${day}">Remove</button></td>
-      </tr>
-    `).join('');
-  }
-
-  // Wire remove buttons
-  document.querySelectorAll('[data-cal-remove]').forEach(btn => {
+  $$('[data-cal-remove]', body).forEach((btn) => {
     btn.onclick = async () => {
-      const type = btn.dataset.calRemove;
-      const key = btn.dataset.key;
       try {
-        await api('DELETE', `/api/calendar/${type}/${encodeURIComponent(key)}`);
+        await api('DELETE', `/api/calendar/${btn.dataset.calRemove}/${encodeURIComponent(btn.dataset.key)}`);
         await loadCalendar();
+        await loadActiveInfo();
         toast('Assignment removed');
       } catch (e) { toast('Failed: ' + e.message, true); }
     };
   });
 }
 
-// Calendar tab switching
-document.querySelectorAll('.cal-tab').forEach(tab => {
+function renderWeekGrid() {
+  const grid = $('#week-grid');
+  if (!grid || !calendarData) return;
+  const dow = calendarData.dow || {};
+  const todayName = activeInfo && activeInfo.day ? activeInfo.day : '';
+  const defName = defaultProfileId ? allProfilesMap[defaultProfileId] : '';
+  grid.innerHTML = DAYS.map((d) => `
+    <div class="week-day${d === todayName ? ' today' : ''}">
+      <label for="dow-${d}">${cap(d)}${d === todayName ? '<span class="badge live">Today</span>' : ''}</label>
+      <select id="dow-${d}" data-dow="${d}">
+        <option value="">Default${defName ? ' — ' + escapeHtml(defName) : ''}</option>
+        ${profileList.map((p) => `<option value="${escapeHtml(p.id)}"${dow[d] === p.id ? ' selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}
+      </select>
+    </div>`).join('');
+}
+
+$('#week-grid').addEventListener('change', async (e) => {
+  const sel = e.target.closest('[data-dow]');
+  if (!sel) return;
+  const day = sel.dataset.dow;
+  const had = !!(calendarData && calendarData.dow && calendarData.dow[day]);
+  try {
+    if (sel.value) await api('POST', '/api/calendar/dow', { dow: day, profileId: sel.value });
+    else if (had) await api('DELETE', `/api/calendar/dow/${encodeURIComponent(day)}`);
+    toast(`${cap(day)} ${sel.value ? 'set to ' + (allProfilesMap[sel.value] || sel.value) : 'now uses the default profile'}`);
+  } catch (err) {
+    toast('Failed: ' + err.message, true);
+  }
+  await loadCalendar();
+  await loadActiveInfo();
+});
+
+$$('.cal-tab').forEach((tab) => {
   tab.onclick = () => {
-    document.querySelectorAll('.cal-tab').forEach(t => t.classList.remove('active'));
+    $$('.cal-tab').forEach((t) => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
     tab.classList.add('active');
-    const target = tab.dataset.calTab;
-    $('#cal-panel-dates').classList.toggle('hidden', target !== 'dates');
-    $('#cal-panel-dow').classList.toggle('hidden', target !== 'dow');
+    tab.setAttribute('aria-selected', 'true');
+    $('#cal-panel-dates').classList.toggle('hidden', tab.dataset.calTab !== 'dates');
+    $('#cal-panel-dow').classList.toggle('hidden', tab.dataset.calTab !== 'dow');
   };
 });
 
 $('#btn-cal-date').onclick = async () => {
   const date = $('#cal-date').value;
   const profileId = $('#cal-date-profile').value;
-  if (!date) { toast('Select a date', true); return; }
-  if (!profileId) { toast('Select a profile', true); return; }
+  if (!date) { toast('Pick a date first', true); return; }
+  if (!profileId) { toast('Choose a profile first', true); return; }
   try {
     await api('POST', '/api/calendar/date', { date, profileId });
     await loadCalendar();
-    toast(`Date ${date} assigned`);
+    await loadActiveInfo();
+    toast(`${date} assigned`);
   } catch (e) { toast('Failed: ' + e.message, true); }
 };
 
-$('#btn-cal-dow').onclick = async () => {
-  const dow = $('#cal-dow').value;
-  const profileId = $('#cal-dow-profile').value;
-  if (!profileId) { toast('Select a profile', true); return; }
-  try {
-    await api('POST', '/api/calendar/dow', { dow, profileId });
-    await loadCalendar();
-    toast(`${dow} assigned`);
-  } catch (e) { toast('Failed: ' + e.message, true); }
-};
+// ── Theme toggle ───────────────────────────────────────────────────────
+(function () {
+  const root = document.documentElement;
+  const btn = $('#btn-theme');
+  const stored = () => { try { const t = localStorage.getItem('theme'); return t === 'light' || t === 'dark' ? t : null; } catch { return null; } };
+  const apply = (theme, persist) => {
+    root.setAttribute('data-theme', theme);
+    btn.innerHTML = theme === 'dark' ? ICON.sun : ICON.moon;
+    btn.setAttribute('aria-label', theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+    if (persist) { try { localStorage.setItem('theme', theme); } catch { /* ignore */ } }
+  };
+  apply(stored() || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'), false);
+  btn.addEventListener('click', () => apply(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark', true));
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => { if (!stored()) apply(e.matches ? 'dark' : 'light', false); });
+})();
 
-// ── Boot ───────────────────────────────────────────────────────────
+// ── Boot ───────────────────────────────────────────────────────────────
 (async () => {
   await loadAll();
-  // Select first profile by default
-  if (profileList.length > 0 && !selectedProfileId) {
-    await selectProfile(profileList[0].id);
-  }
-  setInterval(loadActiveInfo, 15000);
+  const first = (activeInfo && activeInfo.profileId && allProfilesMap[activeInfo.profileId]) ? activeInfo.profileId : (profileList[0] && profileList[0].id);
+  if (first) await selectProfile(first); else renderProfileEditor();
+  setInterval(() => { if (!document.hidden) loadActiveInfo(); }, 15000);
 })();
 
-// ── Theme toggle ───────────────────────────────────────────────────
-(function() {
-  const html = document.documentElement;
-  const btn = document.getElementById('btn-theme');
-
-  function getTheme() {
-    return localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  }
-
-  function applyTheme(theme) {
-    if (theme === 'dark') {
-      html.setAttribute('data-theme', 'dark');
-      if (btn) btn.innerHTML = '☾';
-    } else {
-      html.setAttribute('data-theme', 'light');
-      if (btn) btn.innerHTML = '☀';
-    }
-    localStorage.setItem('theme', theme);
-  }
-
-  applyTheme(getTheme());
-
-  if (btn) {
-    btn.onclick = () => {
-      const current = html.getAttribute('data-theme') || 'light';
-      applyTheme(current === 'dark' ? 'light' : 'dark');
-    };
-  }
-
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-    if (!localStorage.getItem('theme')) {
-      applyTheme(e.matches ? 'dark' : 'light');
-    }
-  });
-})();
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js', { scope: '/' });
+}
 </script>
 
-<footer class="site-footer">
-  <p>&#x1F514; Built from silicon to server. &mdash; Chinmayakeshav</p>
-  <div class="footer-links">
-    <a href="https://github.com/CoolNinja2009" target="_blank" rel="noopener noreferrer">GitHub</a>
-    <a href="https://github.com/CoolNinja2009?tab=repositories" target="_blank" rel="noopener noreferrer">Projects</a>
-    <span>ESP32 + Node.js</span>
-    <a href="https://www.gnu.org/licenses/gpl-3.0.en.html" target="_blank" rel="noopener noreferrer">GPL-3.0 License</a>
-  </div>
-</footer>
 <script>
 (function () {
   var banner = document.getElementById('profile-broken-banner');

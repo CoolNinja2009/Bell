@@ -42,6 +42,7 @@ const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 
 const auth = require('./auth');
+const { safeNextPath } = require('./lib/safe-redirect');
 const history = require('./lib/history');
 const apikeys = require('./lib/apikeys');
 const profiles = require('./lib/profiles');
@@ -74,6 +75,7 @@ const ICON_192_PATH = path.join(__dirname, 'icon-192.png');
 const ICON_512_PATH = path.join(__dirname, 'icon-512.png');
 const BELL_SVG_PATH = path.join(__dirname, 'bell.svg');
 const VENDOR_DIR = path.join(__dirname, 'vendor');
+const ASSETS_DIR = path.join(__dirname, 'assets');
 
 const CHANNEL_KEY_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,19}$/; // must start with a letter
 const MAX_CHANNELS = 24;
@@ -350,6 +352,11 @@ app.use(express.urlencoded({ extended: false, limit: '64kb' }));
 // working fully offline/on a LAN with no internet access.
 app.use('/vendor', express.static(VENDOR_DIR, { maxAge: '7d', index: false, dotfiles: 'ignore' }));
 
+// First-party UI assets (shared stylesheet). Public so the login page can use
+// them. maxAge 0 + ETag = the browser revalidates on every load (cheap 304),
+// so a deployed UI update is never hidden behind a stale cached stylesheet.
+app.use('/assets', express.static(ASSETS_DIR, { maxAge: 0, index: false, dotfiles: 'ignore' }));
+
 class BoundedSessionStore extends session.Store {
   constructor(maxEntries = 1000) {
     super();
@@ -457,7 +464,7 @@ const loginLimiter = rateLimit({
 function renderLogin(errorMsg) {
   const raw = fs.readFileSync(LOGIN_TPL, 'utf8');
   const block = errorMsg
-    ? `<div class="error">${escapeHtml(errorMsg)}</div>`
+    ? `<div class="error" role="alert">${escapeHtml(errorMsg)}</div>`
     : '';
   return raw.replace('<!--ERROR_BLOCK-->', block);
 }
@@ -471,7 +478,7 @@ function escapeHtml(s) {
 }
 
 app.get('/login', (req, res) => {
-  if (req.session && req.session.authenticated) return res.redirect('/');
+  if (req.session && req.session.authenticated) return res.redirect(safeNextPath(req.query.next));
   res.set('Cache-Control', 'no-store').type('html').send(renderLogin(null));
 });
 
@@ -484,8 +491,7 @@ app.post('/login', loginLimiter, (req, res) => {
         return res.status(500).type('html').send(renderLogin('Session error. Please try again.'));
       }
       req.session.authenticated = true;
-      const nextPath = (req.query.next && decodeURIComponent(req.query.next)) || '/';
-      res.redirect(nextPath.startsWith('/') ? nextPath : '/');
+      res.redirect(safeNextPath(req.query.next));
     });
     return;
   }
@@ -1065,6 +1071,7 @@ app.get(
     for (const [k, v] of heartbeats) hb[k] = Math.round((now - v) / 100) / 10;
     res.json({
       heartbeats: hb,
+      server_time: new Date(now).toISOString(),
       server_uptime: Math.round((now - startTime) / 100) / 10,
       profile_status: profiles.isStoreBroken() ? 'invalid' : 'valid',
     });

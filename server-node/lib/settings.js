@@ -1,7 +1,7 @@
 'use strict';
 /**
- * lib/settings.js â€” Active profile, default profile, and manual override
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * lib/settings.js - Active profile, default profile, and manual override
+ * -----------------------------------------------------------------------
  * Stores in settings.json:
  *   - active_profile: the currently active profile ID (resolved daily)
  *   - default_profile: fallback when no calendar assignment matches

@@ -1,7 +1,7 @@
 'use strict';
 /**
- * lib/profile-scheduler.js â€” Daily profile resolution
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * lib/profile-scheduler.js - Daily profile resolution
+ * -----------------------------------------------------------------------
  * Determines which profile should be active today.
  *
  * Priority:

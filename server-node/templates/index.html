@@ -2,1607 +2,292 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a0f16" media="(prefers-color-scheme: dark)">
+<title>Dashboard — Relay Controller</title>
 <link rel="icon" type="image/svg+xml" href="/bell.svg">
 <link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#00a87a">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Relay Controller</title>
-<style>
-  /* ── Design Tokens ─────────────────────── */
-  :root {
-    --bg:       #f8fafc;
-    --panel:    #ffffff;
-    --panel2:   #f1f5f9;
-    --border:   #e2e8f0;
-    --text:     #0f172a;
-    --dim:      #64748b;
-    --accent:   #10b981;
-    --accent2:  #f59e0b;
-    --accent3:  #3b82f6;
-    --danger:   #ef4444;
-    --on:       #10b981;
-    --off:      #cbd5e1;
-    --radius:   10px;
-    --glass:    rgba(255, 255, 255, 0.9);
-    --shadow:   0 4px 12px rgba(0, 0, 0, 0.08);
-  }
-
-  [data-theme="dark"] {
-    --bg:       #0a0f16;
-    --panel:    #111921;
-    --panel2:   #0d1419;
-    --border:   #1e2936;
-    --text:     #e2e8f0;
-    --dim:      #64748b;
-    --accent:   #10b981;
-    --accent2:  #f59e0b;
-    --accent3:  #3b82f6;
-    --danger:   #ef4444;
-    --on:       #10b981;
-    --off:      #334155;
-    --glass:    rgba(17, 25, 33, 0.9);
-    --shadow:   0 4px 12px rgba(0, 0, 0, 0.4);
-  }
-
-  [data-theme="light"] {
-    --bg:       #f8fafc;
-    --panel:    #ffffff;
-    --panel2:   #f1f5f9;
-    --border:   #e2e8f0;
-    --text:     #0f172a;
-    --dim:      #64748b;
-    --accent:   #10b981;
-    --accent2:  #f59e0b;
-    --accent3:  #3b82f6;
-    --danger:   #ef4444;
-    --on:       #10b981;
-    --off:      #cbd5e1;
-    --radius:   10px;
-    --glass:    rgba(255, 255, 255, 0.9);
-    --shadow:   0 4px 12px rgba(0, 0, 0, 0.08);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme]) {
-      --bg:       #0a0f16;
-      --panel:    #111921;
-      --panel2:   #0d1419;
-      --border:   #1e2936;
-      --text:     #e2e8f0;
-      --dim:      #64748b;
-      --accent:   #10b981;
-      --accent2:  #f59e0b;
-      --accent3:  #3b82f6;
-      --danger:   #ef4444;
-      --on:       #10b981;
-      --off:      #334155;
-      --glass:    rgba(17, 25, 33, 0.9);
-      --shadow:   0 4px 12px rgba(0, 0, 0, 0.4);
-    }
-  }
-
-  /* ── Base ──────────────────────────────── */
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    padding: 24px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-    transition: background 0.2s, color 0.2s;
-  }
-
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    background: radial-gradient(ellipse at 50% 0%, rgba(16, 185, 129, 0.08) 0%, transparent 50%);
-    pointer-events: none;
-    z-index: -1;
-  }
-
-  a { color: inherit; text-decoration: none; }
-
-  /* ── Header ────────────────────────────── */
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 20px;
-    flex-wrap: wrap;
-    gap: 16px;
-    padding: 20px 24px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-  }
-
-  .logo { display: flex; align-items: center; gap: 12px; }
-
-  .logo-icon {
-    width: 36px;
-    height: 36px;
-    background: var(--accent);
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
-
-  .logo-icon svg { width: 20px; height: 20px; }
-
-  .logo-text h1 {
-    font-size: 1.125rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    line-height: 1.2;
-    color: var(--text);
-  }
-
-  .logo-text .subtitle {
-    font-size: 0.75rem;
-    color: var(--dim);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 600;
-    margin-top: 2px;
-  }
-
-  .status-bar {
-    display: flex;
-    gap: 8px;
-    font-size: 0.875rem;
-    color: var(--dim);
-    font-weight: 500;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-
-  .status-pill {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: var(--panel2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    transition: all 0.2s;
-    min-height: 32px;
-  }
-
-  .status-pill:hover {
-    border-color: var(--accent);
-    color: var(--text);
-  }
-
-  .status-pill a, .status-pill button {
-    text-decoration: none;
-    color: inherit;
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: inherit;
-    font-weight: inherit;
-  }
-
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-    flex-shrink: 0;
-    transition: background 0.2s;
-  }
-
-  .dot.on {
-    background: var(--on);
-    box-shadow: 0 0 8px var(--on);
-    animation: pulse-dot 2s infinite;
-  }
-
-  .dot.off { background: var(--off); }
-
-  @keyframes pulse-dot {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.6; }
-  }
-
-  .profile-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-    border-radius: 6px;
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: var(--accent);
-    transition: all 0.2s;
-  }
-
-  .profile-badge:hover {
-    background: rgba(16, 185, 129, 0.15);
-    border-color: var(--accent);
-  }
-
-  .profile-badge .override-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--accent2);
-    animation: pulse-dot 2s infinite;
-  }
-
-  /* ── Nav ────────────────────────────────── */
-  .nav-tabs {
-    display: flex;
-    gap: 4px;
-    margin-bottom: 20px;
-    padding: 4px;
-    background: var(--panel2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    width: fit-content;
-  }
-
-  .nav-tab {
-    padding: 8px 16px;
-    border-radius: 6px;
-    background: transparent;
-    border: none;
-    color: var(--dim);
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    text-decoration: none;
-    transition: all 0.2s;
-    min-height: 36px;
-    display: inline-flex;
-    align-items: center;
-  }
-
-  .nav-tab:hover { color: var(--text); background: rgba(16, 185, 129, 0.05); }
-
-  .nav-tab.active {
-    background: var(--panel);
-    color: var(--accent);
-    box-shadow: var(--shadow);
-  }
-
-  /* ── Profile switcher bar ──────────────── */
-  .profile-bar {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-bottom: 20px;
-    padding: 16px 20px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    flex-wrap: wrap;
-  }
-
-  .profile-bar-label {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--dim);
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  .profile-bar-select {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex: 1;
-    min-width: 200px;
-  }
-
-  .profile-bar-select select {
-    flex: 1;
-    background: var(--panel2);
-    border: 1px solid var(--border);
-    color: var(--accent);
-    padding: 10px 14px;
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-    font-weight: 600;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.2s;
-    appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' fill='none' stroke='%2310b981' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
-    padding-right: 36px;
-    min-height: 40px;
-  }
-
-  .profile-bar-select select:hover { border-color: var(--accent); }
-
-  .profile-bar-select select:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
-  }
-
-  .profile-bar-select select option {
-    background: var(--panel);
-    color: var(--text);
-    font-weight: 500;
-  }
-
-  .profile-bar-reason {
-    font-size: 0.875rem;
-    color: var(--dim);
-    white-space: nowrap;
-  }
-
-  .profile-bar-reason.override { color: var(--accent2); font-weight: 600; }
-
-  .profile-bar-actions {
-    display: flex;
-    gap: 8px;
-    flex-shrink: 0;
-  }
-
-  /* ── Toolbar ────────────────────────────── */
-  .toolbar { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
-
-  /* ── Channel grid ───────────────────────── */
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 20px;
-  }
-
-  .channel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0;
-    overflow: hidden;
-    transition: all 0.2s;
-    position: relative;
-    box-shadow: var(--shadow);
-  }
-
-  .channel:hover {
-    border-color: var(--accent);
-    transform: translateY(-2px);
-  }
-
-  /* ── Disabled channel (schedule turned off) ── */
-  .channel.disabled {
-    opacity: 0.5;
-    pointer-events: none;
-  }
-
-  .channel.disabled .ch-header h2 {
-    color: var(--dim);
-    pointer-events: none;
-    border-bottom-color: transparent !important;
-  }
-
-  .channel.disabled .ch-key-tag {
-    opacity: 0.5;
-  }
-
-  .channel.disabled .ch-controls {
-    pointer-events: auto;
-  }
-
-  .channel.disabled .btn-row {
-    pointer-events: auto;
-  }
-
-  .channel.disabled .btn-save {
-    pointer-events: auto;
-  }
-
-  .channel.disabled .btn-row .btn-run {
-    pointer-events: none;
-    opacity: 0.4;
-  }
-
-  .channel.disabled .add-row,
-  .channel.disabled .tag-list,
-  .channel.disabled .field input {
-    pointer-events: none;
-  }
-
-  .ch-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 20px 24px;
-    background: rgba(16, 185, 129, 0.03);
-    border-bottom: 1px solid var(--border);
-    gap: 12px;
-  }
-
-  .ch-header h2 {
-    font-size: 1rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    color: var(--text);
-    background: transparent;
-    border: none;
-    outline: none;
-    font-family: inherit;
-    width: 100%;
-    padding: 2px 0;
-    border-bottom: 1px dashed transparent;
-    transition: border-color 0.2s;
-  }
-
-  .ch-header h2:hover, .ch-header h2:focus { border-bottom-color: var(--border); }
-
-  .ch-key-tag {
-    display: inline-block;
-    padding: 4px 8px;
-    background: var(--panel2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
-    font-size: 0.75rem;
-    color: var(--dim);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 600;
-  }
-
-  .ch-controls { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-
-  /* ── Toggle switch ──────────────────────── */
-  .toggle {
-    position: relative;
-    width: 48px;
-    height: 28px;
-    border-radius: 14px;
-    background: var(--off);
-    cursor: pointer;
-    transition: all 0.2s;
-    border: none;
-    outline: none;
-    flex-shrink: 0;
-  }
-
-  .toggle:hover { opacity: 0.9; }
-
-  .toggle.active {
-    background: var(--accent);
-  }
-
-  .toggle::after {
-    content: "";
-    position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    background: #fff;
-    transition: transform 0.2s;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-  }
-
-  .toggle.active::after { transform: translateX(20px); }
-
-  .icon-x {
-    background: none;
-    border: none;
-    color: var(--dim);
-    cursor: pointer;
-    font-size: 1.125rem;
-    padding: 4px;
-    border-radius: 6px;
-    transition: all 0.2s;
-    min-width: 28px;
-    min-height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .icon-x:hover {
-    color: var(--danger);
-    background: rgba(239, 68, 68, 0.1);
-  }
-
-  /* ── Channel body ───────────────────────── */
-  .ch-body { padding: 20px 24px; }
-
-  .field { margin-top: 16px; }
-
-  .field:first-child { margin-top: 0; }
-
-  .field label {
-    display: block;
-    font-size: 0.75rem;
-    color: var(--dim);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 600;
-    margin-bottom: 8px;
-  }
-
-  .field input[type="number"],
-  .field input[type="date"],
-  .field input[type="time"],
-  .field input[type="text"],
-  .field input[type="password"] {
-    width: 100%;
-    background: var(--panel2);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 10px 12px;
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-    font-family: inherit;
-    transition: all 0.2s;
-    min-height: 40px;
-  }
-
-  .field input:hover { border-color: var(--accent); }
-
-  .field input:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
-  }
-
-  /* ── Tags ───────────────────────────────── */
-  .tag-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 12px;
-  }
-
-  .tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-    border-radius: 6px;
-    padding: 6px 12px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
-    color: var(--accent);
-    transition: all 0.2s;
-    min-height: 32px;
-  }
-
-  .tag:hover {
-    border-color: var(--accent);
-    background: rgba(16, 185, 129, 0.15);
-  }
-
-  .tag button {
-    background: none;
-    border: none;
-    color: var(--danger);
-    cursor: pointer;
-    font-size: 1rem;
-    line-height: 1;
-    padding: 0;
-    transition: all 0.2s;
-    font-family: inherit;
-    min-width: 16px;
-    min-height: 16px;
-  }
-
-  .tag button:hover { transform: scale(1.1); }
-
-  .tag[data-list="schedule"] { cursor: pointer; }
-
-  .tag.editing {
-    gap: 6px;
-    padding: 4px 8px;
-    background: rgba(16, 185, 129, 0.15);
-    border-color: var(--accent);
-  }
-
-  .tag.editing input {
-    background: var(--panel2);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 4px 8px;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    font-family: inherit;
-    min-height: 28px;
-  }
-
-  .tag.editing input:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-
-  .tag.editor-actions {
-    display: flex;
-    gap: 4px;
-    flex-shrink: 0;
-  }
-
-  .tag.editor-actions button {
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--text);
-    cursor: pointer;
-    padding: 4px 8px;
-    border-radius: 6px;
-    font-size: 0.75rem;
-    font-family: inherit;
-    min-height: 28px;
-  }
-
-  .tag.editor-actions button:hover { border-color: var(--accent); }
-
-  .tag.editor-actions .edit-save {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-
-  .tag.editor-actions .edit-cancel { color: var(--dim); }
-
-  .add-row {
-    display: flex;
-    gap: 8px;
-    margin-top: 12px;
-  }
-
-  .add-row input {
-    flex: 1;
-    background: var(--panel2);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 10px 12px;
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-    font-family: inherit;
-    min-height: 40px;
-  }
-
-  .add-row input:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-
-  /* ── Buttons ────────────────────────────── */
-  .btn {
-    padding: 10px 16px;
-    min-height: 44px;
-    min-width: 44px;
-    border-radius: var(--radius);
-    border: none;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-family: inherit;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-  }
-
-  .btn:hover { transform: translateY(-1px); }
-  .btn:active { transform: translateY(0); }
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    transform: none;
-  }
-
-  .btn-save {
-    background: var(--accent);
-    color: #ffffff;
-  }
-
-  .btn-save:hover { background: #0ea071; }
-
-  .btn-run {
-    background: var(--accent2);
-    color: #ffffff;
-  }
-
-  .btn-run:hover { background: #d97706; }
-
-  .btn-add {
-    background: rgba(16, 185, 129, 0.1);
-    color: var(--accent);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-  }
-
-  .btn-add:hover {
-    background: rgba(16, 185, 129, 0.15);
-    border-color: var(--accent);
-  }
-
-  .btn-ghost {
-    background: var(--panel2);
-    color: var(--text);
-    border: 1px solid var(--border);
-  }
-
-  .btn-ghost:hover {
-    background: var(--panel);
-    border-color: var(--accent);
-  }
-
-  .btn-danger {
-    background: rgba(239, 68, 68, 0.1);
-    color: var(--danger);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-  }
-
-  .btn-danger:hover {
-    background: rgba(239, 68, 68, 0.15);
-    border-color: var(--danger);
-  }
-
-  .btn-row {
-    display: flex;
-    gap: 8px;
-    padding: 0 24px 20px;
-  }
-
-  .btn-row .btn { flex: 1; }
-
-  .icon-btn {
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    font-size: 0.875rem;
-    font-family: inherit;
-    color: inherit;
-    padding: 4px;
-    min-width: 32px;
-    min-height: 32px;
-  }
-
-  .btn-sm {
-    padding: 6px 12px;
-    font-size: 0.875rem;
-    border-radius: 6px;
-    min-height: 32px;
-  }
-
-  /* ── Toast ──────────────────────────────── */
-  .toast {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    background: var(--panel);
-    border: 1px solid var(--accent);
-    color: var(--accent);
-    padding: 12px 20px;
-    border-radius: var(--radius);
-    font-weight: 600;
-    font-size: 0.875rem;
-    opacity: 0;
-    transform: translateY(16px);
-    transition: all 0.2s;
-    pointer-events: none;
-    z-index: 200;
-    box-shadow: var(--shadow);
-    max-width: 400px;
-  }
-
-  .toast.show {
-    opacity: 1;
-    transform: translateY(0);
-  }
-
-  .toast.error {
-    border-color: var(--danger);
-    color: var(--danger);
-  }
-
-  /* ── Panels ─────────────────────────────── */
-  .panel {
-    margin-top: 20px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-    box-shadow: var(--shadow);
-  }
-
-  .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 20px;
-    background: var(--panel2);
-    cursor: pointer;
-    font-size: 0.875rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    user-select: none;
-    border-bottom: 1px solid var(--border);
-    transition: background 0.2s;
-    min-height: 56px;
-  }
-
-  .panel-header:hover { background: rgba(16, 185, 129, 0.03); }
-
-  .panel-header { cursor: grab; touch-action: none; }
-
-  .panel-header:active { cursor: grabbing; }
-
-  .panel.dragging {
-    outline: 2px dashed var(--accent);
-    outline-offset: 2px;
-  }
-
-  .panel.drag-target {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-
-  .panel-header .arrow {
-    transition: transform 0.2s;
-    font-size: 0.75rem;
-    opacity: 0.6;
-  }
-
-  .panel.collapsed .panel-header { border-bottom: none; }
-
-  .panel.collapsed .panel-header .arrow { transform: rotate(-90deg); }
-
-  .panel.collapsed .panel-body { display: none; }
-
-  .panel-body { padding: 20px; }
-
-  .firmware-top {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 16px;
-    align-items: start;
-  }
-
-  .firmware-title {
-    font-size: 1rem;
-    font-weight: 600;
-  }
-
-  .firmware-meta {
-    color: var(--dim);
-    font-size: 0.875rem;
-    margin-top: 4px;
-    word-break: break-word;
-  }
-
-  .firmware-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
-  .firmware-switch {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.875rem;
-    color: var(--text);
-    cursor: pointer;
-  }
-
-  .firmware-switch input {
-    accent-color: var(--accent);
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
-  }
-
-  .firmware-upload {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    flex-wrap: wrap;
-    margin-top: 16px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border);
-  }
-
-  .firmware-upload input {
-    max-width: 100%;
-    font-size: 0.875rem;
-  }
-
-  .firmware-releases {
-    margin-top: 16px;
-    border-top: 1px solid var(--border);
-    padding-top: 16px;
-  }
-
-  .firmware-release {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 12px;
-    align-items: center;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .firmware-release:last-child { border-bottom: none; }
-
-  .firmware-release-name {
-    font-size: 0.875rem;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .firmware-release-meta {
-    color: var(--dim);
-    font-size: 0.75rem;
-    margin-top: 4px;
-  }
-
-  /* ── Device log ─────────────────────────── */
-  .log-body {
-    max-height: 280px;
-    overflow-y: auto;
-    font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
-    font-size: 0.875rem;
-    line-height: 1.6;
-    margin: 0 -20px;
-    padding: 0 20px;
-  }
-
-  .log-line {
-    padding: 4px 0;
-    animation: slideIn 0.2s ease;
-  }
-
-  @keyframes slideIn {
-    from {
-      opacity: 0;
-      transform: translateX(-8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
-  }
-
-  .log-time {
-    color: var(--dim);
-    margin-right: 12px;
-    font-weight: 600;
-    font-size: 0.75rem;
-  }
-
-  .log-msg { color: var(--text); }
-
-  /* ── History ────────────────────────────── */
-  .hist-toolbar {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 16px;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-
-  .hist-toolbar select {
-    background: var(--panel2);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 8px 12px;
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-    font-family: inherit;
-    min-height: 36px;
-    cursor: pointer;
-  }
-
-  .hist-toolbar select:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
-  }
-
-  .chart {
-    display: flex;
-    align-items: flex-end;
-    gap: 6px;
-    height: 120px;
-    margin-bottom: 20px;
-    padding: 8px 0;
-  }
-
-  .chart .bar-wrap {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-end;
-    height: 100%;
-    gap: 6px;
-  }
-
-  .chart .bar {
-    width: 100%;
-    max-width: 32px;
-    background: var(--accent);
-    border-radius: 4px 4px 0 0;
-    min-height: 4px;
-    transition: height 0.3s;
-  }
-
-  .chart .bar-label {
-    font-size: 0.75rem;
-    color: var(--dim);
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  table.hist-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.875rem;
-  }
-
-  table.hist-table th {
-    text-align: left;
-    color: var(--dim);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-size: 0.75rem;
-    padding: 12px;
-    border-bottom: 2px solid var(--border);
-    background: var(--panel2);
-  }
-
-  table.hist-table td {
-    padding: 12px;
-    border-bottom: 1px solid var(--border);
-    color: var(--text);
-  }
-
-  table.hist-table tbody tr {
-    transition: background 0.2s;
-  }
-
-  table.hist-table tbody tr:hover td {
-    background: rgba(16, 185, 129, 0.05);
-  }
-
-  .pill {
-    display: inline-block;
-    padding: 4px 10px;
-    border-radius: 6px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .pill.manual {
-    background: rgba(245, 166, 35, 0.1);
-    color: var(--accent2);
-  }
-
-  .pill.schedule {
-    background: rgba(16, 185, 129, 0.1);
-    color: var(--accent);
-  }
-
-  .pill.edit {
-    background: rgba(59, 130, 246, 0.1);
-    color: var(--accent3);
-  }
-
-  .empty-hint {
-    color: var(--dim);
-    font-size: 0.875rem;
-    padding: 20px;
-    text-align: center;
-  }
-
-  /* ── Modal ──────────────────────────────── */
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
-    display: none;
-    align-items: flex-start;
-    justify-content: center;
-    padding: 60px 16px;
-    z-index: 300;
-    overflow-y: auto;
-  }
-
-  .modal-backdrop.show { display: flex; }
-
-  .modal {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    width: 100%;
-    max-width: 500px;
-    padding: 24px;
-    box-shadow: var(--shadow);
-  }
-
-  .modal h3 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    margin-bottom: 4px;
-  }
-
-  .modal .sub {
-    color: var(--dim);
-    font-size: 0.875rem;
-    margin-bottom: 20px;
-  }
-
-  .modal-close {
-    float: right;
-    background: none;
-    border: none;
-    color: var(--dim);
-    font-size: 1.5rem;
-    cursor: pointer;
-    padding: 4px;
-    border-radius: 6px;
-    transition: all 0.2s;
-    line-height: 1;
-    min-width: 32px;
-    min-height: 32px;
-  }
-
-  .modal-close:hover {
-    color: var(--text);
-    background: rgba(16, 185, 129, 0.1);
-  }
-
-  .settings-section {
-    border-top: 1px solid var(--border);
-    padding-top: 20px;
-    margin-top: 20px;
-  }
-
-  .settings-section:first-of-type {
-    border-top: none;
-    padding-top: 0;
-    margin-top: 0;
-  }
-
-  .settings-section h4 {
-    font-size: 0.875rem;
-    font-weight: 600;
-    margin-bottom: 12px;
-  }
-
-  .key-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.875rem;
-  }
-
-  .key-row:last-child { border-bottom: none; }
-
-  .key-row .meta {
-    color: var(--dim);
-    font-size: 0.75rem;
-  }
-
-  .key-reveal {
-    background: var(--panel2);
-    border: 1px solid var(--accent);
-    border-radius: var(--radius);
-    padding: 12px;
-    font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
-    font-size: 0.875rem;
-    word-break: break-all;
-    margin-top: 12px;
-    color: var(--accent);
-  }
-
-  .hidden { display: none !important; }
-
-  /* ── Responsive ─────────────────────────── */
-  @media (max-width: 768px) {
-    body {
-      padding: 16px;
-      padding-bottom: 60px;
-    }
-
-    header {
-      padding: 16px;
-      gap: 12px;
-    }
-
-    .logo-icon {
-      width: 32px;
-      height: 32px;
-    }
-
-    .status-bar {
-      width: 100%;
-    }
-
-    .nav-tabs {
-      width: 100%;
-    }
-
-    .nav-tab {
-      flex: 1;
-      text-align: center;
-      padding: 8px 12px;
-    }
-
-    .grid {
-      grid-template-columns: 1fr;
-      gap: 16px;
-    }
-
-    .channel {
-      max-width: none;
-    }
-
-    .ch-header {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 12px;
-    }
-
-    .ch-controls {
-      width: 100%;
-      justify-content: space-between;
-    }
-    .ch-body {
-      padding: 16px;
-    }
-
-    .btn-row {
-      flex-direction: column;
-      padding: 0 16px 16px;
-    }
-
-    .btn-row .btn {
-      width: 100%;
-    }
-
-    .firmware-top {
-      grid-template-columns: 1fr;
-    }
-
-    .firmware-actions {
-      justify-content: flex-start;
-    }
-
-    .profile-bar {
-      flex-direction: column;
-      align-items: stretch;
-      padding: 16px;
-    }
-
-    .profile-bar-select {
-      min-width: 0;
-    }
-
-    .profile-bar-actions {
-      justify-content: flex-end;
-    }
-
-    .panel-body {
-      padding: 16px;
-    }
-
-    #hist-table-wrap {
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-    }
-
-    table.hist-table {
-      min-width: 560px;
-      font-size: 0.875rem;
-    }
-
-    table.hist-table th,
-    table.hist-table td {
-      padding: 10px;
-    }
-
-    .toast {
-      bottom: 16px;
-      right: 16px;
-      left: 16px;
-      max-width: none;
-    }
-
-    .modal {
-      padding: 20px;
-    }
-  }
-
-  @media (max-width: 480px) {
-    body {
-      padding: 12px;
-      padding-bottom: 60px;
-    }
-
-    header {
-      padding: 12px;
-    }
-
-    .profile-bar {
-      padding: 12px;
-    }
-
-    .ch-body {
-      padding: 12px;
-    }
-
-    .btn-row {
-      padding: 0 12px 12px;
-    }
-
-    .panel-body {
-      padding: 12px;
-    }
-  }
-
-  /* ── Footer ─────────────────────────────── */
-  .site-footer {
-    text-align: center;
-    padding: 32px 16px 20px;
-    font-size: 0.75rem;
-    color: var(--dim);
-    opacity: 0.6;
-    transition: opacity 0.3s;
-  }
-
-  .site-footer:hover {
-    opacity: 1;
-  }
-
-  .site-footer p {
-    margin: 0 0 8px;
-  }
-
-  .footer-links {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 8px 16px;
-  }
-
-  .footer-links a {
-    color: inherit;
-  }
-</style>
+<script>
+  // Apply the saved/system theme before first paint (no light/dark flash).
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('theme'); } catch (e) {}
+    if (t !== 'light' && t !== 'dark') t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
+<link rel="stylesheet" href="/assets/ui.css">
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
 
-<header>
-  <div class="logo">
-    <div class="logo-icon">
-      <svg viewBox="0 0 24 24" fill="none" stroke="#001a10" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="3" width="7" height="7" rx="1.5"/>
-        <rect x="14" y="3" width="7" height="7" rx="1.5"/>
-        <rect x="3" y="14" width="7" height="7" rx="1.5"/>
-        <rect x="14" y="14" width="7" height="7" rx="1.5"/>
-        <line x1="6.5" y1="6.5" x2="6.5" y2="17.5"/>
-        <line x1="17.5" y1="6.5" x2="17.5" y2="17.5"/>
-      </svg>
-    </div>
-    <div class="logo-text">
-      <h1>Relay Controller</h1>
-      <div class="subtitle">Dual-Channel Schedule Manager</div>
-    </div>
-  </div>
-  <div class="status-bar" id="status-bar">
-    <span class="status-pill"><span class="dot" id="srv-dot"></span> Server <span id="srv-uptime">—</span></span>
-    <div id="hb-container" style="display:contents"></div>
-    <a class="status-pill" href="/profile-editor" title="Open the raw profiles.json JSON editor">JSON Editor</a>
-    <button class="status-pill icon-btn" id="btn-theme" title="Toggle light/dark mode">☀</button>
-    <button class="status-pill icon-btn" id="btn-settings" title="Settings">⚙</button>
-    <a class="status-pill" href="/logout">Log out</a>
+<div class="shell">
+<header class="app-header">
+  <a class="brand" href="/" aria-label="Relay Controller — dashboard">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    </span>
+    <span>
+      <span class="brand-name">Relay Controller</span>
+      <span class="subtitle">Bell schedule manager</span>
+    </span>
+  </a>
+  <nav class="nav-tabs" aria-label="Main">
+    <a class="nav-tab active" href="/" aria-current="page">Dashboard</a>
+    <a class="nav-tab" href="/profiles">Profiles</a>
+    <a class="nav-tab" href="/profile-editor">JSON editor</a>
+  </nav>
+  <div class="header-actions">
+    <button type="button" class="icon-btn" id="btn-theme" aria-label="Switch theme" title="Switch theme"></button>
+    <button type="button" class="icon-btn" id="btn-settings" aria-label="Settings" title="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+    <a class="icon-btn" href="/logout" aria-label="Log out" title="Log out">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+    </a>
   </div>
 </header>
 
-
-<!-- ── Broken profile.json banner (server-side JSON validation) ───── -->
-<style>
-  .profile-broken-banner{background:rgba(239,68,68,.12);border:1px solid var(--danger);border-radius:10px;margin:0 0 16px 0;padding:12px 16px}
-  .profile-broken-banner-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-  .profile-broken-icon{font-size:22px;color:var(--danger)}
-  .profile-broken-text{flex:1;min-width:220px;color:var(--danger)}
-  .profile-broken-text strong{display:block;font-size:14px;letter-spacing:.02em}
-  .profile-broken-text span{font-size:12px;opacity:.85}
-  .profile-broken-actions{display:flex;gap:8px;flex-wrap:wrap}
-  .btn-broken{background:var(--danger);color:#fff;border:none;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer;text-decoration:none;font-family:inherit}
-  .btn-broken:hover{opacity:.85}
-  .profile-broken-details{margin-top:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:pre-wrap;max-height:220px;overflow:auto;background:rgba(0,0,0,.15);border-radius:6px;padding:8px;color:inherit}
-</style>
-<div id="profile-broken-banner" class="profile-broken-banner" style="display:none">
+<!-- ── Broken profiles.json banner (server-side JSON validation) ───── -->
+<div id="profile-broken-banner" class="profile-broken-banner" style="display:none" role="alert">
   <div class="profile-broken-banner-row">
-    <span class="profile-broken-icon">⚠</span>
+    <span class="profile-broken-icon" aria-hidden="true">⚠</span>
     <div class="profile-broken-text">
-      <strong>⚠ BROKEN PROFILE.JSON DETECTED</strong>
+      <strong>BROKEN PROFILES.JSON DETECTED</strong>
       <span id="profile-broken-summary"></span>
     </div>
     <div class="profile-broken-actions">
-      <a class="btn-broken" href="/profile-editor">Open JSON Editor</a>
-      <button type="button" class="btn-broken" id="btn-broken-repair">🔧 Attempt Automatic Repair</button>
-      <button type="button" class="btn-broken" id="btn-broken-revalidate">Reload / Revalidate</button>
-      <button type="button" class="btn-broken" id="btn-broken-details">View Validation Details</button>
+      <a class="btn-broken" href="/profile-editor">Open JSON editor</a>
+      <button type="button" class="btn-broken" id="btn-broken-repair">Attempt automatic repair</button>
+      <button type="button" class="btn-broken" id="btn-broken-revalidate">Reload / revalidate</button>
+      <button type="button" class="btn-broken" id="btn-broken-details">View validation details</button>
     </div>
   </div>
   <div id="profile-broken-details" class="profile-broken-details" style="display:none"></div>
 </div>
 
 <!-- ── System file health banner (settings/calendar/api_keys/firmware_state) -->
-<div id="system-health-banner" class="profile-broken-banner" style="display:none">
+<div id="system-health-banner" class="profile-broken-banner" style="display:none" role="alert">
   <div class="profile-broken-banner-row">
-    <span class="profile-broken-icon">⚠</span>
+    <span class="profile-broken-icon" aria-hidden="true">⚠</span>
     <div class="profile-broken-text">
-      <strong>⚠ SYSTEM FILE ERROR</strong>
+      <strong>SYSTEM FILE ERROR</strong>
       <span id="system-health-summary"></span>
     </div>
     <div class="profile-broken-actions">
-      <button type="button" class="btn-broken" id="btn-health-revalidate">Reload / Revalidate</button>
-      <button type="button" class="btn-broken" id="btn-health-details">View Details</button>
+      <button type="button" class="btn-broken" id="btn-health-revalidate">Reload / revalidate</button>
+      <button type="button" class="btn-broken" id="btn-health-details">View details</button>
     </div>
   </div>
   <div id="system-health-details" class="profile-broken-details" style="display:none"></div>
 </div>
 
-<!-- ── Profile switcher ─────────────────────────────────────────── -->
-<div class="profile-bar" id="profile-bar">
-  <span class="profile-bar-label">Active Profile</span>
-  <div class="profile-bar-select">
-    <select id="profile-switcher">
-      <option value="">Loading...</option>
-    </select>
-  </div>
-  <span class="profile-bar-reason" id="schedule-day" aria-live="polite"></span>
-  <span class="profile-bar-reason" id="profile-reason"></span>
-  <div class="profile-bar-actions">
-    <button class="btn btn-ghost btn-sm" id="btn-clear-override-sched" style="display:none;">Clear Override</button>
-    <a class="btn btn-ghost btn-sm" href="/profiles">Manage Profiles</a>
-    <a class="btn btn-ghost btn-sm" href="/profile-editor">JSON Editor</a>
-  </div>
-</div>
+<main id="main" tabindex="-1">
+  <h1 class="sr-only">Dashboard</h1>
 
-<div class="toolbar">
-  <button class="btn btn-add" id="btn-add-channel">+ Add Channel</button>
-  <button class="btn btn-ghost" id="btn-backup">&#8681; Backup</button>
-  <button class="btn btn-ghost" id="btn-restore">&#8679; Restore</button>
-  <input type="file" id="restore-file" accept="application/json" class="hidden">
-</div>
-
-<div class="grid" id="channels"></div>
-
-<div class="panel" id="firmware-panel">
-  <div class="panel-header" data-toggle="firmware-panel">
-    <span>Firmware Manager <span id="firmware-source-badge" style="color:var(--dim);font-size:0.72rem"></span></span>
-    <span class="arrow">&#9660;</span>
-  </div>
-  <div class="panel-body">
-    <div class="firmware-top">
+  <!-- ── Today: clock, profile, next bells ─────────────────────────── -->
+  <section class="hero" aria-label="Today">
+    <div class="hero-top">
       <div>
-        <div class="firmware-title" id="firmware-active">Loading firmware source...</div>
-        <div class="firmware-meta" id="firmware-meta"></div>
+        <div class="live-tag"><span class="dot on"></span><span id="clock-tz">Live</span></div>
+        <div class="clock-time" id="clock" aria-hidden="true"><span id="clk-hm">--:--</span><span class="sec" id="clk-s">:--</span></div>
+        <div class="clock-date" id="clock-date">Loading…</div>
+        <div class="status-row">
+          <span class="status-pill" id="srv-pill"><span class="dot" id="srv-dot"></span>Server <b id="srv-uptime">—</b></span>
+          <span class="status-pill" id="ctl-pill" title="Waiting for the first status check"><span class="dot" id="ctl-dot"></span>Controller <b id="ctl-text">—</b></span>
+        </div>
       </div>
-      <div class="firmware-actions">
-        <label class="firmware-switch"><input type="checkbox" id="firmware-auto"> Daily updates</label>
-        <button class="btn btn-ghost btn-sm" id="btn-firmware-check">Check device now</button>
-        <button class="btn btn-ghost btn-sm" id="btn-firmware-latest">Use GitHub latest</button>
+      <div class="profile-control">
+        <label for="profile-switcher">Today&rsquo;s profile</label>
+        <div class="profile-row">
+          <select id="profile-switcher"><option value="">Loading…</option></select>
+          <span class="reason-chip" id="profile-reason"></span>
+        </div>
+        <div class="profile-row">
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-clear-override-sched" hidden>Clear override</button>
+          <a class="btn btn-ghost btn-sm" href="/profiles">Manage profiles</a>
+        </div>
       </div>
     </div>
-    <div class="firmware-upload">
-      <input type="file" id="firmware-upload-file" accept=".bin,application/octet-stream">
-      <button class="btn btn-add btn-sm" id="btn-firmware-upload">Deploy local firmware</button>
-      <span class="firmware-meta" id="firmware-upload-limit"></span>
-    </div>
-    <div class="firmware-releases" id="firmware-releases"></div>
+    <div class="next-grid" id="next-bells"></div>
+  </section>
+
+  <!-- ── Channels ──────────────────────────────────────────────────── -->
+  <div class="grid" id="channels" aria-busy="true">
+    <div class="channel skel"><div class="ch-body"><div class="bar-l" style="width:46%"></div><div class="bar-l"></div><div class="bar-l" style="width:72%"></div><div class="bar-l" style="width:58%"></div></div></div>
+    <div class="channel skel"><div class="ch-body"><div class="bar-l" style="width:40%"></div><div class="bar-l"></div><div class="bar-l" style="width:66%"></div><div class="bar-l" style="width:52%"></div></div></div>
   </div>
+
+  <div id="panels">
+    <!-- ── History & analytics ───────────────────────────────────── -->
+    <section class="panel" id="hist-panel">
+      <div class="panel-header">
+        <button type="button" class="drag-handle" data-handle aria-label="Move History and analytics (drag, or use the up and down arrow keys)" title="Drag to reorder">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+        </button>
+        <h2 class="panel-h"><button type="button" class="panel-toggle" data-toggle="hist-panel" aria-expanded="true" aria-controls="hist-body">
+          <span class="panel-title">History &amp; analytics <span class="count" id="hist-count">(0)</span></span><span class="arrow" aria-hidden="true"></span>
+        </button></h2>
+      </div>
+      <div class="panel-body" id="hist-body">
+        <div class="hist-toolbar">
+          <select id="hist-filter-ch" aria-label="Filter by channel"><option value="">All channels</option></select>
+          <select id="hist-filter-trigger" aria-label="Filter by event type">
+            <option value="">All events</option>
+            <option value="manual">Manual</option>
+            <option value="schedule">Scheduled</option>
+            <option value="edit">Config changes</option>
+          </select>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-hist-refresh">Refresh</button>
+          <a class="btn btn-ghost btn-sm" id="btn-hist-export" href="/api/history/export" download>Export CSV</a>
+        </div>
+        <div class="chart" id="hist-chart" role="img" aria-label="Bells rung per day over the last 14 days"></div>
+        <div class="table-wrap" id="hist-table-wrap"><table class="hist-table"><thead><tr><th scope="col">Time</th><th scope="col">Channel</th><th scope="col">Event</th><th scope="col">Detail</th></tr></thead><tbody id="hist-tbody"></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- ── Firmware manager ──────────────────────────────────────── -->
+    <section class="panel collapsed" id="firmware-panel">
+      <div class="panel-header">
+        <button type="button" class="drag-handle" data-handle aria-label="Move Firmware manager (drag, or use the up and down arrow keys)" title="Drag to reorder">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+        </button>
+        <h2 class="panel-h"><button type="button" class="panel-toggle" data-toggle="firmware-panel" aria-expanded="false" aria-controls="firmware-body">
+          <span class="panel-title">Firmware manager <span class="sub" id="firmware-source-badge"></span></span><span class="arrow" aria-hidden="true"></span>
+        </button></h2>
+      </div>
+      <div class="panel-body" id="firmware-body">
+        <div class="firmware-top">
+          <div>
+            <div class="firmware-title" id="firmware-active">Loading firmware source…</div>
+            <div id="firmware-meta"></div>
+          </div>
+          <div class="firmware-actions">
+            <label class="firmware-switch"><input type="checkbox" id="firmware-auto"> Daily updates</label>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-firmware-check">Check device now</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-firmware-latest">Use GitHub latest</button>
+          </div>
+        </div>
+        <div class="firmware-upload">
+          <input type="file" id="firmware-upload-file" accept=".bin,application/octet-stream" aria-label="Firmware .bin file">
+          <button type="button" class="btn btn-add btn-sm" id="btn-firmware-upload">Deploy local firmware</button>
+          <span class="firmware-meta" id="firmware-upload-limit"></span>
+        </div>
+        <div class="firmware-releases" id="firmware-releases"></div>
+      </div>
+    </section>
+
+    <!-- ── Device serial log ─────────────────────────────────────── -->
+    <section class="panel collapsed" id="log-panel">
+      <div class="panel-header">
+        <button type="button" class="drag-handle" data-handle aria-label="Move ESP32 serial monitor (drag, or use the up and down arrow keys)" title="Drag to reorder">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+        </button>
+        <h2 class="panel-h"><button type="button" class="panel-toggle" data-toggle="log-panel" aria-expanded="false" aria-controls="log-body">
+          <span class="panel-title">ESP32 serial monitor <span class="count" id="log-count">(0)</span> <span class="live" id="log-status">Live</span></span><span class="arrow" aria-hidden="true"></span>
+        </button></h2>
+      </div>
+      <div class="panel-body log-body" id="log-body" tabindex="0" role="log" aria-label="ESP32 serial output"></div>
+    </section>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <p>Built from silicon to server. &mdash; Chinmayakeshav</p>
+  <div class="footer-links">
+    <a href="https://github.com/CoolNinja2009" target="_blank" rel="noopener noreferrer">GitHub</a>
+    <a href="https://github.com/CoolNinja2009?tab=repositories" target="_blank" rel="noopener noreferrer">Projects</a>
+    <span>ESP32 + Node.js</span>
+    <a href="https://www.gnu.org/licenses/gpl-3.0.en.html" target="_blank" rel="noopener noreferrer">GPL-3.0 License</a>
+  </div>
+</footer>
+</div><!-- /.shell -->
+
+<!-- ── Unsaved changes bar ─────────────────────────────────────────── -->
+<div class="savebar" id="savebar" role="region" aria-label="Unsaved changes">
+  <span class="savebar-msg"><span class="dot warn"></span>Unsaved changes</span>
+  <button type="button" class="btn btn-ghost btn-sm" id="btn-discard">Discard</button>
+  <button type="button" class="btn btn-save" id="btn-save-all">Save changes</button>
 </div>
 
-<!-- ── History & analytics ─────────────────────────────────────── -->
-<div class="panel" id="hist-panel">
-  <div class="panel-header" data-toggle="hist-panel">
-    <span>History &amp; Analytics <span id="hist-count" style="color:var(--dim)">(0)</span></span>
-    <span class="arrow">&#9660;</span>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- ── Settings ────────────────────────────────────────────────────── -->
+<dialog class="modal" id="settings-dialog" aria-labelledby="settings-title">
+  <div class="modal-head">
+    <div><h3 id="settings-title">Settings</h3><div class="sub">Account, integrations and backups</div></div>
+    <button type="button" class="icon-btn" id="btn-close-settings" aria-label="Close settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
   </div>
-  <div class="panel-body">
-    <div class="hist-toolbar">
-      <select id="hist-filter-ch"><option value="">All channels</option></select>
-      <select id="hist-filter-trigger">
-        <option value="">All events</option>
-        <option value="manual">Manual</option>
-        <option value="schedule">Scheduled</option>
-        <option value="edit">Config changes</option>
-      </select>
-      <button class="btn btn-ghost" id="btn-hist-refresh" style="padding:7px 14px;">Refresh</button>
-      <a class="btn btn-ghost" id="btn-hist-export" style="padding:7px 14px; text-decoration:none;">Export CSV</a>
-    </div>
-    <div class="chart" id="hist-chart"></div>
-    <div id="hist-table-wrap"><table class="hist-table"><thead><tr><th>Time</th><th>Channel</th><th>Event</th><th>Detail</th></tr></thead><tbody id="hist-tbody"></tbody></table></div>
-  </div>
-</div>
+  <div class="modal-body">
+    <section class="settings-section">
+      <h4>Change password</h4>
+      <form id="pw-form">
+        <div class="field"><label for="pw-current">Current password</label><input type="password" id="pw-current" autocomplete="current-password"></div>
+        <div class="field"><label for="pw-next">New password</label><input type="password" id="pw-next" autocomplete="new-password"></div>
+        <div class="field"><label for="pw-confirm">Confirm new password</label><input type="password" id="pw-confirm" autocomplete="new-password"></div>
+        <button type="submit" class="btn btn-save btn-block" id="btn-change-pw" style="margin-top:16px">Update password</button>
+      </form>
+    </section>
 
-<!-- ── Raw device log (unchanged behavior) ─────────────────────── -->
-<div class="panel collapsed" id="log-panel">
-  <div class="panel-header" data-toggle="log-panel">
-    <span>ESP32 Serial Monitor <span id="log-count" style="color:var(--dim)">(0)</span> <span id="log-status" style="color:var(--accent);font-size:0.7rem">Live</span></span>
-    <span class="arrow">&#9660;</span>
-  </div>
-  <div class="panel-body log-body" id="log-body"></div>
-</div>
-
-<div class="toast" id="toast"></div>
-
-<!-- ── Settings modal ───────────────────────────────────────────── -->
-<div class="modal-backdrop" id="settings-backdrop">
-  <div class="modal">
-    <button class="modal-close" id="btn-close-settings">&times;</button>
-    <h3>Settings</h3>
-    <div class="sub">Account &amp; integrations</div>
-
-    <div class="settings-section">
-      <h4>Change Password</h4>
-      <div class="field"><label>Current password</label><input type="password" id="pw-current"></div>
-      <div class="field"><label>New password</label><input type="password" id="pw-next"></div>
-      <div class="field"><label>Confirm new password</label><input type="password" id="pw-confirm"></div>
-      <button class="btn btn-save" id="btn-change-pw" style="width:100%;">Update Password</button>
-    </div>
-
-    <div class="settings-section">
-      <h4>API Keys <span style="color:var(--dim);font-weight:400;">— for Home Assistant, cron, shortcuts, etc.</span></h4>
+    <section class="settings-section">
+      <h4>API keys</h4>
+      <p class="hint" style="margin-bottom:8px">For Home Assistant, cron jobs, shortcuts, etc. Send the key as the <code>X-API-Key</code> header.</p>
       <div id="keys-list"></div>
-      <div class="add-row" style="margin-top:10px;">
-        <input type="text" id="key-name" placeholder="Key name, e.g. home-assistant">
-        <button class="btn btn-add" id="btn-create-key">+ Create</button>
-      </div>
+      <form class="add-row" id="key-form">
+        <input type="text" id="key-name" placeholder="Key name, e.g. home-assistant" aria-label="New API key name" maxlength="60">
+        <button type="submit" class="btn btn-add" id="btn-create-key">Create key</button>
+      </form>
       <div id="key-reveal-box" class="hidden">
         <div class="key-reveal" id="key-reveal-text"></div>
-        <div class="empty-hint">Copy this now — it won't be shown again. Send it as header <code>X-API-Key</code>.</div>
+        <div class="hint">Copy this now &mdash; it won&rsquo;t be shown again.</div>
       </div>
-    </div>
+    </section>
+
+    <section class="settings-section">
+      <h4>Backup &amp; restore</h4>
+      <p class="hint">A backup contains the schedule, profiles, calendar, settings and history. Restoring overwrites the current data.</p>
+      <div class="btn-row">
+        <a class="btn btn-ghost" id="btn-backup" href="/api/backup" download>Download backup</a>
+        <button type="button" class="btn btn-ghost" id="btn-restore">Restore from file…</button>
+      </div>
+      <input type="file" id="restore-file" accept="application/json" class="hidden">
+    </section>
   </div>
-</div>
+</dialog>
 
+<script src="/assets/channel-card.js"></script>
 <script>
-// ── Helpers ────────────────────────────────────────────────────────
-const $ = (s, el=document) => el.querySelector(s);
-const $$ = (s, el=document) => [...el.querySelectorAll(s)];
+'use strict';
 
-let schedule = null;
+// ── Helpers ────────────────────────────────────────────────────────────
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+
+const ICON = {
+  sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
+  moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
+};
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 async function api(method, path, body) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  const opts = { method, headers: { 'Content-Type': 'application/json' }, cache: 'no-store' };
   if (body !== undefined) opts.body = JSON.stringify(body);
-  const res = await fetch(path, opts);
+  let res;
+  try {
+    res = await fetch(path, opts);
+  } catch (e) {
+    throw new Error('Cannot reach the server');
+  }
   if (res.status === 401) {
-    window.location.href = '/login';
+    window.location.href = '/login?next=' + encodeURIComponent(location.pathname);
     throw new Error('Session expired');
   }
   if (!res.ok) {
@@ -1613,601 +298,501 @@ async function api(method, path, body) {
   return res.json();
 }
 
+let toastTimer;
 function toast(msg, isErr) {
   const el = $('#toast');
   el.textContent = msg;
-  el.className = 'toast' + (isErr ? ' error' : '') + ' show';
-  clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove('show'), 2400);
+  el.className = 'toast show' + (isErr ? ' error' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), isErr ? 5500 : 2800);
 }
 
-document.addEventListener('click', (e) => {
-  const header = e.target.closest('[data-toggle]');
-  if (Date.now() < window._suppressPanelToggleUntil) return;
-  if (header) {
-    const panel = $('#' + header.dataset.toggle);
-    panel.classList.toggle('collapsed');
-    savePanelCollapseState();
+// Run fn only if the previous call has finished (slow Pi / flaky Wi-Fi safe).
+const single = (fn) => {
+  let busy = false;
+  return async (...args) => {
+    if (busy) return undefined;
+    busy = true;
+    try { return await fn(...args); } finally { busy = false; }
+  };
+};
+
+// Periodic work that pauses while the tab is hidden.
+function every(ms, fn) {
+  setInterval(() => { if (!document.hidden) fn(); }, ms);
+}
+
+// ── Schedule model helpers ─────────────────────────────────────────────
+const { entryTime, normTime } = BellChannelCard.helpers;
+
+// ── State ──────────────────────────────────────────────────────────────
+let schedule = null;        // working copy being edited
+let savedJson = '';         // JSON of the last schedule loaded from / saved to the server
+let savedSchedule = null;   // parsed copy of the above — drives the live "next bell" cards
+let loadedProfileId = null; // profile the working copy belongs to
+let activeProfileInfo = null;
+let pendingReload = false;
+let conflictShown = false;
+let firstRender = true;
+const toolsOpen = new Set();
+
+const isDirty = () => !!schedule && JSON.stringify(schedule) !== savedJson;
+function syncDirty() { $('#savebar').classList.toggle('show', isDirty()); }
+
+function normalizeSchedule(data) {
+  for (const ch of Object.values(data)) {
+    if (!Array.isArray(ch.schedule)) ch.schedule = [];
+    if (!Array.isArray(ch.skip_dates)) ch.skip_dates = [];
+  }
+  return data;
+}
+
+function applyLoaded(data) {
+  normalizeSchedule(data);
+  savedJson = JSON.stringify(data);
+  savedSchedule = JSON.parse(savedJson);
+  schedule = data;
+  pendingReload = false;
+  conflictShown = false;
+  renderChannels();
+  renderNextCards();
+}
+
+// ── Channel cards ──────────────────────────────────────────────────────
+const channelCtx = {
+  headingLevel: 2,
+  toolsOpen,
+  canRing: true,
+  toast,
+  ring: (btn, key, ch) => ringNow(btn, key, ch),
+  rerender: (focus) => renderChannels(focus),
+  changed: (what) => { syncDirty(); if (what === 'label') renderNextCards(); },
+};
+
+function renderChannels(focus) {
+  const host = $('#channels');
+  host.setAttribute('aria-busy', 'false');
+  host.replaceChildren();
+  Object.entries(schedule).forEach(([key, ch], index) => {
+    host.appendChild(BellChannelCard.build(key, ch, { ...channelCtx, index, animate: firstRender }));
+  });
+  refreshHistFilterOptions();
+  syncDirty();
+  firstRender = false;
+  if (focus) {
+    const target = $(`.channel[data-key="${CSS.escape(focus.key)}"] ${focus.sel}`);
+    if (target) target.focus();
+  }
+}
+
+async function ringNow(btn, key, ch) {
+  btn.disabled = true;
+  try {
+    const r = await api('POST', `/api/relay/${encodeURIComponent(key)}/trigger`, { pulse_ms: ch.pulse_ms });
+    toast(`${(ch.label || key).toString()} — bell queued (${r.pulse_ms} ms)`);
+    loadHistory();
+  } catch (err) {
+    toast('Could not ring: ' + err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Save / discard ─────────────────────────────────────────────────────
+const saveAll = single(async () => {
+  const btn = $('#btn-save-all');
+  btn.disabled = true;
+  btn.classList.add('is-pending');
+  try {
+    // Dashboard saves are written to whichever profile is active *now*. If it
+    // changed (e.g. at midnight) while this page was open, refuse rather than
+    // write these edits into the wrong day's profile.
+    const info = await api('GET', '/api/profiles/active');
+    if (loadedProfileId && info.profileId !== loadedProfileId) {
+      pendingReload = true;
+      toast(`The active profile changed to “${info.name || 'another profile'}” while you were editing. Nothing was saved — discard to load it, or edit the other profile under Profiles.`, true);
+      return;
+    }
+    await api('POST', '/api/schedule', schedule);
+    applyLoaded(await api('GET', '/api/schedule'));
+    toast('Saved — the controller syncs within a few seconds');
+    loadHistory();
+  } catch (err) {
+    toast('Save failed: ' + err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('is-pending');
   }
 });
 
-// Dashboard panels can be reordered from their headers. The preference stays
-// in this browser only, so each operator can arrange their own workspace.
+$('#btn-save-all').onclick = saveAll;
+$('#btn-discard').onclick = async () => {
+  if (pendingReload) { await boot(); return; }
+  applyLoaded(JSON.parse(savedJson));
+  toast('Changes discarded');
+};
+
+window.addEventListener('beforeunload', (e) => {
+  if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    if (isDirty()) saveAll();
+  }
+});
+
+// ── Clock + next bell ──────────────────────────────────────────────────
+let tz = '';               // IANA zone the schedule runs in (from the server)
+let skewMs = 0;            // server clock minus this browser's clock
+let fmtKey = null, fmtParts = null, fmtDate = null;
+
+function zoned() {
+  if (fmtKey !== tz || !fmtParts) {
+    const base = tz ? { timeZone: tz } : {};
+    try {
+      fmtParts = new Intl.DateTimeFormat('en-GB', { ...base, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      fmtDate = new Intl.DateTimeFormat('en-GB', { ...base, weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+    } catch {
+      tz = '';
+      fmtParts = new Intl.DateTimeFormat('en-GB', { hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      fmtDate = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+    }
+    fmtKey = tz;
+  }
+  const d = new Date(Date.now() + skewMs);
+  const p = Object.fromEntries(fmtParts.formatToParts(d).map((x) => [x.type, x.value]));
+  return {
+    date: `${p.year}-${p.month}-${p.day}`,
+    secs: Number(p.hour) * 3600 + Number(p.minute) * 60 + Number(p.second),
+    hh: p.hour, mm: p.minute, ss: p.second,
+    label: fmtDate.format(d),
+  };
+}
+
+function nextBell(ch, now) {
+  if (!ch || !ch.enabled) return { state: 'off' };
+  if ((ch.skip_dates || []).includes(now.date)) return { state: 'skipped' };
+  const times = (ch.schedule || []).map(entryTime).map(normTime).filter(Boolean)
+    .map((t) => ({ t, s: Number(t.slice(0, 2)) * 3600 + Number(t.slice(3)) * 60 }))
+    .sort((a, b) => a.s - b.s);
+  if (!times.length) return { state: 'empty' };
+  const upcoming = times.find((x) => x.s > now.secs);
+  const done = times.filter((x) => x.s <= now.secs).length;
+  if (!upcoming) return { state: 'done', total: times.length, last: times[times.length - 1].t };
+  return { state: 'next', t: upcoming.t, in: upcoming.s - now.secs, total: times.length, done };
+}
+
+function fmtCountdown(s) {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+  if (h) return `${h}h ${String(m).padStart(2, '0')}m`;
+  if (m) return `${m}m ${String(x).padStart(2, '0')}s`;
+  return `${x}s`;
+}
+
+function renderNextCards() {
+  if (!savedSchedule) return;
+  $('#next-bells').innerHTML = Object.entries(savedSchedule).map(([key, ch]) => `
+    <div class="next-card" data-key="${escapeHtml(key)}">
+      <div class="next-head">
+        <span class="next-name"><span class="dot off" data-n-dot style="margin-right:7px"></span>${escapeHtml(ch.label || key.toUpperCase())}</span>
+        <span class="next-time" data-n-time></span>
+      </div>
+      <div class="next-count" data-n-count>—</div>
+      <div class="meter" role="progressbar" aria-label="Bells rung today" aria-valuemin="0" aria-valuemax="100"><i data-n-meter></i></div>
+      <div class="next-foot" data-n-foot></div>
+    </div>`).join('');
+  applyControllerDots();
+  tickHero();
+}
+
+function setText(el, text) { if (el.textContent !== text) el.textContent = text; }
+
+function tickHero() {
+  const n = zoned();
+  setText($('#clk-hm'), `${n.hh}:${n.mm}`);
+  setText($('#clk-s'), `:${n.ss}`);
+  setText($('#clock-date'), n.label);
+  setText($('#clock-tz'), tz ? `Live · ${tz.replace(/_/g, ' ')}` : 'Live · this device’s clock');
+  if (!savedSchedule) return;
+  for (const card of $$('.next-card')) {
+    const r = nextBell(savedSchedule[card.dataset.key], n);
+    const count = $('[data-n-count]', card);
+    const time = $('[data-n-time]', card);
+    const foot = $('[data-n-foot]', card);
+    const meter = $('[data-n-meter]', card);
+    let pct = 0, cls = 'next-count', c = '—', t = '', f = '';
+    switch (r.state) {
+      case 'next':
+        c = fmtCountdown(r.in); t = `Next ${r.t}`; pct = (r.done / r.total) * 100;
+        f = `${r.done} of ${r.total} bells rung today`;
+        if (r.in <= 60) cls += ' soon';
+        break;
+      case 'done':
+        c = 'Done for today'; cls += ' idle'; t = `Last ${r.last}`; pct = 100; f = `All ${r.total} bells rung`;
+        break;
+      case 'skipped':
+        c = 'Skipped today'; cls += ' idle'; f = 'Today is one of this channel’s skip dates';
+        break;
+      case 'empty':
+        c = 'No bell times'; cls += ' idle'; f = 'Add times below to start ringing';
+        break;
+      default:
+        c = 'Schedule off'; cls += ' idle'; f = 'Turn the channel on to resume bells';
+    }
+    card.dataset.state = r.state;
+    setText(count, c); count.className = cls;
+    setText(time, t); setText(foot, f);
+    meter.style.width = pct + '%';
+    meter.parentElement.setAttribute('aria-valuenow', String(Math.round(pct)));
+  }
+}
+
+setInterval(tickHero, 1000);
+
+// ── Controller status (heartbeats) ─────────────────────────────────────
+// The controller posts a heartbeat per channel every 5 s; allow two missed
+// beats before calling it offline so a slow Wi-Fi hiccup does not flap.
+const OFFLINE_THRESHOLD_S = 15;
+let lastHeartbeats = null;
+
+function applyControllerDots() {
+  const hb = lastHeartbeats || {};
+  for (const card of $$('.next-card')) {
+    const age = hb[card.dataset.key];
+    const alive = typeof age === 'number' && age < OFFLINE_THRESHOLD_S;
+    const dot = $('[data-n-dot]', card);
+    if (dot) dot.className = 'dot ' + (lastHeartbeats ? (alive ? 'on' : 'off') : 'off');
+  }
+}
+
+function updateController(hb) {
+  lastHeartbeats = hb;
+  const keys = savedSchedule ? Object.keys(savedSchedule) : Object.keys(hb);
+  const ageOf = (k) => (typeof hb[k] === 'number' ? hb[k] : null);
+  const alive = keys.filter((k) => ageOf(k) !== null && ageOf(k) < OFFLINE_THRESHOLD_S);
+  const dot = $('#ctl-dot'), text = $('#ctl-text'), pill = $('#ctl-pill');
+  if (keys.length && alive.length === keys.length) { dot.className = 'dot on'; text.textContent = 'online'; }
+  else if (alive.length) { dot.className = 'dot warn'; text.textContent = 'partial'; }
+  else { dot.className = 'dot off'; text.textContent = 'offline'; }
+  pill.title = keys.length
+    ? keys.map((k) => `${k.toUpperCase()}: ${ageOf(k) === null ? 'no heartbeat' : (ageOf(k) < OFFLINE_THRESHOLD_S ? `${Math.round(ageOf(k))}s ago` : 'offline')}`).join(' · ')
+    : 'No channels';
+  applyControllerDots();
+}
+
+function fmtUptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  if (d) return `${d}d ${h}h`;
+  return h ? `${h}h ${m}m` : `${m}m ${Math.floor(s % 60)}s`;
+}
+
+const pollStatus = single(async () => {
+  try {
+    const s = await api('GET', '/api/status');
+    $('#srv-dot').className = 'dot on';
+    $('#srv-uptime').textContent = fmtUptime(s.server_uptime);
+    if (s.server_time) skewMs = Date.parse(s.server_time) - Date.now();
+    updateController(s.heartbeats || {});
+  } catch {
+    $('#srv-dot').className = 'dot off';
+    $('#srv-uptime').textContent = 'unreachable';
+    $('#ctl-dot').className = 'dot off';
+    $('#ctl-text').textContent = 'unknown';
+    $('#ctl-pill').title = 'The server cannot be reached, so the controller status is unknown';
+    lastHeartbeats = null;
+    applyControllerDots();
+  }
+});
+
+// ── Profile switcher ───────────────────────────────────────────────────
+let allProfileOptions = [];
+
+async function loadProfileOptions() {
+  try {
+    allProfileOptions = await api('GET', '/api/profiles');
+    const sel = $('#profile-switcher');
+    const current = activeProfileInfo ? activeProfileInfo.profileId : sel.value;
+    sel.innerHTML = allProfileOptions.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
+    if (current && allProfileOptions.some((p) => p.id === current)) sel.value = current;
+  } catch { /* non-fatal */ }
+}
+
+function reasonText(info) {
+  const r = info.reason || '';
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  if (r === 'manual_override') return 'Manual override' + (info.overrideUntil ? ` · ends ${String(info.overrideUntil).slice(0, 10)}` : '');
+  if (r.startsWith('calendar_date:')) return `Calendar date · ${r.split(':')[1]}`;
+  if (r.startsWith('calendar_dow:')) return `Weekly pattern · ${cap(r.split(':')[1])}`;
+  if (r === 'default') return 'Default profile';
+  if (r === 'fallback_first') return 'Default (first profile)';
+  return r;
+}
+
+async function applyProfileInfo(info) {
+  activeProfileInfo = info;
+  if (info.timeZone) tz = info.timeZone;
+  const sel = $('#profile-switcher');
+  if (info.profileId && !allProfileOptions.some((p) => p.id === info.profileId)) await loadProfileOptions();
+  sel.value = info.profileId || '';
+  const chip = $('#profile-reason');
+  chip.textContent = info.profileId ? reasonText(info) : '';
+  chip.classList.toggle('override', !!info.override);
+  $('#btn-clear-override-sched').hidden = !info.override;
+  tickHero();
+}
+
+// Pull the schedule + active profile together. When `force` is false, a
+// change made elsewhere is applied only if the user has no unsaved edits.
+async function refreshCore(force) {
+  try {
+    const [data, info] = await Promise.all([api('GET', '/api/schedule'), api('GET', '/api/profiles/active')]);
+    await applyProfileInfo(info);
+    normalizeSchedule(data);
+    const incoming = JSON.stringify(data);
+    const changed = force || info.profileId !== loadedProfileId || (savedJson && incoming !== savedJson) || !schedule;
+    if (!changed) return;
+    if (!force && isDirty()) {
+      pendingReload = true;
+      if (!conflictShown) {
+        conflictShown = true;
+        toast('The schedule changed elsewhere. Save or discard your edits to see the latest.', true);
+      }
+      return;
+    }
+    loadedProfileId = info.profileId;
+    applyLoaded(data);
+  } catch (err) {
+    if (!schedule) {
+      $('#channels').setAttribute('aria-busy', 'false');
+      $('#channels').innerHTML = `<div class="empty-hint" style="grid-column:1/-1">Could not load the schedule: ${escapeHtml(err.message)}. Retrying…</div>`;
+    }
+  }
+}
+const refresh = single(refreshCore);          // background polls never overlap
+const boot = () => refreshCore(true);         // explicit reloads are never skipped
+
+$('#profile-switcher').onchange = async (e) => {
+  const sel = e.target;
+  const profileId = sel.value;
+  const revert = () => { sel.value = activeProfileInfo ? activeProfileInfo.profileId || '' : ''; };
+  if (!profileId || (activeProfileInfo && profileId === activeProfileInfo.profileId)) return;
+  const name = sel.selectedOptions[0].textContent;
+  const warn = isDirty() ? '\n\nYour unsaved edits will be discarded.' : '';
+  if (!confirm(`Run “${name}” instead of the scheduled profile?\n\nThe controller follows it until you clear the override.${warn}`)) { revert(); return; }
+  try {
+    await api('POST', '/api/profiles/override', { profileId });
+    toast(`Switched to ${name}`);
+    await boot();
+  } catch (err) {
+    revert();
+    toast('Switch failed: ' + err.message, true);
+  }
+};
+
+$('#btn-clear-override-sched').onclick = async () => {
+  if (isDirty() && !confirm('Clearing the override loads a different schedule. Discard your unsaved edits?')) return;
+  try {
+    await api('POST', '/api/profiles/override/clear');
+    toast('Override cleared — automatic selection resumed');
+    await boot();
+  } catch (err) { toast('Failed: ' + err.message, true); }
+};
+
+// ── Panels: collapse, reorder (drag handle or arrow keys) ──────────────
 const PANEL_ORDER_KEY = 'bell-dashboard-panel-order-v1';
 const PANEL_COLLAPSE_KEY = 'bell-dashboard-panel-collapse-v1';
-window._suppressPanelToggleUntil = 0;
+const panelIds = () => $$('#panels > .panel').map((p) => p.id);
 
-function movablePanels() {
-  const ids = new Set(['firmware-panel', 'hist-panel', 'log-panel']);
-  return $$('.panel').filter(panel => ids.has(panel.id));
-}
-
-function savePanelOrder() {
-  try { localStorage.setItem(PANEL_ORDER_KEY, JSON.stringify(movablePanels().map(panel => panel.id))); } catch {}
-}
+function readStore(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }
+function writeStore(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ } }
 
 function savePanelCollapseState() {
-  try {
-    localStorage.setItem(PANEL_COLLAPSE_KEY, JSON.stringify(
-      Object.fromEntries(movablePanels().map(panel => [panel.id, panel.classList.contains('collapsed')]))
-    ));
-  } catch {}
+  writeStore(PANEL_COLLAPSE_KEY, Object.fromEntries($$('#panels > .panel').map((p) => [p.id, p.classList.contains('collapsed')])));
 }
 
-function restorePanelCollapseState() {
-  let collapsed;
-  try { collapsed = JSON.parse(localStorage.getItem(PANEL_COLLAPSE_KEY)); } catch { collapsed = null; }
-  if (!collapsed || typeof collapsed !== 'object' || Array.isArray(collapsed)) return;
-  for (const panel of movablePanels()) {
-    if (typeof collapsed[panel.id] === 'boolean') panel.classList.toggle('collapsed', collapsed[panel.id]);
+function setPanelCollapsed(panel, collapsed) {
+  panel.classList.toggle('collapsed', collapsed);
+  $('[data-toggle]', panel).setAttribute('aria-expanded', String(!collapsed));
+  if (!collapsed) onPanelOpened(panel.id);
+}
+
+function onPanelOpened(id) {
+  if (id === 'hist-panel') loadHistory();
+  else if (id === 'firmware-panel') loadFirmwareManager();
+  else if (id === 'log-panel') pollLog();
+}
+
+function setupPanels() {
+  const host = $('#panels');
+  const order = readStore(PANEL_ORDER_KEY);
+  if (Array.isArray(order)) {
+    const known = new Map($$('#panels > .panel').map((p) => [p.id, p]));
+    if (order.length === known.size && order.every((id) => known.has(id))) order.forEach((id) => host.appendChild(known.get(id)));
   }
-}
-
-function restorePanelOrder() {
-  let order;
-  try { order = JSON.parse(localStorage.getItem(PANEL_ORDER_KEY)); } catch { order = null; }
-  if (!Array.isArray(order)) return;
-  const known = new Map(movablePanels().map(panel => [panel.id, panel]));
-  const panels = order.map(id => known.get(id)).filter(Boolean);
-  if (panels.length !== known.size) return;
-  let anchor = document.getElementById('toast');
-  for (let index = panels.length - 1; index >= 0; index--) {
-    anchor.parentElement.insertBefore(panels[index], anchor);
-    anchor = panels[index];
-  }
-}
-
-function setupPanelReordering() {
-  restorePanelOrder();
-  restorePanelCollapseState();
-  let activeDrag = null;
-
-  const clearDragState = () => {
-    for (const item of movablePanels()) item.classList.remove('dragging', 'drag-target');
-  };
-
-  const finish = () => {
-    if (!activeDrag) return;
-    const { panel, target, before, dragging } = activeDrag;
-    if (dragging && target && target !== panel) {
-      target.parentElement.insertBefore(panel, before ? target : target.nextElementSibling);
-      savePanelOrder();
-      window._suppressPanelToggleUntil = Date.now() + 250;
+  const collapsed = readStore(PANEL_COLLAPSE_KEY);
+  if (collapsed && typeof collapsed === 'object' && !Array.isArray(collapsed)) {
+    for (const panel of $$('#panels > .panel')) {
+      if (typeof collapsed[panel.id] === 'boolean') setPanelCollapsed(panel, collapsed[panel.id]);
     }
-    clearDragState();
-    activeDrag = null;
+  }
+
+  for (const btn of $$('[data-toggle]')) {
+    btn.addEventListener('click', () => {
+      const panel = document.getElementById(btn.dataset.toggle);
+      setPanelCollapsed(panel, !panel.classList.contains('collapsed'));
+      savePanelCollapseState();
+    });
+  }
+
+  const movePanel = (panel, before) => {
+    if (before) host.insertBefore(panel, before); else host.appendChild(panel);
+    writeStore(PANEL_ORDER_KEY, panelIds());
   };
 
-  window.addEventListener('pointermove', (event) => {
-    if (!activeDrag || event.pointerId !== activeDrag.pointerId) return;
-    if (Math.abs(event.clientY - activeDrag.startY) < 8) return;
-    activeDrag.dragging = true;
-    activeDrag.panel.classList.add('dragging');
-    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('.panel');
-    const validTarget = movablePanels().includes(target) && target !== activeDrag.panel ? target : null;
-    activeDrag.target = validTarget;
-    activeDrag.before = validTarget && event.clientY < validTarget.getBoundingClientRect().top + validTarget.offsetHeight / 2;
-    for (const item of movablePanels()) item.classList.toggle('drag-target', item === validTarget);
-  });
-  window.addEventListener('pointerup', finish);
-  window.addEventListener('pointercancel', finish);
+  for (const handle of $$('[data-handle]')) {
+    const panel = handle.closest('.panel');
+    let drag = null;
 
-  for (const panel of movablePanels()) {
-    const header = panel.querySelector('.panel-header');
-    header.addEventListener('pointerdown', (event) => {
-      clearDragState();
-      activeDrag = { panel, pointerId: event.pointerId, startY: event.clientY, target: null, before: false, dragging: false };
-    });
-  }
-}
-
-setupPanelReordering();
-
-// ── Channels: render ──────────────────────────────────────────────
-function renderAll(data) {
-  schedule = data;
-  $('#channels').innerHTML = '';
-  for (const [key, ch] of Object.entries(data)) {
-    renderChannel(key, ch);
-  }
-  renderHeartbeatSlots(Object.keys(data));
-  refreshHistFilterOptions(Object.keys(data));
-}
-
-function renderChannel(key, ch) {
-  const div = document.createElement('div');
-  div.className = 'channel' + (ch.enabled ? '' : ' disabled');
-  div.dataset.key = key;
-  const label = ch.label || key.toUpperCase();
-  const dayContext = activeProfileInfo && activeProfileInfo.day
-    ? `${activeProfileInfo.day[0].toUpperCase()}${activeProfileInfo.day.slice(1)}${activeProfileInfo.date ? ` · ${activeProfileInfo.date}` : ''}`
-    : '';
-  const isOn = !!ch.enabled;
-  div.innerHTML = `
-    <div class="ch-header">
-      <div style="flex:1;min-width:0;">
-        <h2 contenteditable="${isOn}" spellcheck="false" data-field="label">${escapeHtml(label)}</h2>
-        <span class="ch-key-tag">${escapeHtml(key)}</span>
-        ${dayContext ? `<span class="ch-key-tag" style="margin-left:6px;color:var(--accent);">${escapeHtml(dayContext)}</span>` : ''}
-      </div>
-      <div class="ch-controls">
-        <button class="toggle${isOn ? ' active' : ''}" data-action="toggle" title="${isOn ? 'Turn channel off' : 'Turn channel on'}"></button>
-        ${isOn ? '<button class="icon-x" data-action="delete" title="Delete channel">&times;</button>' : ''}
-      </div>
-    </div>
-    <div class="ch-body">
-    <div class="field">
-      <label>Pulse Duration (ms)</label>
-      <input type="number" value="${ch.pulse_ms}" min="100" step="100" data-field="pulse_ms"${isOn ? '' : ' disabled'}>
-    </div>
-    <div class="field">
-      <label>Schedule (H:MM)</label>
-      <div class="tag-list" data-list="schedule">
-        ${(ch.schedule||[]).map(t => {
-          const label = fmtScheduleEntry(t);
-          const val = typeof t === 'string' ? t : (t && t.time || '');
-          return `<span class="tag" data-list="schedule" data-val="${escapeHtml(val)}">${escapeHtml(label)}${isOn ? '<button data-remove="schedule" data-val="'+escapeHtml(val)+'">&times;</button>' : ''}</span>`;
-        }).join('')}
-      </div>
-      ${isOn ? `
-      <div class="add-row">
-        <input type="time" data-input="schedule" placeholder="H:MM" style="width:130px;">
-        <input type="number" data-input="schedule_pulse" placeholder="ms" min="100" step="100" style="width:70px;" title="Optional pulse duration (uses channel default if empty)">
-        <button class="btn btn-add" data-add="schedule">+ Add</button>
-      </div>
-      <div style="margin-top:6px;">
-        <a href="#" class="bulk-toggle" data-action="toggle-bulk" style="font-size:0.78rem;color:var(--accent);opacity:0.7;text-decoration:none;">+ Bulk add</a>
-      </div>
-       <div class="bulk-section" style="display:none;margin-top:8px;padding:10px 12px;background:var(--panel2);border-radius:6px;border:1px solid var(--border);">
-        <div style="display:flex;gap:2px;margin-bottom:8px;">
-          <button class="bulk-tab active" data-tab="paste" style="flex:1;padding:5px 0;background:none;border:none;border-bottom:2px solid var(--accent);color:var(--accent);font-size:0.75rem;cursor:pointer;">Paste</button>
-          <button class="bulk-tab" data-tab="range" style="flex:1;padding:5px 0;background:none;border:none;border-bottom:2px solid transparent;color:var(--dim);font-size:0.75rem;cursor:pointer;">Range</button>
-        </div>
-        <div class="bulk-panel" data-panel="paste">
-          <textarea data-input="bulk_paste" rows="3" placeholder="One per line: H:MM [pulse_ms]&#10;8:00&#10;9:00 5000&#10;10:30" style="width:100%;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);font:0.8rem monospace;padding:6px 8px;resize:vertical;box-sizing:border-box;"></textarea>
-          <button class="btn btn-add" data-action="bulk-add" style="margin-top:6px;width:100%;">Add All</button>
-        </div>
-        <div class="bulk-panel" data-panel="range" style="display:none;">
-          <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
-            <input type="time" data-input="range_from" style="width:105px;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:0.8rem;">
-            <span style="color:var(--dim);font-size:0.75rem;">to</span>
-            <input type="time" data-input="range_to" style="width:105px;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:0.8rem;">
-            <span style="color:var(--dim);font-size:0.75rem;">every</span>
-            <input type="number" data-input="range_step" placeholder="min" min="1" max="1440" style="width:55px;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:0.8rem;">
-            <input type="number" data-input="range_pulse" placeholder="ms" min="100" step="100" style="width:60px;background:#060c14;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:0.8rem;" title="Optional pulse (ms)">
-          </div>
-         <button class="btn btn-add" data-action="range-gen" style="margin-top:6px;width:100%;">Generate</button>
-         </div>
-       </div>
-       <div style="margin-top:8px;">
-         <input type="file" data-input="timetable-file" accept=".txt,text/plain" class="hidden">
-         <button class="btn btn-ghost btn-sm" data-action="import-timetable">Import Timetable TXT</button>
-       </div>
-       ` : ''}
-    </div>
-    <div class="field">
-      <label>Skip Dates (YYYY-MM-DD)</label>
-      <div class="tag-list" data-list="skip_dates">
-        ${(ch.skip_dates||[]).map(d => `<span class="tag">${escapeHtml(d)}${isOn ? '<button data-remove="skip_dates" data-val="'+escapeHtml(d)+'">&times;</button>' : ''}</span>`).join('')}
-      </div>
-      ${isOn ? `
-      <div class="add-row">
-        <input type="date" data-input="skip_dates">
-        <button class="btn btn-add" data-add="skip_dates">+ Add</button>
-      </div>
-      ` : ''}
-    </div>
-    </div>
-    <div class="btn-row">
-      ${isOn ? '<button class="btn btn-run" data-action="run">&#9654; Run Now</button>' : ''}
-      <button class="btn btn-save" data-action="save">Save</button>
-    </div>
-  `;
-
-  // Label edit (only when enabled)
-  if (isOn) {
-    const labelEl = div.querySelector('[data-field="label"]');
-    labelEl.addEventListener('blur', () => {
-      const v = labelEl.textContent.trim().slice(0, 40) || key.toUpperCase();
-      ch.label = v;
-    });
-    labelEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); labelEl.blur(); } });
-  }
-
-  // Toggle — always functional
-  div.querySelector('[data-action="toggle"]').onclick = () => {
-    ch.enabled = !ch.enabled;
-    renderAll(schedule);
-  };
-
-  // Delete channel (only when enabled)
-  if (isOn) {
-    div.querySelector('[data-action="delete"]').onclick = async () => {
-      if (Object.keys(schedule).length <= 1) { toast('At least one channel must remain', true); return; }
-      if (!confirm(`Delete channel '${key}'? This cannot be undone.`)) return;
-      try {
-        await api('DELETE', `/api/channels/${encodeURIComponent(key)}`);
-        delete schedule[key];
-        renderAll(schedule);
-        toast(`${key.toUpperCase()} deleted`);
-      } catch (e) { toast('Delete failed: ' + e.message, true); }
-    };
-  }
-
-  // Manual run (only when enabled)
-  if (isOn) {
-    div.querySelector('[data-action="run"]').onclick = async (e) => {
-      const btn = e.target;
-      btn.disabled = true;
-      try {
-        const r = await api('POST', `/api/relay/${encodeURIComponent(key)}/trigger`, { pulse_ms: ch.pulse_ms });
-        toast(`${key.toUpperCase()} triggered (${r.pulse_ms}ms) — queued for device`);
-        loadHistory();
-      } catch (e2) {
-        toast('Trigger failed: ' + e2.message, true);
-      } finally {
-        btn.disabled = false;
-      }
-    };
-  }
-
-  // Pulse ms change (only when enabled)
-  if (isOn) {
-    div.querySelector('[data-field="pulse_ms"]').onchange = e => {
-      ch.pulse_ms = Math.max(100, parseInt(e.target.value) || 2000);
-    };
-  }
-
-  // Add schedule / skip_date (only when enabled)
-  if (isOn) {
-    div.querySelectorAll('[data-add]').forEach(btn => {
-      btn.onclick = () => {
-        const list = btn.dataset.add;
-        const inp = div.querySelector(`[data-input="${list}"]`);
-        let val = inp.value.trim();
-        if (!val) return;
-        if (list === 'schedule') {
-          if (!/^\d{1,2}:\d{2}$/.test(val)) { toast('Format: H:MM', true); return; }
-          const parts = val.split(':');
-          const h = parseInt(parts[0], 10), m = parseInt(parts[1], 10);
-          if (h<0||h>23||m<0||m>59) { toast('Invalid time', true); return; }
-          val = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
-        }
-        if (list === 'schedule') {
-          const pulseInp = div.querySelector('[data-input="schedule_pulse"]');
-          const pulseVal = pulseInp ? parseInt(pulseInp.value) : 0;
-          const entry = (pulseVal >= 100) ? { time: val, pulse_ms: pulseVal } : val;
-          const dupCheck = ch[list].some(v => (typeof v === 'string' ? v : (v && v.time || '')) === val);
-          if (dupCheck) { toast('Duplicate', true); return; }
-          ch[list].push(entry);
-          ch[list].sort((a,b) => {
-            const at = typeof a === 'string' ? a : (a && a.time || '');
-            const bt = typeof b === 'string' ? b : (b && b.time || '');
-            return at.localeCompare(bt);
-          });
-          inp.value = '';
-          if (pulseInp) pulseInp.value = '';
-          renderAll(schedule);
-        } else {
-          if (list === 'skip_dates') {
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) { toast('Format: YYYY-MM-DD', true); return; }
-          }
-          if (ch[list].includes(val)) { toast('Duplicate', true); return; }
-          ch[list].push(val);
-          ch[list].sort().reverse();
-          inp.value = '';
-          renderAll(schedule);
-        }
-      };
-    });
-  }
-
-  // Remove schedule / skip_date (only when enabled)
-  if (isOn) {
-    div.querySelectorAll('[data-remove]').forEach(btn => {
-      btn.onclick = () => {
-        const list = btn.dataset.remove;
-        const val = btn.dataset.val;
-        ch[list] = ch[list].filter(v => {
-          const ev = typeof v === 'string' ? v : (v && v.time || '');
-          return ev !== val;
-        });
-        renderAll(schedule);
-      };
-    });
-  }
-
-  // Click schedule tag to edit inline (only when enabled)
-  if (isOn) {
-    div.querySelectorAll('.tag[data-list="schedule"]').forEach(tag => {
-      tag.addEventListener('click', (e) => {
-        if (e.target.closest('[data-remove]') || tag.classList.contains('editing')) return;
-        const oldTime = tag.dataset.val;
-        const idx = ch.schedule.findIndex(v =>
-          (typeof v === 'string' ? v : (v && v.time || '')) === oldTime
-        );
-        if (idx === -1) return;
-        const entry = ch.schedule[idx];
-        const entryTime = typeof entry === 'string' ? entry : (entry && entry.time || '');
-        const entryPulse = (entry && typeof entry === 'object' && entry.pulse_ms) ? entry.pulse_ms : '';
-
-        tag.classList.add('editing');
-        tag.innerHTML = `
-          <input type="time" value="${entryTime}" class="edit-time" style="width:108px;">
-          <input type="number" value="${entryPulse}" class="edit-pulse" placeholder="ms" min="100" step="100" style="width:62px;" title="Pulse duration (ms)">
-          <span class="editor-actions">
-            <button class="edit-save">Save</button>
-            <button class="edit-cancel">Cancel</button>
-          </span>
-        `;
-
-        const saveBtn = tag.querySelector('.edit-save');
-        const cancelBtn = tag.querySelector('.edit-cancel');
-        const timeInp = tag.querySelector('.edit-time');
-        const pulseInp = tag.querySelector('.edit-pulse');
-
-        cancelBtn.onclick = (e2) => { e2.stopPropagation(); renderAll(schedule); };
-
-        const doSave = () => {
-          let newTime = timeInp.value.trim();
-          if (!/^\d{1,2}:\d{2}$/.test(newTime)) { toast('Format: H:MM', true); return; }
-          const parts = newTime.split(':');
-          const h = parseInt(parts[0], 10), m = parseInt(parts[1], 10);
-          if (h<0||h>23||m<0||m>59) { toast('Invalid time', true); return; }
-          newTime = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
-          const dup = ch.schedule.some((v, i2) => {
-            if (i2 === idx) return false;
-            return (typeof v === 'string' ? v : (v && v.time || '')) === newTime;
-          });
-          if (dup) { toast('Duplicate time', true); return; }
-          const newPulse = parseInt(pulseInp.value) || 0;
-          ch.schedule[idx] = (newPulse >= 100) ? { time: newTime, pulse_ms: newPulse } : newTime;
-          ch.schedule.sort((a,b) => {
-            const at = typeof a === 'string' ? a : (a && a.time || '');
-            const bt = typeof b === 'string' ? b : (b && b.time || '');
-            return at.localeCompare(bt);
-          });
-          renderAll(schedule);
-        };
-
-        saveBtn.onclick = (e2) => { e2.stopPropagation(); doSave(); };
-        timeInp.addEventListener('keydown', (e2) => { if (e2.key === 'Enter') doSave(); });
-        pulseInp.addEventListener('keydown', (e2) => { if (e2.key === 'Enter') doSave(); });
-
-        timeInp.focus();
-      });
-    });
-  }
-
-  // Bulk add (only when enabled)
-  if (isOn) {
-    div.querySelector('[data-action="toggle-bulk"]').onclick = e => {
+    handle.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
       e.preventDefault();
-      const section = div.querySelector('.bulk-section');
-      const toggle = div.querySelector('[data-action="toggle-bulk"]');
-      if (section.style.display === 'none') {
-        section.style.display = 'block';
-        toggle.textContent = '- Hide bulk';
-      } else {
-        section.style.display = 'none';
-        toggle.textContent = '+ Bulk add';
-      }
-    };
-
-    div.querySelectorAll('.bulk-tab').forEach(tab => {
-      tab.onclick = () => {
-        div.querySelectorAll('.bulk-tab').forEach(t => {
-          t.classList.remove('active');
-          t.style.borderBottomColor = 'transparent';
-          t.style.color = 'var(--dim)';
-        });
-        tab.classList.add('active');
-        tab.style.borderBottomColor = 'var(--accent)';
-        tab.style.color = 'var(--accent)';
-        div.querySelectorAll('.bulk-panel').forEach(p => {
-          p.style.display = p.dataset.panel === tab.dataset.tab ? 'block' : 'none';
-        });
-      };
+      if (e.key === 'ArrowUp' && panel.previousElementSibling) movePanel(panel, panel.previousElementSibling);
+      else if (e.key === 'ArrowDown' && panel.nextElementSibling) movePanel(panel, panel.nextElementSibling.nextElementSibling);
+      else return;
+      handle.focus();
+      toast(`Moved to position ${panelIds().indexOf(panel.id) + 1} of ${panelIds().length}`);
     });
 
-    const addScheduleEntries = (entries) => {
-      let added = 0;
-      for (const e of entries) {
-        const dup = ch.schedule.some(v =>
-          (typeof v === 'string' ? v : (v && v.time || '')) === e.time
-        );
-        if (dup) continue;
-        const entry = (e.pulse_ms && e.pulse_ms >= 100)
-          ? { time: e.time, pulse_ms: e.pulse_ms }
-          : e.time;
-        ch.schedule.push(entry);
-        added++;
-      }
-      if (added > 0) {
-        ch.schedule.sort((a, b) => {
-          const at = typeof a === 'string' ? a : (a && a.time || '');
-          const bt = typeof b === 'string' ? b : (b && b.time || '');
-          return at.localeCompare(bt);
-        });
-      }
-      return added;
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      drag = { id: e.pointerId, startY: e.clientY, moved: false, target: null, before: false };
+      handle.setPointerCapture(e.pointerId);
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!drag.moved && Math.abs(e.clientY - drag.startY) < 8) return;
+      drag.moved = true;
+      panel.classList.add('dragging');
+      const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest('#panels > .panel');
+      drag.target = hit && hit !== panel ? hit : null;
+      drag.before = !!drag.target && e.clientY < drag.target.getBoundingClientRect().top + drag.target.offsetHeight / 2;
+      $$('#panels > .panel').forEach((p) => p.classList.toggle('drag-target', p === drag.target));
+    });
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (drag.moved && drag.target) movePanel(panel, drag.before ? drag.target : drag.target.nextElementSibling);
+      $$('#panels > .panel').forEach((p) => p.classList.remove('dragging', 'drag-target'));
+      drag = null;
     };
-
-    const parseTimetableText = (text) => {
-      const entries = [];
-      const seen = new Set();
-      // Windows editors can prefix UTF-8 text files with a byte-order mark.
-      const source = text.replace(/^\uFEFF/, '');
-      for (const [index, rawLine] of source.split(/\r?\n/).entries()) {
-        const line = rawLine.trim();
-        if (!line || line.startsWith('#')) continue;
-        const match = /^(\d{1,2}:\d{2})\s+(\d+)(?:\s+.*)?$/.exec(line);
-        if (!match) return { error: `Line ${index + 1}: expected HH:MM pulse_ms name` };
-        const [hours, minutes] = match[1].split(':').map(Number);
-        const pulseMs = Number(match[2]);
-        if (hours > 23 || minutes > 59) return { error: `Line ${index + 1}: invalid time` };
-        if (pulseMs < 100 || pulseMs > 60000) return { error: `Line ${index + 1}: pulse must be 100-60000ms` };
-        const time = String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0');
-        if (seen.has(time)) return { error: `Line ${index + 1}: duplicate ${time}` };
-        seen.add(time);
-        entries.push({ time, pulse_ms: pulseMs });
-      }
-      if (!entries.length) return { error: 'No timetable entries found' };
-      if (entries.length > 24) return { error: 'A channel supports at most 24 entries' };
-      entries.sort((a, b) => a.time.localeCompare(b.time));
-      return { entries };
-    };
-
-    const timetableFile = div.querySelector('[data-input="timetable-file"]');
-    div.querySelector('[data-action="import-timetable"]').onclick = () => timetableFile.click();
-    timetableFile.onchange = async () => {
-      const file = timetableFile.files && timetableFile.files[0];
-      if (!file) return;
-      try {
-        const parsed = parseTimetableText(await file.text());
-        if (parsed.error) throw new Error(parsed.error);
-        if (ch.schedule.length && !confirm(`Replace ${ch.schedule.length} existing schedule entries?`)) return;
-        ch.schedule = parsed.entries;
-        renderAll(schedule);
-        toast(`Imported ${parsed.entries.length} timetable entries. Save the channel to apply.`);
-      } catch (err) {
-        toast('Timetable import failed: ' + err.message, true);
-      } finally {
-        timetableFile.value = '';
-      }
-    };
-
-    div.querySelector('[data-action="bulk-add"]').onclick = () => {
-      const ta = div.querySelector('[data-input="bulk_paste"]');
-      const raw = ta.value.trim();
-      if (!raw) return;
-      const entries = [];
-      for (let line of raw.split('\n')) {
-        line = line.trim();
-        if (!line || line.startsWith('#')) continue;
-        const parts = line.split(/\s+/);
-        let timeStr = parts[0];
-        if (!/^\d{1,2}:\d{2}$/.test(timeStr)) continue;
-        const tp = timeStr.split(':');
-        const h = parseInt(tp[0], 10), m = parseInt(tp[1], 10);
-        if (h < 0 || h > 23 || m < 0 || m > 59) continue;
-        timeStr = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
-        const pulseMs = parts[1] ? parseInt(parts[1]) : 0;
-        entries.push({ time: timeStr, pulse_ms: pulseMs >= 100 ? pulseMs : 0 });
-      }
-      if (entries.length === 0) { toast('No valid entries found'); return; }
-      const added = addScheduleEntries(entries);
-      ta.value = '';
-      renderAll(schedule);
-      toast(`Added ${added} of ${entries.length} entries`);
-    };
-
-    div.querySelector('[data-action="range-gen"]').onclick = () => {
-      const from = div.querySelector('[data-input="range_from"]').value;
-      const to = div.querySelector('[data-input="range_to"]').value;
-      const step = parseInt(div.querySelector('[data-input="range_step"]').value) || 0;
-      const pulseInp = div.querySelector('[data-input="range_pulse"]');
-      const pulseMs = pulseInp ? (parseInt(pulseInp.value) || 0) : 0;
-      if (!from || !to) { toast('Set From and To times', true); return; }
-      if (!step || step < 1 || step > 1440) { toast('Step must be 1-1440 minutes', true); return; }
-      const [fh, fm] = from.split(':').map(Number);
-      const [th, tm] = to.split(':').map(Number);
-      const fromMin = fh * 60 + fm;
-      const toMin = th * 60 + tm;
-      if (fromMin >= toMin) { toast('From must be before To', true); return; }
-      const entries = [];
-      for (let m = fromMin; m <= toMin; m += step) {
-        const hh = String(Math.floor(m / 60)).padStart(2, '0');
-        const mm = String(m % 60).padStart(2, '0');
-        entries.push({ time: hh + ':' + mm, pulse_ms: pulseMs >= 100 ? pulseMs : 0 });
-      }
-      const added = addScheduleEntries(entries);
-      if (pulseInp) pulseInp.value = '';
-      renderAll(schedule);
-      toast(`Generated ${added} entries`);
-    };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
   }
-
-  // Save — always functional
-  div.querySelector('[data-action="save"]').onclick = async () => {
-    try {
-      await api('POST', '/api/schedule', schedule);
-      toast(`${key.toUpperCase()} saved`);
-    } catch (e) {
-      toast('Save failed: ' + e.message, true);
-    }
-  };
-
-  $('#channels').appendChild(div);
-}
-function fmtScheduleEntry(e) {
-  if (typeof e === 'string') return e;
-  if (e && typeof e === 'object' && e.time) {
-    return e.pulse_ms ? `${e.time} (${e.pulse_ms}ms)` : e.time;
-  }
-  return String(e);
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+const panelOpen = (id) => !document.getElementById(id).classList.contains('collapsed');
 
-// ── Add channel ────────────────────────────────────────────────────
-$('#btn-add-channel').onclick = async () => {
-  const key = prompt('Channel key (letters/numbers, must start with a letter, e.g. "pump" or "ch3"):');
-  if (!key) return;
-  const label = prompt('Display label (optional):', key.toUpperCase()) || key.toUpperCase();
-  try {
-    await api('POST', '/api/channels', { key: key.trim(), label });
-    toast(`Channel '${key}' added`);
-    boot();
-  } catch (e) { toast('Add failed: ' + e.message, true); }
-};
-
-// ── Backup / restore ──────────────────────────────────────────────
-$('#btn-backup').onclick = () => { window.location.href = '/api/backup'; };
-$('#btn-restore').onclick = () => $('#restore-file').click();
-$('#restore-file').onchange = async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  try {
-    const text = await file.text();
-    const data = JSON.parse(text);
-    if (!confirm('Restore will overwrite the current schedule (and history, if included). Continue?')) return;
-    await api('POST', '/api/restore', data);
-    toast('Restored from backup');
-    boot();
-    loadHistory();
-  } catch (e2) {
-    toast('Restore failed: ' + e2.message, true);
-  } finally {
-    e.target.value = '';
-  }
-};
-
-// ── Heartbeats (dynamic per-channel) ─────────────────────────────
-// A channel is "offline" if its last heartbeat is older than 10 s.
-// Firmware manager
+// ── Firmware manager ───────────────────────────────────────────────────
 const FIRMWARE_INITIAL_RELEASES = 5;
 const FIRMWARE_RELEASE_PAGE_SIZE = 25;
 let firmwareReleaseVisibleCount = FIRMWARE_INITIAL_RELEASES;
@@ -2218,14 +803,14 @@ function fmtBytes(bytes) {
 }
 
 function fmtBuildStamp(stamp) {
-  return stamp ? new Date(stamp).toLocaleString() + ' (UTC build stamp)' : 'Compilation time unavailable';
+  return stamp ? new Date(stamp).toLocaleString() + ' (UTC build stamp)' : 'compile time unavailable';
 }
 
 async function waitForFirmwareAck(controlId) {
   if (!Number.isInteger(controlId)) return;
   for (let attempt = 0; attempt < 12; attempt++) {
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    const data = await api('GET', '/api/firmware?_=' + Date.now());
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const data = await api('GET', '/api/firmware');
     const device = data.state && data.state.last_device;
     if (device && device.control_id >= controlId) {
       loadFirmwareManager();
@@ -2234,18 +819,27 @@ async function waitForFirmwareAck(controlId) {
         toast(`ESP32: ${status}${device.ota_detail ? ' - ' + device.ota_detail : ''}`, status === 'failed');
         return;
       }
-      // Success: ESP32 acknowledged the change
-      toast('ESP32 acknowledged setting change');
+      toast('ESP32 acknowledged the setting change');
       return;
     }
   }
   loadFirmwareManager();
-  toast('ESP32 did not respond within 18 seconds', true);
+  toast('The ESP32 did not respond within 18 seconds', true);
 }
 
-async function loadFirmwareManager() {
+function setMetaLines(lines) {
+  const host = $('#firmware-meta');
+  host.replaceChildren(...lines.filter(Boolean).map((line) => {
+    const div = document.createElement('div');
+    div.className = 'firmware-meta';
+    div.textContent = line;
+    return div;
+  }));
+}
+
+const loadFirmwareManager = single(async () => {
   try {
-    const data = await api('GET', '/api/firmware?_=' + Date.now());
+    const data = await api('GET', '/api/firmware');
     const state = data.state;
     const selected = state.source === 'custom'
       ? (state.custom ? `Local build ${state.custom.version}` : 'Local build unavailable')
@@ -2254,198 +848,138 @@ async function loadFirmwareManager() {
     $('#firmware-active').textContent = active
       ? `Serving ${active.version} (${active.sha256.slice(0, 12)})`
       : `${selected} unavailable on server`;
-    $('#firmware-source-badge').textContent = data.selection_in_sync ? `(${state.source}, synced)` : `(${state.source}, mismatch)`;
+    $('#firmware-source-badge').textContent = data.selection_in_sync ? `${state.source} · synced` : `${state.source} · mismatch`;
     $('#firmware-auto').checked = !!state.auto_update;
-    $('#firmware-meta').textContent = `Repository: ${data.repo} · asset: ${data.asset_name}` + (state.custom ? ` · custom: ${fmtBytes(state.custom.size)}` : '');
     $('#firmware-upload-limit').textContent = `ESP32 OTA limit: ${fmtBytes(data.max_size)}`;
     const device = state.last_device;
-    const activeStamp = active && active.compiled_at;
-    const deviceRunning = device && device.firmware_version ? `Running: ${device.firmware_version}` : 'ESP32 version unknown';
-    const deviceStamp = device && device.compiled_at ? ` (${fmtBuildStamp(device.compiled_at)})` : '';
-    const deviceStatus = device
-      ? ` · ${device.ota_status || 'acknowledged'} ${new Date(device.seen_at).toLocaleTimeString()} · Daily ${device.auto_update ? 'ON' : 'OFF'}${device.ota_detail ? ' · ' + device.ota_detail : ''}`
-      : ' · Waiting for ESP32 acknowledgement';
-    $('#firmware-meta').textContent = `Selected: ${selected} | ${active ? `Server: ${active.sha256.slice(0, 16)} ${fmtBuildStamp(activeStamp)}` : 'Not available'} | ${deviceRunning}${deviceStamp}${deviceStatus}`
-      + (state.force ? (active && state.force.sha256 === active.sha256
-        ? ' | ⚠ Forced install armed'
-        : ' | ⚠ Force mismatch') : '');
+    setMetaLines([
+      `Selected: ${selected}` + (state.custom ? ` · custom file ${fmtBytes(state.custom.size)}` : ''),
+      active ? `Server image: ${active.sha256.slice(0, 16)} · ${fmtBuildStamp(active.compiled_at)}` : 'Server image: not available',
+      device
+        ? `ESP32: ${device.firmware_version ? 'running ' + device.firmware_version : 'version unknown'}${device.compiled_at ? ` (${fmtBuildStamp(device.compiled_at)})` : ''} · ${device.ota_status || 'acknowledged'} at ${new Date(device.seen_at).toLocaleTimeString()} · daily updates ${device.auto_update ? 'on' : 'off'}${device.ota_detail ? ' · ' + device.ota_detail : ''}`
+        : 'ESP32: waiting for acknowledgement',
+      `Source: ${data.repo} · asset ${data.asset_name}`,
+      state.force ? (active && state.force.sha256 === active.sha256 ? '⚠ Forced install armed' : '⚠ Force mismatch') : '',
+    ]);
+
     const releases = data.releases || [];
-    const visibleReleases = releases.slice(0, firmwareReleaseVisibleCount);
-    $('#firmware-releases').innerHTML = releases.length ? visibleReleases.map((release) => {
-      const selected = state.source === 'release' && state.release_tag === release.tag;
+    const visible = releases.slice(0, firmwareReleaseVisibleCount);
+    $('#firmware-releases').innerHTML = releases.length ? visible.map((release) => {
+      const isSel = state.source === 'release' && state.release_tag === release.tag;
       const meta = [release.published_at ? new Date(release.published_at).toLocaleDateString() : '', release.prerelease ? 'pre-release' : '', release.asset ? fmtBytes(release.asset.size) : 'no firmware.bin'].filter(Boolean).join(' · ');
-      const action = release.asset ? `<button class="btn ${selected ? 'btn-ghost' : 'btn-save'} btn-sm" data-firmware-release="${escapeHtml(release.tag)}" ${selected ? 'disabled' : ''}>${selected ? 'Selected' : 'Use release'}</button>` : '';
-      return `<div class="firmware-release"><div><div class="firmware-release-name" title="${escapeHtml(release.title)}">${escapeHtml(release.title)} <span style="color:var(--accent);font-family:monospace">${escapeHtml(release.tag)}</span></div><div class="firmware-release-meta">${escapeHtml(meta)}</div></div>${action}</div>`;
-    }).join('') + (visibleReleases.length < releases.length
-      ? '<button class="btn btn-ghost btn-sm" id="btn-firmware-show-more" style="margin-top:12px;">Show more</button>'
-      : '') : '<div class="empty-hint">No GitHub releases available.</div>';
+      const action = release.asset
+        ? `<button type="button" class="btn ${isSel ? 'btn-ghost' : 'btn-save'} btn-sm" data-firmware-release="${escapeHtml(release.tag)}" ${isSel ? 'disabled' : ''}>${isSel ? 'Selected' : 'Use release'}</button>`
+        : '';
+      return `<div class="firmware-release"><div><div class="firmware-release-name" title="${escapeHtml(release.title)}">${escapeHtml(release.title)}<span class="tagname">${escapeHtml(release.tag)}</span></div><div class="firmware-release-meta">${escapeHtml(meta)}</div></div>${action}</div>`;
+    }).join('') + (visible.length < releases.length ? '<button type="button" class="btn btn-ghost btn-sm" id="btn-firmware-show-more" style="margin-top:12px">Show more</button>' : '')
+      : '<div class="empty-hint">No GitHub releases available.</div>';
     $$('[data-firmware-release]').forEach((button) => {
-      button.onclick = () => queueReleaseSelection(button.dataset.firmwareRelease);
+      button.onclick = () => queueReleaseSelection(button);
     });
-    const showMore = $('#btn-firmware-show-more');
-    if (showMore) {
-      showMore.onclick = () => {
-        firmwareReleaseVisibleCount += FIRMWARE_RELEASE_PAGE_SIZE;
-        loadFirmwareManager();
-      };
-    }
+    const more = $('#btn-firmware-show-more');
+    if (more) more.onclick = () => { firmwareReleaseVisibleCount += FIRMWARE_RELEASE_PAGE_SIZE; loadFirmwareManager(); };
   } catch (e) {
     $('#firmware-active').textContent = 'Firmware manager unavailable';
-    $('#firmware-meta').textContent = e.message;
+    setMetaLines([e.message]);
   }
-}
+});
 
 $('#firmware-auto').onchange = async (e) => {
   try {
     const state = await api('PUT', '/api/firmware/settings', { auto_update: e.target.checked });
-    toast((e.target.checked ? 'Daily updates enabled' : 'Daily updates disabled') + '. Waiting for ESP32 acknowledgement...');
+    toast((e.target.checked ? 'Daily updates enabled' : 'Daily updates disabled') + ' — waiting for the ESP32…');
     waitForFirmwareAck(state.control_id);
-  } catch (err) { e.target.checked = !e.target.checked; toast('Could not update setting: ' + err.message, true); }
+  } catch (err) { e.target.checked = !e.target.checked; toast('Could not update the setting: ' + err.message, true); }
 };
 
 $('#btn-firmware-check').onclick = async () => {
   try {
     const result = await api('POST', '/api/firmware/check', {});
-    toast('Update check sent. Waiting for ESP32 acknowledgement...');
+    toast('Update check sent — waiting for the ESP32…');
     waitForFirmwareAck(result.control_id);
-  } catch (e) { toast('Could not queue check: ' + e.message, true); }
+  } catch (e) { toast('Could not queue the check: ' + e.message, true); }
 };
 
 $('#btn-firmware-latest').onclick = async () => {
   try {
     const state = await api('PUT', '/api/firmware/source', { source: 'latest' });
-    toast('GitHub latest selected. Waiting for ESP32 acknowledgement...');
+    toast('GitHub latest selected — waiting for the ESP32…');
     waitForFirmwareAck(state.control_id);
     loadFirmwareManager();
   } catch (e) { toast('Could not select latest: ' + e.message, true); }
 };
 
-let deployClickCount = 0;
-let firstDeployClickAt = 0;
-let deployClickTimer = null;
-let releaseClickCount = 0;
-let firstReleaseClickAt = 0;
-let releaseClickTimer = null;
-let releaseClickTag = null;
+// A single click acts after 1.5 s; three quick clicks request a *forced*
+// install (SHA-256 verification still applies). Show progress right away so
+// the delay never looks like a dead button.
+function multiClick(state, onSingle, onForce, button, busyLabel) {
+  const now = Date.now();
+  if (!state.count || state.key !== button.dataset.firmwareRelease || now - state.first > 1500) {
+    clearTimeout(state.timer);
+    state.count = 1;
+    state.first = now;
+    state.key = button.dataset.firmwareRelease;
+    button.dataset.label = button.textContent;
+    button.textContent = busyLabel;
+    state.timer = setTimeout(() => { state.count = 0; onSingle(); }, 1500);
+    return;
+  }
+  state.count += 1;
+  if (state.count === 3) {
+    clearTimeout(state.timer);
+    state.count = 0;
+    onForce();
+  }
+}
+
+const releaseClicks = {};
+const deployClicks = {};
 
 async function selectFirmwareRelease(tag, force) {
   try {
-    const nextState = await api('PUT', '/api/firmware/source', { source: 'release', tag, force });
-    toast(force
-      ? 'WARNING: forced GitHub release sent. SHA-256 verification remains active.'
-      : 'Release selected. Waiting for ESP32 result...');
-    waitForFirmwareAck(nextState.control_id);
-    loadFirmwareManager();
+    const next = await api('PUT', '/api/firmware/source', { source: 'release', tag, force });
+    toast(force ? 'WARNING: forced GitHub release sent (SHA-256 verification stays active)' : 'Release selected — waiting for the ESP32…', force);
+    waitForFirmwareAck(next.control_id);
   } catch (e) { toast('Release selection failed: ' + e.message, true); }
+  loadFirmwareManager();
 }
 
-function queueReleaseSelection(tag) {
-  const now = Date.now();
-  if (!releaseClickCount || releaseClickTag !== tag || now - firstReleaseClickAt > 1500) {
-    clearTimeout(releaseClickTimer);
-    releaseClickCount = 1;
-    firstReleaseClickAt = now;
-    releaseClickTag = tag;
-    releaseClickTimer = setTimeout(() => {
-      releaseClickCount = 0;
-      selectFirmwareRelease(tag, false);
-    }, 1500);
-    return;
-  }
-  releaseClickCount += 1;
-  if (releaseClickCount === 3) {
-    clearTimeout(releaseClickTimer);
-    releaseClickCount = 0;
-    selectFirmwareRelease(tag, true);
-  }
+function queueReleaseSelection(button) {
+  const tag = button.dataset.firmwareRelease;
+  multiClick(releaseClicks, () => selectFirmwareRelease(tag, false), () => selectFirmwareRelease(tag, true), button, 'Sending…');
 }
 
 async function deployLocalFirmware(force) {
   const input = $('#firmware-upload-file');
+  const button = $('#btn-firmware-upload');
   const file = input.files && input.files[0];
-  if (!file) { toast('Choose a firmware .bin file first', true); return; }
+  const restore = () => { button.textContent = 'Deploy local firmware'; };
+  if (!file) { restore(); toast('Choose a firmware .bin file first', true); return; }
   try {
     const response = await fetch('/api/firmware/custom', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        'X-Firmware-Force': force ? 'true' : 'false',
-      },
+      headers: { 'Content-Type': 'application/octet-stream', 'X-Firmware-Force': force ? 'true' : 'false' },
       body: file,
     });
+    if (response.status === 401) { window.location.href = '/login?next=' + encodeURIComponent(location.pathname); return; }
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.error || `${response.status} upload failed`);
     }
     const result = await response.json();
     input.value = '';
-    toast(force
-      ? 'WARNING: forced firmware deployment sent. SHA-256 verification remains active.'
-      : 'Local firmware deployed. Waiting for ESP32 acknowledgement...');
+    toast(force ? 'WARNING: forced firmware deployment sent (SHA-256 verification stays active)' : 'Local firmware deployed — waiting for the ESP32…', force);
     waitForFirmwareAck(result.state && result.state.control_id);
     loadFirmwareManager();
   } catch (e) { toast('Upload failed: ' + e.message, true); }
+  restore();
 }
 
-$('#btn-firmware-upload').onclick = () => {
-  const now = Date.now();
-  if (!deployClickCount || now - firstDeployClickAt > 1500) {
-    clearTimeout(deployClickTimer);
-    deployClickCount = 1;
-    firstDeployClickAt = now;
-    deployClickTimer = setTimeout(() => {
-      deployClickCount = 0;
-      deployLocalFirmware(false);
-    }, 1500);
-    return;
-  }
-
-  deployClickCount += 1;
-  if (deployClickCount === 3) {
-    clearTimeout(deployClickTimer);
-    deployClickCount = 0;
-    deployLocalFirmware(true);
-  }
+$('#btn-firmware-upload').onclick = (e) => {
+  multiClick(deployClicks, () => deployLocalFirmware(false), () => deployLocalFirmware(true), e.currentTarget, 'Deploying…');
 };
 
-const OFFLINE_THRESHOLD_S = 10;
-
-function renderHeartbeatSlots(keys) {
-  const container = $('#hb-container');
-  container.innerHTML = keys.map(k => `<span class="status-pill" id="hb-${k}"><span class="dot off"></span> ${k.toUpperCase()} offline</span>`).join('');
-}
-
-function updateHB(key, sec) {
-  const el = document.getElementById('hb-' + key);
-  if (!el) return;
-  if (sec === undefined || sec === null) {
-    el.innerHTML = '<span class="dot off"></span> ' + key.toUpperCase() + ' offline';
-    return;
-  }
-  const alive = sec < OFFLINE_THRESHOLD_S;
-  el.innerHTML = '<span class="dot ' + (alive ? 'on' : 'off') + '"></span> ' + key.toUpperCase() + ' ' + (alive ? sec + 's ago' : 'offline');
-}
-
-// ── Status poll ────────────────────────────────────────────────────
-async function pollStatus() {
-  try {
-    const s = await api('GET', '/api/status?_=' + Date.now());
-    $('#srv-dot').className = 'dot on';
-    $('#srv-uptime').textContent = fmtUptime(s.server_uptime);
-    const hb = s.heartbeats || {};
-    const keys = schedule ? Object.keys(schedule) : Object.keys(hb);
-    for (const k of keys) updateHB(k, hb[k]);
-  } catch (e) {
-    $('#srv-dot').className = 'dot off';
-  }
-}
-
-function fmtUptime(s) {
-  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
-  return h ? h + 'h ' + m + 'm' : m + 'm ' + Math.floor(s%60) + 's';
-}
-
-// ── Device log (unchanged, just repainted into the new panel) ────
+// ── Device serial log ──────────────────────────────────────────────────
 let lastSerialLogId = 0;
 let serialLogRendered = false;
 
@@ -2471,39 +1005,42 @@ function renderSerialLog(entries, append) {
   else body.innerHTML = '<div class="empty-hint">No device log entries yet.</div>';
 }
 
-async function pollLog() {
+const pollLog = single(async () => {
   try {
-    const entries = await api('GET', '/api/log?_=' + Date.now());
+    const entries = await api('GET', '/api/log');
     const body = $('#log-body');
     const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 24;
     $('#log-count').textContent = `(${entries.length})`;
     $('#log-status').textContent = 'Live';
-    $('#log-status').style.color = 'var(--accent)';
-    const newestId = entries.length && Number.isInteger(entries[entries.length - 1].id)
-      ? entries[entries.length - 1].id : 0;
-    if (!serialLogRendered || newestId < lastSerialLogId) {
-      renderSerialLog(entries, false);
-    } else if (newestId > lastSerialLogId) {
-      renderSerialLog(entries.filter(entry => entry.id > lastSerialLogId), true);
-    }
+    $('#log-status').style.color = '';
+    const newestId = entries.length && Number.isInteger(entries[entries.length - 1].id) ? entries[entries.length - 1].id : 0;
+    if (!serialLogRendered || newestId < lastSerialLogId) renderSerialLog(entries, false);
+    else if (newestId > lastSerialLogId) renderSerialLog(entries.filter((entry) => entry.id > lastSerialLogId), true);
     lastSerialLogId = newestId;
     serialLogRendered = true;
     if (nearBottom && newestId) body.scrollTop = body.scrollHeight;
-  } catch (e) {
+  } catch {
     $('#log-status').textContent = 'Server unavailable';
-    $('#log-status').style.color = 'var(--danger)';
+    $('#log-status').style.color = 'var(--danger-ink)';
   }
-}
+});
 
-// ── History & analytics ──────────────────────────────────────────
+// ── History & analytics ────────────────────────────────────────────────
 const HISTORY_INITIAL_ENTRIES = 10;
 const HISTORY_PAGE_SIZE = 25;
 let historyVisibleCount = HISTORY_INITIAL_ENTRIES;
 
-function refreshHistFilterOptions(keys) {
+const chLabel = (key) => {
+  if (key === '*') return 'All channels';
+  const ch = savedSchedule && savedSchedule[key];
+  return ch && ch.label ? ch.label : String(key || '').toUpperCase();
+};
+
+function refreshHistFilterOptions() {
   const sel = $('#hist-filter-ch');
   const current = sel.value;
-  sel.innerHTML = '<option value="">All channels</option>' + keys.map(k => `<option value="${k}">${k.toUpperCase()}</option>`).join('');
+  const keys = Object.keys(schedule || {});
+  sel.innerHTML = '<option value="">All channels</option>' + keys.map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(chLabel(k))} (${escapeHtml(k.toUpperCase())})</option>`).join('');
   sel.value = keys.includes(current) ? current : '';
 }
 
@@ -2517,71 +1054,68 @@ function historyQuery() {
   return params.toString();
 }
 
-async function loadHistory() {
+const loadHistory = single(async () => {
   try {
     const entries = await api('GET', '/api/history?' + historyQuery());
     $('#hist-count').textContent = `(${entries.length})`;
     renderHistTable(entries);
     renderHistChart(entries);
     $('#btn-hist-export').href = '/api/history/export?' + historyQuery();
-  } catch (e) { /* non-fatal */ }
-}
+  } catch { /* non-fatal */ }
+});
 
 function renderHistTable(entries) {
   const tbody = $('#hist-tbody');
-  const tableWrap = $('#hist-table-wrap');
-  const oldButton = $('#btn-history-show-more');
-  if (oldButton) oldButton.remove();
+  const wrap = $('#hist-table-wrap');
+  const old = $('#btn-history-show-more');
+  if (old) old.remove();
   if (!entries.length) {
-    tbody.innerHTML = `<tr><td colspan="4" class="empty-hint">No history yet — manual triggers, schedule saves, and device-confirmed runs will show up here.</td></tr>`;
+    tbody.innerHTML = '<tr><td colspan="4" class="empty-hint">No history yet — manual rings, schedule saves and device-confirmed runs will show up here.</td></tr>';
     return;
   }
-  const visibleEntries = entries.slice(0, historyVisibleCount);
-  tbody.innerHTML = visibleEntries.map(e => {
-    const d = new Date(e.ts);
-    const time = d.toLocaleString();
+  const visible = entries.slice(0, historyVisibleCount);
+  tbody.innerHTML = visible.map((e) => {
     const trigClass = e.trigger === 'manual' ? 'manual' : (e.trigger === 'edit' ? 'edit' : 'schedule');
-    let detail = e.status || '';
-    if (e.pulse_ms) detail += ` · ${e.pulse_ms}ms`;
-    if (e.note) detail += ` · ${escapeHtml(e.note)}`;
-    return `<tr><td>${time}</td><td>${escapeHtml((e.ch||'').toUpperCase())}</td><td><span class="pill ${trigClass}">${escapeHtml(e.trigger||'')}</span></td><td>${detail}</td></tr>`;
+    let detail = String(e.status || '').replace(/_/g, ' ');
+    if (e.pulse_ms) detail += ` · ${e.pulse_ms} ms`;
+    if (e.note) detail += ` · ${e.note}`;
+    return `<tr><td>${escapeHtml(new Date(e.ts).toLocaleString())}</td><td>${escapeHtml(chLabel(e.ch))}</td><td><span class="pill ${trigClass}">${escapeHtml(e.trigger || '')}</span></td><td>${escapeHtml(detail)}</td></tr>`;
   }).join('');
-  if (visibleEntries.length < entries.length) {
-    const showMore = document.createElement('button');
-    showMore.className = 'btn btn-ghost btn-sm';
-    showMore.id = 'btn-history-show-more';
-    showMore.style.marginTop = '12px';
-    showMore.textContent = 'Show more';
-    showMore.onclick = () => {
-      historyVisibleCount += HISTORY_PAGE_SIZE;
-      renderHistTable(entries);
-    };
-    tableWrap.appendChild(showMore);
+  if (visible.length < entries.length) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'btn btn-ghost btn-sm';
+    more.id = 'btn-history-show-more';
+    more.style.cssText = 'margin:12px';
+    more.textContent = `Show more (${entries.length - visible.length} older)`;
+    more.onclick = () => { historyVisibleCount += HISTORY_PAGE_SIZE; renderHistTable(entries); };
+    wrap.appendChild(more);
   }
 }
 
+function localDay(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
 function renderHistChart(entries) {
-  // Runs per day for the last 14 days (manual + schedule + executed only)
+  // Bells per day for the last 14 days, in this browser's local calendar.
   const days = [];
   const now = new Date();
   for (let i = 13; i >= 0; i--) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    days.push(d.toISOString().slice(0, 10));
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    days.push(localDay(d));
   }
-  const counts = Object.fromEntries(days.map(d => [d, 0]));
+  const counts = Object.fromEntries(days.map((d) => [d, 0]));
   for (const e of entries) {
-    if (!['manual', 'schedule'].includes(e.trigger)) continue;
-    const day = (e.ts || '').slice(0, 10);
+    if (e.trigger !== 'manual' && e.trigger !== 'schedule') continue;
+    const day = localDay(new Date(e.ts));
     if (day in counts) counts[day]++;
   }
   const max = Math.max(1, ...Object.values(counts));
-  const chart = $('#hist-chart');
-  chart.innerHTML = days.map(d => {
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  $('#hist-chart').innerHTML = (total ? '' : '<div class="chart-empty">No bells recorded in the last 14 days</div>') + days.map((d) => {
     const c = counts[d];
-    const h = Math.round((c / max) * 100);
-    const label = d.slice(5); // MM-DD
-    return `<div class="bar-wrap" title="${d}: ${c} run(s)"><div class="bar" style="height:${Math.max(h,2)}%"></div><div class="bar-label">${label}</div></div>`;
+    return `<div class="bar-wrap" title="${d}: ${c} run${c === 1 ? '' : 's'}"><div class="bar${c ? '' : ' zero'}" style="height:${c ? Math.max(Math.round((c / max) * 100), 4) : 3}%"></div><div class="bar-label">${d.slice(5)}</div></div>`;
   }).join('');
 }
 
@@ -2589,51 +1123,53 @@ $('#btn-hist-refresh').onclick = loadHistory;
 $('#hist-filter-ch').onchange = loadHistory;
 $('#hist-filter-trigger').onchange = loadHistory;
 
-// ── Settings modal ────────────────────────────────────────────────
+// ── Settings dialog ────────────────────────────────────────────────────
+const settingsDialog = $('#settings-dialog');
 $('#btn-settings').onclick = () => {
-  $('#settings-backdrop').classList.add('show');
+  if (typeof settingsDialog.showModal === 'function') settingsDialog.showModal();
+  else settingsDialog.setAttribute('open', '');
   loadKeys();
 };
-$('#btn-close-settings').onclick = () => $('#settings-backdrop').classList.remove('show');
-$('#settings-backdrop').onclick = (e) => { if (e.target.id === 'settings-backdrop') $('#settings-backdrop').classList.remove('show'); };
+const closeSettings = () => { if (typeof settingsDialog.close === 'function') settingsDialog.close(); else settingsDialog.removeAttribute('open'); };
+$('#btn-close-settings').onclick = closeSettings;
+settingsDialog.addEventListener('click', (e) => { if (e.target === settingsDialog) closeSettings(); });
 
-$('#btn-change-pw').onclick = async () => {
-  const current = $('#pw-current').value;
-  const next = $('#pw-next').value;
-  const confirmPw = $('#pw-confirm').value;
+$('#pw-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const current = $('#pw-current').value, next = $('#pw-next').value, confirmPw = $('#pw-confirm').value;
   if (!current || !next) { toast('Fill in all password fields', true); return; }
-  if (next !== confirmPw) { toast('New passwords do not match', true); return; }
+  if (next !== confirmPw) { toast('The new passwords do not match', true); return; }
   try {
     await api('POST', '/api/account/password', { current, next });
     toast('Password updated');
-    $('#pw-current').value = ''; $('#pw-next').value = ''; $('#pw-confirm').value = '';
-  } catch (e) { toast('Failed: ' + e.message, true); }
-};
+    e.target.reset();
+  } catch (err) { toast('Failed: ' + err.message, true); }
+});
 
 async function loadKeys() {
   try {
-    const keys = await api('GET', '/api/keys?_=' + Date.now());
+    const keys = await api('GET', '/api/keys');
     const list = $('#keys-list');
-    list.innerHTML = keys.length ? keys.map(k => `
+    list.innerHTML = keys.length ? keys.map((k) => `
       <div class="key-row">
         <div>
           <div>${escapeHtml(k.name)}</div>
           <div class="meta">${escapeHtml(k.prefix)}… · created ${new Date(k.created).toLocaleDateString()}${k.last_used ? ' · last used ' + new Date(k.last_used).toLocaleDateString() : ' · never used'}</div>
         </div>
-        <button class="btn btn-danger" style="padding:6px 12px;" data-revoke="${k.id}">Revoke</button>
-      </div>
-    `).join('') : '<div class="empty-hint">No API keys yet.</div>';
-    list.querySelectorAll('[data-revoke]').forEach(btn => {
+        <button type="button" class="btn btn-danger btn-sm" data-revoke="${escapeHtml(k.id)}">Revoke</button>
+      </div>`).join('') : '<div class="empty-hint">No API keys yet.</div>';
+    $$('[data-revoke]', list).forEach((btn) => {
       btn.onclick = async () => {
         if (!confirm('Revoke this API key? Anything using it will stop working immediately.')) return;
-        try { await api('DELETE', `/api/keys/${btn.dataset.revoke}`); toast('Key revoked'); loadKeys(); }
-        catch (e) { toast('Failed: ' + e.message, true); }
+        try { await api('DELETE', `/api/keys/${encodeURIComponent(btn.dataset.revoke)}`); toast('Key revoked'); loadKeys(); }
+        catch (err) { toast('Failed: ' + err.message, true); }
       };
     });
-  } catch (e) { /* non-fatal */ }
+  } catch { /* non-fatal */ }
 }
 
-$('#btn-create-key').onclick = async () => {
+$('#key-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
   const name = $('#key-name').value.trim();
   try {
     const created = await api('POST', '/api/keys', { name });
@@ -2641,190 +1177,75 @@ $('#btn-create-key').onclick = async () => {
     $('#key-reveal-text').textContent = created.key;
     $('#key-name').value = '';
     loadKeys();
-  } catch (e) { toast('Failed: ' + e.message, true); }
-};
+  } catch (err) { toast('Failed: ' + err.message, true); }
+});
 
-// ── Boot ───────────────────────────────────────────────────────────
-async function boot() {
+$('#btn-restore').onclick = () => $('#restore-file').click();
+$('#restore-file').onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
   try {
-    const data = await api('GET', '/api/schedule?_=' + Date.now());
-    renderAll(data);
-  } catch (e) {
-    toast('Failed to load schedule', true);
-  }
-}
-
-// ── Profile switcher ───────────────────────────────────────────────
-let allProfileOptions = [];
-let activeProfileInfo = null;
-
-async function loadProfileOptions() {
-  try {
-    allProfileOptions = await api('GET', '/api/profiles?_=' + Date.now());
-    const sel = $('#profile-switcher');
-    const currentVal = sel.value;
-    sel.innerHTML = allProfileOptions.map(p =>
-      `<option value="${p.id}">${escapeHtml(p.name)} (${p.channelCount} ch)</option>`
-    ).join('');
-    if (currentVal && allProfileOptions.find(p => p.id === currentVal)) {
-      sel.value = currentVal;
-    }
-  } catch (e) { /* non-fatal */ }
-}
-
-async function refreshProfileBar() {
-  try {
-    const info = await api('GET', '/api/profiles/active?_=' + Date.now());
-    const sel = $('#profile-switcher');
-    const reason = $('#profile-reason');
-    const day = $('#schedule-day');
-    const clearBtn = $('#btn-clear-override-sched');
-
-    // Ensure the select has today's profile before assigning its value; an
-    // absent option otherwise makes the browser display the first profile.
-    if (info.profileId && !allProfileOptions.some((p) => p.id === info.profileId)) {
-      await loadProfileOptions();
-    }
-
-    if (info.profileId) {
-      sel.value = info.profileId;
-      if (sel.value !== info.profileId) {
-        await loadProfileOptions();
-        sel.value = info.profileId;
-      }
-      const reasonMap = {
-        manual_override: 'Manual override',
-        default: 'Default profile',
-        fallback_first: 'Default (auto)',
-      };
-      let reasonText = '';
-      if (info.reason && info.reason.startsWith('calendar_date:'))
-        reasonText = 'Calendar: ' + info.reason.split(':')[1];
-      else if (info.reason && info.reason.startsWith('calendar_dow:'))
-        reasonText = 'Day of week: ' + info.reason.split(':')[1];
-      else
-        reasonText = reasonMap[info.reason] || info.reason || '';
-      reason.textContent = reasonText;
-      reason.className = 'profile-bar-reason' + (info.override ? ' override' : '');
-      const dayFromReason = info.reason && info.reason.startsWith('calendar_dow:')
-        ? info.reason.split(':')[1]
-        : '';
-      const displayDay = info.day || dayFromReason;
-      day.textContent = displayDay
-        ? `${displayDay[0].toUpperCase()}${displayDay.slice(1)}${info.date ? ` · ${info.date}` : ''}`
-        : '';
-      clearBtn.style.display = info.override ? '' : 'none';
-    } else {
-      sel.value = '';
-      reason.textContent = '';
-      day.textContent = '';
-      clearBtn.style.display = 'none';
-    }
-
-    const changed = !activeProfileInfo
-      || activeProfileInfo.profileId !== info.profileId
-      || activeProfileInfo.date !== info.date;
-    activeProfileInfo = { ...info, day: info.day || (info.reason && info.reason.startsWith('calendar_dow:')
-      ? info.reason.split(':')[1]
-      : '') };
-    if (changed) await boot();
-  } catch (e) { /* non-fatal */ }
-}
-
-// Switch profile via dropdown — sets an override
-$('#profile-switcher').onchange = async () => {
-  const profileId = $('#profile-switcher').value;
-  if (!profileId) return;
-  try {
-    await api('POST', '/api/profiles/override', { profileId });
-    toast('Switched to ' + $('#profile-switcher').selectedOptions[0].textContent);
-    await refreshProfileBar();
-    await boot(); // reload schedule
-  } catch (e) { toast('Switch failed: ' + e.message, true); }
-};
-
-// Clear override button
-$('#btn-clear-override-sched').onclick = async () => {
-  try {
-    await api('POST', '/api/profiles/override/clear');
-    toast('Override cleared');
-    await refreshProfileBar();
+    const data = JSON.parse(await file.text());
+    if (!confirm('Restore will overwrite the current schedule, profiles, calendar and settings (and history, if included). Continue?')) return;
+    await api('POST', '/api/restore', data);
+    toast('Restored from backup');
+    closeSettings();
     await boot();
-  } catch (e) { toast('Failed: ' + e.message, true); }
+    loadHistory();
+  } catch (err) {
+    toast('Restore failed: ' + err.message, true);
+  } finally {
+    e.target.value = '';
+  }
 };
+
+// ── Theme toggle ───────────────────────────────────────────────────────
+(function () {
+  const root = document.documentElement;
+  const btn = $('#btn-theme');
+  const stored = () => { try { const t = localStorage.getItem('theme'); return t === 'light' || t === 'dark' ? t : null; } catch { return null; } };
+  const apply = (theme, persist) => {
+    root.setAttribute('data-theme', theme);
+    btn.innerHTML = theme === 'dark' ? ICON.sun : ICON.moon;
+    btn.setAttribute('aria-label', theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+    if (persist) { try { localStorage.setItem('theme', theme); } catch { /* ignore */ } }
+  };
+  apply(stored() || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'), false);
+  btn.addEventListener('click', () => apply(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark', true));
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => { if (!stored()) apply(e.matches ? 'dark' : 'light', false); });
+})();
+
+// ── Boot ───────────────────────────────────────────────────────────────
+setupPanels();
 
 (async () => {
   await loadProfileOptions();
   await boot();
   pollStatus();
-  pollLog();
   loadHistory();
-  refreshProfileBar();
-  loadFirmwareManager();
-  setInterval(pollStatus, 5000);
-  setInterval(pollLog, 2000);
-  setInterval(loadHistory, 20000);
-  setInterval(refreshProfileBar, 15000);
-  setInterval(loadProfileOptions, 60000);
-  setInterval(loadFirmwareManager, 60000);
-})();
+  if (panelOpen('firmware-panel')) loadFirmwareManager();
+  if (panelOpen('log-panel')) pollLog();
 
-// ── Theme toggle ───────────────────────────────────────────────────
-(function() {
-  const html = document.documentElement;
-  const btn = document.getElementById('btn-theme');
+  every(5000, pollStatus);
+  every(15000, () => refresh(false));
+  every(60000, loadProfileOptions);
+  every(2000, () => { if (panelOpen('log-panel')) pollLog(); });
+  every(20000, () => { if (panelOpen('hist-panel')) loadHistory(); });
+  every(60000, () => { if (panelOpen('firmware-panel')) loadFirmwareManager(); });
 
-  function getTheme() {
-    return localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  }
-
-  function applyTheme(theme) {
-    if (theme === 'dark') {
-      html.setAttribute('data-theme', 'dark');
-      if (btn) btn.innerHTML = '☾';
-    } else {
-      html.setAttribute('data-theme', 'light');
-      if (btn) btn.innerHTML = '☀';
-    }
-    localStorage.setItem('theme', theme);
-  }
-
-  // Apply on load
-  applyTheme(getTheme());
-
-  // Toggle on click
-  if (btn) {
-    btn.onclick = () => {
-      const current = html.getAttribute('data-theme') || 'light';
-      applyTheme(current === 'dark' ? 'light' : 'dark');
-    };
-  }
-
-  // Listen for system preference changes
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-    if (!localStorage.getItem('theme')) {
-      applyTheme(e.matches ? 'dark' : 'light');
-    }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    pollStatus();
+    refresh(false);
+    tickHero();
   });
 })();
-</script>
 
-<!-- ── Service Worker ─────────────────────────────────────────────── -->
-<script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js', { scope: '/' });
 }
 </script>
 
-<footer class="site-footer">
-  <p>&#x1F514; Built from silicon to server. &mdash; Chinmayakeshav</p>
-  <div class="footer-links">
-    <a href="https://github.com/CoolNinja2009" target="_blank" rel="noopener noreferrer">GitHub</a>
-    <a href="https://github.com/CoolNinja2009?tab=repositories" target="_blank" rel="noopener noreferrer">Projects</a>
-    <span>ESP32 + Node.js</span>
-    <a href="https://www.gnu.org/licenses/gpl-3.0.en.html" target="_blank" rel="noopener noreferrer">GPL-3.0 License</a>
-  </div>
-</footer>
 <script>
 (function () {
   var banner = document.getElementById('profile-broken-banner');
@@ -2871,7 +1292,7 @@ if ('serviceWorker' in navigator) {
   });
 
   checkProfile();
-  setInterval(checkProfile, 15000);
+  setInterval(function () { if (!document.hidden) checkProfile(); }, 15000);
 })();
 
 // ── System file health (settings/calendar/api_keys/firmware_state) ──────
@@ -2917,7 +1338,7 @@ if ('serviceWorker' in navigator) {
   });
 
   checkHealth();
-  setInterval(checkHealth, 15000);
+  setInterval(function () { if (!document.hidden) checkHealth(); }, 15000);
 })();
 </script>
 </body>

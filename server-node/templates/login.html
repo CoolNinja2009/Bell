@@ -1,235 +1,90 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <link rel="icon" type="image/svg+xml" href="/bell.svg">
 <meta charset="UTF-8">
-<link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#00a87a">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Relay Controller — Login</title>
-<style>
-  /* ── Design Tokens ─────────────────────── */
-  :root {
-    --bg:       #0a0f16;
-    --panel:    #111921;
-    --border:   #1e2936;
-    --text:     #e2e8f0;
-    --dim:      #64748b;
-    --accent:   #10b981;
-    --danger:   #ef4444;
-    --radius:   10px;
-    --shadow:   0 4px 12px rgba(0, 0, 0, 0.4);
-  }
-
-  [data-theme="dark"] {
-    --bg:       #0a0f16;
-    --panel:    #111921;
-    --border:   #1e2936;
-    --text:     #e2e8f0;
-    --dim:      #64748b;
-    --accent:   #10b981;
-    --danger:   #ef4444;
-    --radius:   10px;
-    --shadow:   0 4px 12px rgba(0, 0, 0, 0.4);
-  }
-
-  [data-theme="light"] {
-    --bg:       #f8fafc;
-    --panel:    #ffffff;
-    --border:   #e2e8f0;
-    --text:     #0f172a;
-    --dim:      #64748b;
-    --accent:   #10b981;
-    --danger:   #ef4444;
-    --radius:   10px;
-    --shadow:   0 4px 12px rgba(0, 0, 0, 0.08);
-  }
-
-  /* ── Base ──────────────────────────────── */
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
-    background: var(--bg);
-    background-image: radial-gradient(ellipse at 50% 0%, rgba(16, 185, 129, 0.08) 0%, transparent 50%);
-    color: var(--text);
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-  }
-
-  /* ── Card ──────────────────────────────── */
-  .card {
-    width: 100%;
-    max-width: 360px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 40px 32px;
-    box-shadow: var(--shadow);
-  }
-
-  /* ── Heading ───────────────────────────── */
-  h1 {
-    font-size: 1.25rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 24px;
-    color: var(--text);
-  }
-
-  h1::before {
-    content: "";
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    background: var(--accent);
-    border-radius: 2px;
-    box-shadow: 0 0 12px var(--accent);
-  }
-
-  /* ── Form ──────────────────────────────── */
-  label {
-    display: block;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: var(--dim);
-    margin-bottom: 8px;
-  }
-
-  input[type="password"] {
-    width: 100%;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 12px 14px;
-    color: var(--text);
-    font-size: 1rem;
-    margin-bottom: 20px;
-    transition: all 0.2s ease;
-  }
-
-  input[type="password"]:hover {
-    border-color: rgba(16, 185, 129, 0.3);
-  }
-
-  input[type="password"]:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
-  }
-
-  /* ── Button ────────────────────────────── */
-  button {
-    width: 100%;
-    min-height: 44px;
-    background: linear-gradient(135deg, var(--accent), #059669);
-    color: #ffffff;
-    border: none;
-    border-radius: var(--radius);
-    padding: 12px;
-    font-size: 1rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  button:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-  }
-
-  button:active {
-    transform: translateY(0);
-  }
-
-  /* ── Error ─────────────────────────────── */
-  .error {
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    color: var(--danger);
-    border-radius: var(--radius);
-    padding: 12px 14px;
-    font-size: 0.875rem;
-    margin-bottom: 20px;
-  }
-
-  /* ── Footer ────────────────────────────── */
-  .site-footer {
-    text-align: center;
-    padding: 32px 16px 0;
-    font-size: 0.75rem;
-    color: var(--dim);
-    letter-spacing: 0.3px;
-    opacity: 0.6;
-    transition: opacity 0.3s ease;
-  }
-
-  .site-footer:hover {
-    opacity: 1;
-  }
-
-  .site-footer p {
-    margin: 0 0 8px;
-  }
-
-  .footer-links {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 8px 16px;
-  }
-
-  .footer-links a {
-    color: inherit;
-  }
-
-  /* ── Responsive ────────────────────────── */
-  @media (max-width: 480px) {
-    body {
-      padding: 16px;
-    }
-
-    .card {
-      padding: 32px 24px;
-    }
-
-    h1 {
-      font-size: 1.125rem;
-    }
-  }
-</style>
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a0f16" media="(prefers-color-scheme: dark)">
+<title>Sign in — Relay Controller</title>
+<link rel="icon" type="image/svg+xml" href="/bell.svg">
+<link rel="manifest" href="/manifest.json">
+<script>
+  // Apply the saved/system theme before first paint (no light/dark flash).
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('theme'); } catch (e) {}
+    if (t !== 'light' && t !== 'dark') t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
+<link rel="stylesheet" href="/assets/ui.css">
 </head>
 <body>
-  <div class="card">
-    <h1>Relay Controller</h1>
-    <!--ERROR_BLOCK-->
-    <form method="POST" action="/login">
-      <label for="password">Password</label>
-      <input type="password" id="password" name="password" autofocus required>
-      <button type="submit">Log in</button>
-    </form>
-  </div>
+  <main class="auth-wrap">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        </div>
+        <div>
+          <h1>Relay Controller</h1>
+          <p>Sign in to manage the bell schedule</p>
+        </div>
+      </div>
+      <!--ERROR_BLOCK-->
+      <form method="POST" action="/login" id="login-form">
+        <div class="field">
+          <label for="password">Password</label>
+          <div class="pw-wrap">
+            <input type="password" id="password" name="password" autocomplete="current-password" autofocus required>
+            <button type="button" class="pw-toggle" id="pw-toggle" aria-label="Show password" aria-pressed="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-save btn-block" id="login-btn">Sign in</button>
+      </form>
+    </div>
 
-<footer class="site-footer">
-  <p>&#x1F514; Built from silicon to server. &mdash; Chinmayakeshav</p>
-  <div class="footer-links">
-    <a href="https://github.com/CoolNinja2009" target="_blank" rel="noopener noreferrer">GitHub</a>
-    <a href="https://github.com/CoolNinja2009?tab=repositories" target="_blank" rel="noopener noreferrer">Projects</a>
-    <span>ESP32 + Node.js</span>
-    <span>ISC License</span>
-  </div>
-</footer>
+    <footer class="site-footer">
+      <p>Built from silicon to server. &mdash; Chinmayakeshav</p>
+      <div class="footer-links">
+        <a href="https://github.com/CoolNinja2009" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://github.com/CoolNinja2009?tab=repositories" target="_blank" rel="noopener noreferrer">Projects</a>
+        <span>ESP32 + Node.js</span>
+        <a href="https://www.gnu.org/licenses/gpl-3.0.en.html" target="_blank" rel="noopener noreferrer">GPL-3.0 License</a>
+      </div>
+    </footer>
+  </main>
 
-<!-- ── Service Worker ─────────────────────────────────────────────── -->
 <script>
+(function () {
+  var form = document.getElementById('login-form');
+  var pw = document.getElementById('password');
+  var toggle = document.getElementById('pw-toggle');
+  var btn = document.getElementById('login-btn');
+
+  // Keep the ?next= destination (set when a protected page redirected here)
+  // across the POST so the user lands where they were going.
+  if (location.search.indexOf('next=') !== -1) form.setAttribute('action', '/login' + location.search);
+
+  toggle.addEventListener('click', function () {
+    var show = pw.type === 'password';
+    pw.type = show ? 'text' : 'password';
+    toggle.setAttribute('aria-pressed', String(show));
+    toggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+    pw.focus();
+  });
+
+  // Visible feedback + guard against double submits on a slow Pi.
+  form.addEventListener('submit', function () {
+    btn.classList.add('is-pending');
+    btn.setAttribute('aria-busy', 'true');
+  });
+  window.addEventListener('pageshow', function () { btn.classList.remove('is-pending'); btn.removeAttribute('aria-busy'); });
+})();
+
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js', { scope: '/' });
 }

@@ -166,10 +166,14 @@ server-node/
 │   └── state.js           Bootstrap state persistence (70 lines)
 │
 ├── templates/
-│   ├── index.html          Dashboard SPA (2,924 lines)
-│   ├── profiles.html       Profile manager page (2,032 lines)
-│   ├── profile-editor.html Raw JSON editor: validate/save/repair/restore (629 lines)
-│   └── login.html          Login page (238 lines)
+│   ├── index.html          Dashboard (live clock + next bell, channel editor, panels)
+│   ├── profiles.html       Profile manager (profiles, manual override, calendar)
+│   ├── profile-editor.html Raw JSON editor: validate/save/repair/restore
+│   └── login.html          Login page
+│
+├── assets/                Shared UI served publicly at /assets (revalidated on every load)
+│   ├── ui.css              Design system for every page (tokens, light/dark, components)
+│   └── channel-card.js     Channel editor card shared by the dashboard and profile manager
 │
 ├── defaults/              Fresh-install default state
 │   ├── settings.json
@@ -575,18 +579,18 @@ List all channels with labels and enabled state.
 
 #### `POST /api/channels`
 
-Add a new channel.
+Re-create a missing device channel. The hardware has exactly two relay channels, so only `ch1` and `ch2` are accepted.
 
-**Body:** `{ "key": "ch3", "label": "Lunch Bell" }`
+**Body:** `{ "key": "ch1", "label": "Main Bell" }`
 
-- `key` must match `CHANNEL_KEY_RE`
+- `key` must be `ch1` or `ch2`; any other key is rejected with `400`
+- Rejected with `400` if the channel already exists (the normal case)
 - `label` optional, defaults to key uppercase, max 40 chars
-- New channels start disabled with empty schedule
-- Max 24 channels
+- The dashboard no longer offers this action; it is kept for API compatibility
 
 #### `DELETE /api/channels/:key`
 
-Remove a channel. Refuses if it's the last remaining channel. Cleans up heartbeats and pending commands for that channel.
+Always rejected with `400` (`Device relay channels ch1 and ch2 cannot be removed`). Channels can be turned off per profile instead (`enabled: false`).
 
 #### `POST /api/relay/:key/trigger`
 
@@ -843,7 +847,8 @@ If both session and API key are present, session takes priority. Invalid API key
 | Path | Cache | Purpose |
 |------|-------|---------|
 | `/manifest.json` | 1 hour | PWA manifest |
-| `/sw.js` | no-cache | Service worker |
+| `/sw.js` | no-cache | Service worker (caches nothing; offline page only) |
+| `/assets/*` | revalidate (ETag) | Shared `ui.css` and `channel-card.js` |
 | `/icon-192.png` | 24 hours | App icon |
 | `/icon-512.png` | 24 hours | App icon |
 | `/bell.svg` | 24 hours | Favicon |

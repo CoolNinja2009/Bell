@@ -3,91 +3,27 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Profile JSON Editor — Relay Controller</title>
-<link rel="icon" href="/bell.svg">
+<title>JSON editor — Relay Controller</title>
+<link rel="icon" type="image/svg+xml" href="/bell.svg">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a0f16" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="/manifest.json">
+<script>
+  // Apply the saved/system theme before first paint (no light/dark flash).
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('theme'); } catch (e) {}
+    if (t !== 'light' && t !== 'dark') t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
 <link rel="stylesheet" href="/vendor/codemirror/lib/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/dialog/dialog.css">
 <style>
-  /* ── Design Tokens — identical to / and /profiles, so localStorage's
-     shared 'theme' key keeps all three pages in sync automatically ──── */
-  :root {
-    --bg:       #f8fafc;
-    --panel:    #ffffff;
-    --panel2:   #f1f5f9;
-    --border:   #e2e8f0;
-    --text:     #0f172a;
-    --dim:      #64748b;
-    --accent:   #10b981;
-    --accent2:  #f59e0b;
-    --accent3:  #3b82f6;
-    --danger:   #ef4444;
-    --on:       #10b981;
-    --off:      #cbd5e1;
-    --radius:   10px;
-    --glass:    rgba(255, 255, 255, 0.9);
-    --shadow:   0 4px 12px rgba(0, 0, 0, 0.08);
-  }
-  [data-theme="dark"] {
-    --bg:       #0a0f16;
-    --panel:    #111921;
-    --panel2:   #0d1419;
-    --border:   #1e2936;
-    --text:     #e2e8f0;
-    --dim:      #64748b;
-    --accent:   #10b981;
-    --accent2:  #f59e0b;
-    --accent3:  #3b82f6;
-    --danger:   #ef4444;
-    --on:       #10b981;
-    --off:      #334155;
-    --glass:    rgba(17, 25, 33, 0.9);
-    --shadow:   0 4px 12px rgba(0, 0, 0, 0.4);
-  }
-  [data-theme="light"] {
-    --bg:       #f8fafc;
-    --panel:    #ffffff;
-    --panel2:   #f1f5f9;
-    --border:   #e2e8f0;
-    --text:     #0f172a;
-    --dim:      #64748b;
-    --accent:   #10b981;
-    --accent2:  #f59e0b;
-    --accent3:  #3b82f6;
-    --danger:   #ef4444;
-    --on:       #10b981;
-    --off:      #cbd5e1;
-    --radius:   10px;
-    --glass:    rgba(255, 255, 255, 0.9);
-    --shadow:   0 4px 12px rgba(0, 0, 0, 0.08);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme]) {
-      --bg:       #0a0f16;
-      --panel:    #111921;
-      --panel2:   #0d1419;
-      --border:   #1e2936;
-      --text:     #e2e8f0;
-      --dim:      #64748b;
-      --accent:   #10b981;
-      --accent2:  #f59e0b;
-      --accent3:  #3b82f6;
-      --danger:   #ef4444;
-      --on:       #10b981;
-      --off:      #334155;
-      --glass:    rgba(17, 25, 33, 0.9);
-      --shadow:   0 4px 12px rgba(0, 0, 0, 0.4);
-    }
-  }
-
-  *{box-sizing:border-box}
+    *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;transition:background .2s,color .2s}
-  header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap}
-  header h1{font-size:15px;margin:0;font-weight:600;flex:1;min-width:180px}
-  header a.back{color:var(--dim);text-decoration:none;font-size:13px}
-  header a.back:hover{color:var(--text)}
-  .icon-btn{background:transparent;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:14px;font-family:inherit;color:var(--text);padding:5px 9px}
-  .icon-btn:hover{background:var(--panel2)}
   .toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:8px 16px;background:var(--panel2);border-bottom:1px solid var(--border)}
   .toolbar .sep{width:1px;height:20px;background:var(--border);margin:0 4px}
   button.tbtn, label.tbtn{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12.5px;cursor:pointer;font-family:inherit;white-space:nowrap}
@@ -96,7 +32,7 @@
   button.tbtn.primary:hover{filter:brightness(1.08)}
   button.tbtn.danger{background:var(--danger);border-color:var(--danger);color:#fff}
   button.tbtn:disabled{opacity:.5;cursor:not-allowed}
-  select.tbtn{padding:6px 8px}
+  select.tbtn{width:auto;min-height:0;padding:6px 26px 6px 8px;font-size:12.5px;font-weight:400;background-position:right 8px center}
   main{flex:1;display:flex;min-height:0}
   .editor-wrap{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
   .CodeMirror{
@@ -157,13 +93,32 @@
   .confirm-row{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px}
   .hidden{display:none !important}
 </style>
+<link rel="stylesheet" href="/assets/ui.css">
 </head>
-<body>
-<header>
-  <h1>📝 profiles.json — JSON Editor</h1>
-  <button class="icon-btn" id="btn-theme" title="Toggle light/dark mode">☀</button>
-  <a class="back" href="/profiles">← Back to Profiles</a>
+<body class="editor-page">
+<header class="app-header">
+  <a class="brand" href="/" aria-label="Relay Controller — dashboard">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    </span>
+    <span>
+      <span class="brand-name">Relay Controller</span>
+      <span class="subtitle">profiles.json editor</span>
+    </span>
+  </a>
+  <nav class="nav-tabs" aria-label="Main">
+    <a class="nav-tab" href="/">Dashboard</a>
+    <a class="nav-tab" href="/profiles">Profiles</a>
+    <a class="nav-tab active" href="/profile-editor" aria-current="page">JSON editor</a>
+  </nav>
+  <div class="header-actions">
+    <button type="button" class="icon-btn" id="btn-theme" aria-label="Switch theme" title="Switch theme"></button>
+    <a class="icon-btn" href="/logout" aria-label="Log out" title="Log out">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+    </a>
+  </div>
 </header>
+<h1 class="sr-only">profiles.json JSON editor</h1>
 
 <div class="toolbar">
   <button class="tbtn" id="btn-new" title="New — start from an empty valid skeleton">New</button>
@@ -188,7 +143,7 @@
   </select>
   <div class="sep"></div>
   <button class="tbtn" id="btn-validate" title="Validate current editor content on the server">Validate</button>
-  <button class="tbtn danger" id="btn-repair" title="Attempt Automatic Repair">🔧 Repair JSON</button>
+  <button class="tbtn danger" id="btn-repair" title="Attempt Automatic Repair">Repair JSON</button>
 </div>
 
 <main>
@@ -209,7 +164,7 @@
 <!-- Repair modal -->
 <div class="modal-backdrop" id="repair-modal">
   <div class="modal">
-    <h2>🔧 Attempt Automatic Repair</h2>
+    <h2>Attempt automatic repair</h2>
     <div class="body">
       <p style="margin-top:0;color:var(--dim);font-size:13px">
         This scans the broken text for recognizable schedule information (channels, times, pulse durations)
@@ -288,11 +243,15 @@ cm.on('change', () => {
 // ---------------------------------------------------------------------------
 // Server calls — always the SAME validation pipeline used everywhere else.
 // ---------------------------------------------------------------------------
+function guard(res) {
+  if (res.status === 401) { window.location.href = '/login?next=' + encodeURIComponent(location.pathname); throw new Error('Session expired'); }
+  return res;
+}
 async function postText(url, text) {
-  return fetch(url, { method: 'POST', body: text }); // text/plain by default -> bypasses express.json()
+  return guard(await fetch(url, { method: 'POST', body: text })); // text/plain by default -> bypasses express.json()
 }
 async function postJson(url, obj) {
-  return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) });
+  return guard(await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) }));
 }
 
 function setDot(id, state) { // state: 'ok' | 'err' | 'pending' | ''
@@ -375,8 +334,17 @@ async function doValidate() {
 // File operations
 // ---------------------------------------------------------------------------
 async function loadFromServer() {
-  const res = await fetch('/api/profile/raw', { cache: 'no-store' });
-  const data = await res.json();
+  let data;
+  try {
+    const res = guard(await fetch('/api/profile/raw', { cache: 'no-store' }));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    data = await res.json();
+  } catch (err) {
+    const msg = document.getElementById('status-msg');
+    msg.textContent = 'Could not load profiles.json: ' + err.message;
+    msg.className = 'item status-msg err';
+    return;
+  }
   cm.setValue(data.text);
   clearDirty(data.text);
   doValidate();
@@ -591,39 +559,24 @@ loadFromServer().then(() => { if (wantsRepair) openRepairModal(); });
 // ── Theme toggle — identical mechanism to / and /profiles, so the
 // shared localStorage 'theme' key keeps all three pages in sync. ──────
 (function () {
-  const html = document.documentElement;
+  const root = document.documentElement;
   const btn = document.getElementById('btn-theme');
-
-  function getTheme() {
-    return localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  }
-
-  function applyTheme(theme) {
-    if (theme === 'dark') {
-      html.setAttribute('data-theme', 'dark');
-      if (btn) btn.innerHTML = '☾';
-    } else {
-      html.setAttribute('data-theme', 'light');
-      if (btn) btn.innerHTML = '☀';
-    }
-    localStorage.setItem('theme', theme);
-  }
-
-  applyTheme(getTheme());
-
-  if (btn) {
-    btn.onclick = () => {
-      const current = html.getAttribute('data-theme') || 'light';
-      applyTheme(current === 'dark' ? 'light' : 'dark');
-    };
-  }
-
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-    if (!localStorage.getItem('theme')) {
-      applyTheme(e.matches ? 'dark' : 'light');
-    }
-  });
+  const SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
+  const MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+  const stored = () => { try { const t = localStorage.getItem('theme'); return t === 'light' || t === 'dark' ? t : null; } catch (e) { return null; } };
+  const apply = (theme, persist) => {
+    root.setAttribute('data-theme', theme);
+    btn.innerHTML = theme === 'dark' ? SUN : MOON;
+    btn.setAttribute('aria-label', theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+    if (persist) { try { localStorage.setItem('theme', theme); } catch (e) { /* ignore */ } }
+  };
+  apply(stored() || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'), false);
+  btn.addEventListener('click', () => apply(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark', true));
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => { if (!stored()) apply(e.matches ? 'dark' : 'light', false); });
 })();
-</script>
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js', { scope: '/' });
+}</script>
 </body>
 </html>
